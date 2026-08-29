@@ -1,0 +1,30 @@
+{
+  "name": "Mount",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "destination": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "volume",
+        "bind"
+      ],
+      "default": "volume"
+    }
+  },
+  "required": [
+    "project_id",
+    "name"
+  ]
+}

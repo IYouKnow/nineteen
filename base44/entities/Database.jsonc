@@ -1,0 +1,64 @@
+{
+  "name": "Database",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "postgresql",
+        "mysql",
+        "mariadb",
+        "redis",
+        "mongodb"
+      ],
+      "default": "postgresql"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "running",
+        "provisioning",
+        "error",
+        "stopped"
+      ],
+      "default": "running"
+    },
+    "version": {
+      "type": "string"
+    },
+    "region": {
+      "type": "string",
+      "default": "fra1"
+    },
+    "instance_size": {
+      "type": "string",
+      "default": "small"
+    },
+    "host": {
+      "type": "string"
+    },
+    "port": {
+      "type": "number"
+    },
+    "database_name": {
+      "type": "string"
+    },
+    "username": {
+      "type": "string"
+    },
+    "color": {
+      "type": "string",
+      "default": "#4169e1"
+    },
+    "description": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "type"
+  ]
+}
