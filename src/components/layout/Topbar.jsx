@@ -1,6 +1,7 @@
 import { Menu, Search, Bell, User, Settings, LogOut, Sun, Moon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useTheme } from "@/lib/theme";
+import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
@@ -22,9 +23,10 @@ function initials(name = "User") {
 }
 
 export default function Topbar({ onMenu }) {
-  const name = "User";
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
+  const { user, logout } = useAuth();
+  const name = user?.display_name || user?.username || "User";
 
   return (
     <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-md">
@@ -62,10 +64,10 @@ export default function Topbar({ onMenu }) {
                   "bg-foreground text-background"
                 )}
               >
-                {initials("User")}
+                {initials(name)}
               </span>
               <span className="hidden max-w-[120px] truncate text-xs text-foreground/80 sm:inline">
-                User
+                {name}
               </span>
             </button>
           </DropdownMenuTrigger>
@@ -88,7 +90,7 @@ export default function Topbar({ onMenu }) {
             <DropdownMenuSeparator />
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
-              onClick={() => console.log('logout')}
+              onClick={() => { logout(); navigate("/login", { replace: true }); }}
             >
               <LogOut className="h-4 w-4" />
               Log out
