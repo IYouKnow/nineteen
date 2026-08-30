@@ -485,6 +485,127 @@ func updateIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"message": "Integration updated"})
 }
 
+type RepoResponse struct {
+	FullName    string `json:"full_name"`
+	Description string `json:"description"`
+	Framework   string `json:"framework"`
+	Branch      string `json:"branch"`
+	Stars       int64  `json:"stars"`
+	Private     bool   `json:"private"`
+}
+
+// detectFramework maps a GitHub repo language (or known name hints) to one of
+// the platform's runtime framework ids.
+func detectFramework(language, name string) string {
+	ln := strings.ToLower(name)
+	switch strings.ToLower(language) {
+	case "typescript", "javascript":
+		switch {
+		case strings.Contains(ln, "next"):
+			return "nextjs"
+		case strings.Contains(ln, "astro"):
+			return "astro"
+		case strings.Contains(ln, "remix"):
+			return "remix"
+		case strings.Contains(ln, "vite"):
+			return "vite"
+		default:
+			return "node"
+		}
+	case "python":
+		return "python"
+	case "go":
+		return "docker"
+	case "dockerfile":
+		return "docker"
+	default:
+		return "node"
+	}
+}
+
+// IntegrationReposHandler lists the GitHub repositories accessible to a stored
+// integration (identified by its id) using its decrypted access token.
+func IntegrationReposHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	claims, err := extractUser(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
+	}
+
+	idStr := r.URL.Query().Get("id")
+	if idStr == "" {
+		respondError(w, http.StatusBadRequest, "id query param is required")
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid integration ID")
+		return
+	}
+
+	page, perPage := 1, 30
+	if p := r.URL.Query().Get("page"); p != "" {
+		if n, err := strconv.Atoi(p); err == nil && n > 0 {
+			page = n
+		}
+	}
+	if pp := r.URL.Query().Get("per_page"); pp != "" {
+		if n, err := strconv.Atoi(pp); err == nil && n > 0 {
+			perPage = n
+		}
+	}
+
+	var provider, encryptedToken string
+	err = db.DB.QueryRow(
+		"SELECT provider, access_token FROM integrations WHERE id = ? AND user_id = ?",
+		id, claims.UserID,
+	).Scan(&provider, &encryptedToken)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Integration not found")
+		return
+	}
+	if provider != "github" {
+		respondError(w, http.StatusBadRequest, "Provider does not support repository listing")
+		return
+	}
+
+	token, err := auth.DecryptToken(encryptedToken)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to decrypt integration token")
+		return
+	}
+
+	ghClient := services.NewGitHubClient(token)
+	repos, err := ghClient.ListRepositories(page, perPage)
+	if err != nil {
+		respondError(w, http.StatusBadGateway, "Failed to fetch repositories: "+err.Error())
+		return
+	}
+
+	list := make([]RepoResponse, 0, len(repos))
+	for _, rp := range repos {
+		branch := rp.DefaultBranch
+		if branch == "" {
+			branch = "main"
+		}
+		list = append(list, RepoResponse{
+			FullName:    rp.FullName,
+			Description: rp.Description,
+			Framework:   detectFramework(rp.Language, rp.Name),
+			Branch:      branch,
+			Stars:       rp.StargazersCount,
+			Private:     rp.Private,
+		})
+	}
+
+	respondJSON(w, http.StatusOK, list)
+}
+
 type TestIntegrationRequest struct {
 	Provider    string `json:"provider"`
 	AccessToken string `json:"access_token"`

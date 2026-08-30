@@ -7,7 +7,6 @@ export const SOURCES = [
     icon: "github",
     color: "#24292f",
     description: "Connect your GitHub account and select from your repositories.",
-    tag: "Most popular",
   },
   {
     id: "public",
@@ -22,6 +21,7 @@ export const SOURCES = [
     icon: "gitlab",
     color: "#fc6d26",
     description: "Connect a GitLab.com or self-hosted GitLab instance.",
+    disabled: true,
   },
   {
     id: "gitea",
@@ -29,6 +29,7 @@ export const SOURCES = [
     icon: "gitea",
     color: "#609966",
     description: "Lightweight, self-hosted Git service.",
+    disabled: true,
   },
 ];
 
@@ -65,17 +66,6 @@ export const DATABASES = [
   },
 ];
 
-export const MOCK_REPOS = [
-  { full_name: "acme/web-platform", description: "Primary marketing site + dashboard", framework: "nextjs", branch: "main", stars: 142, updated: "2h ago" },
-  { full_name: "acme/api-gateway", description: "Edge API gateway service", framework: "node", branch: "main", stars: 88, updated: "1d ago" },
-  { full_name: "acme/analytics-py", description: "Python analytics pipeline", framework: "python", branch: "main", stars: 34, updated: "3d ago" },
-  { full_name: "acme/docs-site", description: "Astro documentation site", framework: "astro", branch: "main", stars: 21, updated: "5d ago" },
-  { full_name: "acme/landing-vite", description: "Vite marketing landing page", framework: "vite", branch: "main", stars: 12, updated: "1w ago" },
-  { full_name: "acme/worker", description: "Dockerized background worker", framework: "docker", branch: "main", stars: 9, updated: "2w ago" },
-  { full_name: "acme/remix-store", description: "Remix e-commerce storefront", framework: "remix", branch: "main", stars: 47, updated: "4h ago" },
-  { full_name: "acme/static-assets", description: "Static asset hosting", framework: "static", branch: "main", stars: 5, updated: "3w ago" },
-];
-
 // Ready-made starter templates. `framework` maps to the runtime framework used
 // by the existing build system; `generator` is an opaque id a backend can later
 // resolve to a real project generator / repository creation mechanism.
@@ -96,7 +86,7 @@ export function sourceReady(source) {
     case "template":
       return !!source.template;
     case "github":
-      return source.githubConnected && !!source.repo;
+      return !!source.repo;
     case "public":
       return source.publicUrl.trim().length > 0;
     case "gitlab":

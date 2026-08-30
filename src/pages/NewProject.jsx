@@ -24,7 +24,6 @@ const STEPS = [
 const emptySource = {
   type: null,
   template: null,
-  githubConnected: false,
   repo: null,
   publicUrl: "",
   gitlabHost: "https://gitlab.com",
@@ -126,7 +125,7 @@ const qc = useQueryClient();
   };
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-8">
+    <div className="mx-auto max-w-7xl px-6 py-8">
       <button
         onClick={() => navigate("/projects")}
         className="mb-5 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"

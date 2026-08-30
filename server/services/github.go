@@ -18,13 +18,20 @@ type GitHubUser struct {
 }
 
 type GitHubRepo struct {
-	ID        int64  `json:"id"`
-	Name      string `json:"name"`
-	FullName  string `json:"full_name"`
-	Private   bool   `json:"private"`
-	HTMLURL   string `json:"html_url"`
-	CloneURL  string `json:"clone_url"`
-	Language  string `json:"language"`
+	ID             int64  `json:"id"`
+	Name           string `json:"name"`
+	FullName       string `json:"full_name"`
+	Private        bool   `json:"private"`
+	HTMLURL        string `json:"html_url"`
+	CloneURL       string `json:"clone_url"`
+	Language       string `json:"language"`
+	Description    string `json:"description"`
+	DefaultBranch  string `json:"default_branch"`
+	StargazersCount int64 `json:"stargazers_count"`
+	Fork           bool   `json:"fork"`
+	Owner          struct {
+		Login string `json:"login"`
+	} `json:"owner"`
 	UpdatedAt string `json:"updated_at"`
 }
 

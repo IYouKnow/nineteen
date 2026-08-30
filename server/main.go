@@ -52,6 +52,7 @@ func main() {
 	mux.HandleFunc("/api/settings/api-keys/", handlers.ApiKeyDeleteHandler)
 	mux.HandleFunc("/api/settings/integrations", handlers.IntegrationsHandler)
 	mux.HandleFunc("/api/settings/integrations/test", handlers.TestIntegrationHandler)
+	mux.HandleFunc("/api/settings/integrations/repos", handlers.IntegrationReposHandler)
 	mux.HandleFunc("/api/settings/integrations/", handlers.UpdateIntegrationHandler)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

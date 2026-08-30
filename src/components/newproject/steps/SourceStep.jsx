@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
-import { Check, Search, GitBranch, Link2, Loader2, Star, Plug, Globe, Sparkles } from "lucide-react";
-import { SOURCES, MOCK_REPOS, TEMPLATES } from "@/lib/newProject";
-import { getFramework } from "@/lib/devStatus";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { Check, Search, Link2, Loader2, Star, Plug, Sparkles } from "lucide-react";
+import { SOURCES, TEMPLATES } from "@/lib/newProject";
 import SourceIcon from "@/components/newproject/SourceIcon";
 import FrameworkIcon from "@/components/dev/FrameworkIcon";
 import TemplateIcon from "@/components/newproject/TemplateIcon";
@@ -9,31 +10,73 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
+
+function getAuthHeaders() {
+  const token = localStorage.getItem("nineteen_token");
+  return { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+}
 
 export default function SourceStep({ source, setSource }) {
   const [query, setQuery] = useState("");
-  const [connecting, setConnecting] = useState(false);
+  const [selectedAccount, setSelectedAccount] = useState(null);
+  const navigate = useNavigate();
 
   const update = (patch) => setSource((s) => ({ ...s, ...patch }));
   const selectSource = (id) => update({ type: id, template: null });
-  const selectTemplate = (id) =>
-    update({ type: "template", template: id, githubConnected: false, repo: null, publicUrl: "" });
+  const selectTemplate = (id) => update({ type: "template", template: id, repo: null, publicUrl: "" });
 
-  const repos = useMemo(() => {
-    if (!query) return MOCK_REPOS;
-    const q = query.toLowerCase();
-    return MOCK_REPOS.filter(
-      (r) => r.full_name.toLowerCase().includes(q) || r.description.toLowerCase().includes(q)
-    );
-  }, [query]);
+  const { data: integrations = [], isLoading: integrationsLoading } = useQuery({
+    queryKey: ["integrations"],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/api/settings/integrations`, { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("Failed to load integrations");
+      return res.json();
+    },
+    staleTime: 30000,
+  });
 
-  const handleConnectGithub = () => {
-    setConnecting(true);
-    setTimeout(() => {
-      update({ githubConnected: true });
-      setConnecting(false);
-    }, 700);
+  const githubIntegrations = useMemo(
+    () => (integrations || []).filter((i) => i.provider === "github"),
+    [integrations]
+  );
+  const connected = githubIntegrations.length > 0;
+
+  useEffect(() => {
+    if (connected && !selectedAccount) setSelectedAccount(githubIntegrations[0].id);
+  }, [connected, selectedAccount, githubIntegrations]);
+
+  const handleChangeAccount = (id) => {
+    setSelectedAccount(id);
+    update({ repo: null });
   };
+
+  const handleConnect = () => navigate("/settings/integrations");
+
+  const { data: repos = [], isLoading: reposLoading } = useQuery({
+    queryKey: ["integration-repos", selectedAccount],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_URL}/api/settings/integrations/repos?id=${selectedAccount}&per_page=50`,
+        { headers: getAuthHeaders() }
+      );
+      if (!res.ok) throw new Error("Failed to load repositories");
+      return res.json();
+    },
+    enabled: !!selectedAccount,
+    staleTime: 60000,
+  });
+
+  const filteredRepos = useMemo(() => {
+    const list = repos || [];
+    if (!query) return list;
+    const q = query.toLowerCase();
+    return list.filter(
+      (r) => r.full_name?.toLowerCase().includes(q) || r.description?.toLowerCase().includes(q)
+    );
+  }, [repos, query]);
 
   return (
     <div className="animate-fade-in">
@@ -47,25 +90,29 @@ export default function SourceStep({ source, setSource }) {
       <div className="grid gap-3 sm:grid-cols-2">
         {SOURCES.map((s) => {
           const active = source.type === s.id;
+          const disabled = !!s.disabled;
           return (
             <button
               key={s.id}
               type="button"
+              disabled={disabled}
               onClick={() => selectSource(s.id)}
               className={cn(
                 "group relative flex items-start gap-3 rounded-lg border p-4 text-left transition-all",
-                active
-                  ? "border-primary bg-primary/5 ring-1 ring-primary"
-                  : "border-border bg-card hover:border-muted-foreground/30 hover:bg-muted/20"
+                disabled
+                  ? "cursor-not-allowed border-border bg-muted/20 opacity-60"
+                  : active
+                    ? "border-primary bg-primary/5 ring-1 ring-primary"
+                    : "border-border bg-card hover:border-muted-foreground/30 hover:bg-muted/20"
               )}
             >
-              <SourceIcon icon={s.icon} color={s.color} />
+              <SourceIcon icon={s.icon} color={disabled ? "#94a3b8" : s.color} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium text-foreground">{s.label}</p>
-                  {s.tag && (
-                    <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                      {s.tag}
+                  {disabled && (
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      Coming soon
                     </span>
                   )}
                 </div>
@@ -89,7 +136,12 @@ export default function SourceStep({ source, setSource }) {
         <div className="mt-5 rounded-lg border border-border bg-muted/15 p-4 animate-slide-up">
           {source.type === "github" && (
             <div>
-              {!source.githubConnected ? (
+              {integrationsLoading ? (
+                <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Checking GitHub connection…
+                </div>
+              ) : !connected ? (
                 <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
                   <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#24292f] text-white">
                     <SourceIcon icon="github" color="transparent" size={24} />
@@ -100,27 +152,40 @@ export default function SourceStep({ source, setSource }) {
                       Grant read access to your repositories so you can pick one to deploy.
                     </p>
                   </div>
-                  <Button type="button" onClick={handleConnectGithub} disabled={connecting} className="gap-2">
-                    {connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />}
-                    {connecting ? "Connecting…" : "Connect GitHub"}
+                  <Button type="button" onClick={handleConnect} className="gap-2">
+                    <Plug className="h-4 w-4" />
+                    Connect GitHub
                   </Button>
                 </div>
               ) : (
                 <div>
-                  <div className="mb-3 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
                       <span className="flex h-6 w-6 items-center justify-center rounded-full bg-success/15 text-success">
                         <Check className="h-3.5 w-3.5" />
                       </span>
-                      <span className="text-sm font-medium">Connected as @acme</span>
+                      <span className="hidden text-sm font-medium sm:inline">Repositories</span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => update({ githubConnected: false, repo: null })}
-                      className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-                    >
-                      Disconnect
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {githubIntegrations.length > 1 ? (
+                        <Select value={selectedAccount} onValueChange={handleChangeAccount}>
+                          <SelectTrigger className="h-8 w-auto min-w-[160px] gap-2 bg-card font-mono text-xs">
+                            <SelectValue placeholder="Select account" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {githubIntegrations.map((a) => (
+                              <SelectItem key={a.id} value={a.id}>
+                                @{a.username}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <span className="rounded-md border border-border bg-card px-2.5 py-1 font-mono text-xs text-muted-foreground">
+                          @{githubIntegrations[0]?.username}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
@@ -132,10 +197,15 @@ export default function SourceStep({ source, setSource }) {
                     />
                   </div>
                   <div className="mt-2 max-h-64 space-y-1 overflow-y-auto">
-                    {repos.length === 0 ? (
+                    {reposLoading ? (
+                      <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading repositories…
+                      </div>
+                    ) : filteredRepos.length === 0 ? (
                       <p className="py-8 text-center text-xs text-muted-foreground">No repositories found.</p>
                     ) : (
-                      repos.map((repo) => {
+                      filteredRepos.map((repo) => {
                         const active = source.repo?.full_name === repo.full_name;
                         return (
                           <button
@@ -155,6 +225,11 @@ export default function SourceStep({ source, setSource }) {
                             <span className="hidden items-center gap-1 font-mono text-xs text-muted-foreground/60 sm:flex">
                               <Star className="h-3 w-3" /> {repo.stars}
                             </span>
+                            {repo.private && (
+                              <span className="hidden text-[10px] uppercase tracking-wide text-muted-foreground/60 sm:inline">
+                                Private
+                              </span>
+                            )}
                             {active && (
                               <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
                                 <Check className="h-3 w-3" />
@@ -190,9 +265,6 @@ export default function SourceStep({ source, setSource }) {
             </div>
           )}
 
-          {(source.type === "gitlab" || source.type === "gitea") && (
-            <SelfHostedForm source={source} update={update} kind={source.type} />
-          )}
         </div>
       )}
 
@@ -259,56 +331,6 @@ export default function SourceStep({ source, setSource }) {
           </p>
         </div>
       )}
-    </div>
-  );
-}
-
-function SelfHostedForm({ source, update, kind }) {
-  const hostKey = kind === "gitlab" ? "gitlabHost" : "giteaHost";
-  const tokenKey = kind === "gitlab" ? "gitlabToken" : "giteaToken";
-  const projectKey = kind === "gitlab" ? "gitlabProject" : "giteaProject";
-  const defaultHost = kind === "gitlab" ? "https://gitlab.com" : "";
-  return (
-    <div className="space-y-3">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <Label className="text-xs">Instance URL</Label>
-          <div className="relative mt-1.5">
-            <Globe className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/50" />
-            <Input
-              value={source[hostKey] || defaultHost}
-              onChange={(e) => update({ [hostKey]: e.target.value })}
-              placeholder="https://git.example.com"
-              className="pl-9 font-mono text-sm"
-            />
-          </div>
-        </div>
-        <div>
-          <Label className="text-xs">Project path</Label>
-          <div className="relative mt-1.5">
-            <GitBranch className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/50" />
-            <Input
-              value={source[projectKey]}
-              onChange={(e) => update({ [projectKey]: e.target.value })}
-              placeholder="acme/web-platform"
-              className="pl-9 font-mono text-sm"
-            />
-          </div>
-        </div>
-      </div>
-      <div>
-        <Label className="text-xs">Personal access token (optional for public projects)</Label>
-        <Input
-          type="password"
-          value={source[tokenKey]}
-          onChange={(e) => update({ [tokenKey]: e.target.value })}
-          placeholder="glpat-••••••••••••••••"
-          className="mt-1.5 font-mono text-sm"
-        />
-        <p className="mt-1.5 text-xs text-muted-foreground">
-          Used to clone private repositories. Stored encrypted, never exposed in the client.
-        </p>
-      </div>
     </div>
   );
 }
