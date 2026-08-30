@@ -1,4 +1,4 @@
-import db from '@/lib/db';
+import * as api from "@/lib/api";
 
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -8,7 +8,6 @@ import {
   ExternalLink,
   GitCommitHorizontal,
   Clock,
-  Zap,
   RefreshCw,
 } from "lucide-react";
 import FrameworkIcon from "@/components/dev/FrameworkIcon";
@@ -26,7 +25,7 @@ export default function ProjectSource({ project, deployments = [], environment, 
   const branch = isProd ? project.branch : environment?.branch;
 
   const toggleAutoDeploy = async (value) => {
-    await db.entities.Project.update(project.id, { auto_deploy: value });
+    await api.projects.update(project.id, { auto_deploy: value });
     qc.invalidateQueries({ queryKey: ["project", project.id] });
     qc.invalidateQueries({ queryKey: ["projects"] });
   };
@@ -36,7 +35,7 @@ export default function ProjectSource({ project, deployments = [], environment, 
       onBranchChange?.(b);
       return;
     }
-    db.entities.Project.update(project.id, { branch: b }).then(() => {
+    api.projects.update(project.id, { branch: b }).then(() => {
       qc.invalidateQueries({ queryKey: ["project", project.id] });
       qc.invalidateQueries({ queryKey: ["projects"] });
     });

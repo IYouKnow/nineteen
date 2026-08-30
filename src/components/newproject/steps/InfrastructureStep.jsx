@@ -1,5 +1,3 @@
-import db from '@/lib/db';
-
 import { Check, Sparkles, Database } from "lucide-react";
 import { DATABASES } from "@/lib/newProject";
 import ServiceIcon from "@/components/newproject/ServiceIcon";
@@ -50,11 +48,19 @@ export default function InfrastructureStep({ services, setServices }) {
                 </span>
               </div>
               <div>
-                <p className="text-sm font-medium text-foreground">{db.label}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-foreground">{db.label}</p>
+                  {db.embedded && (
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      Embedded
+                    </span>
+                  )}
+                </div>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{db.description}</p>
               </div>
               <div className="mt-auto flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground/70">
-                <Database className="h-3 w-3" /> Managed & backed up
+                <Database className="h-3 w-3" />
+                {db.embedded ? "No provisioning" : "Managed & backed up"}
               </div>
             </button>
           );

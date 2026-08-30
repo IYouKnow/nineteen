@@ -1,4 +1,4 @@
-import db from '@/lib/db';
+import * as api from "@/lib/api";
 
 import { useMemo, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -98,7 +98,7 @@ export default function Projects() {
 
   const { data: projects, isLoading, isError } = useQuery({
     queryKey: ["projects"],
-    queryFn: () => db.entities.Project.list("-created_date", 100),
+    queryFn: () => api.projects.list(),
     enabled: true,
   });
 

@@ -1,4 +1,5 @@
 import db from '@/lib/db';
+import * as api from "@/lib/api";
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -24,7 +25,7 @@ export default function ConnectProjectsDialog({ database, open, onOpenChange, co
 
   const { data: projects = [], isLoading } = useQuery({
     queryKey: ["projects"],
-    queryFn: () => db.entities.Project.list("-created_date", 100),
+    queryFn: () => api.projects.list(),
     enabled: open,
   });
 

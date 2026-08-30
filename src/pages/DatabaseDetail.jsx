@@ -1,4 +1,4 @@
-import db from '@/lib/db';
+import * as api from "@/lib/api";
 
 import { useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
@@ -104,7 +104,7 @@ export default function DatabaseDetail() {
   });
   const { data: projects = [] } = useQuery({
     queryKey: ["projects"],
-    queryFn: () => db.entities.Project.list("-created_date", 100),
+    queryFn: () => api.projects.list(),
   });
 
   const projectsById = Object.fromEntries(projects.map((p) => [p.id, p]));

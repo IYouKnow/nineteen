@@ -77,6 +77,50 @@ func runMigrations() {
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(user_id, provider)
 		)`,
+		`CREATE TABLE IF NOT EXISTS projects (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			slug TEXT NOT NULL,
+			status TEXT DEFAULT 'idle',
+			framework TEXT DEFAULT 'node',
+			repository TEXT DEFAULT '',
+			branch TEXT DEFAULT 'main',
+			domain TEXT DEFAULT '',
+			description TEXT DEFAULT '',
+			auto_deploy BOOLEAN DEFAULT FALSE,
+			region TEXT DEFAULT 'fra1',
+			instance_type TEXT DEFAULT 'nano',
+			build_strategy TEXT DEFAULT 'detect',
+			last_deployed_at DATETIME,
+			created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_date DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS deployments (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			project_name TEXT DEFAULT '',
+			status TEXT DEFAULT 'queued',
+			commit_sha TEXT DEFAULT '',
+			commit_message TEXT DEFAULT '',
+			branch TEXT DEFAULT 'main',
+			author TEXT DEFAULT '',
+			trigger TEXT DEFAULT 'manual',
+			framework TEXT DEFAULT '',
+			duration INTEGER DEFAULT 0,
+			port INTEGER,
+			url TEXT DEFAULT '',
+			created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_date DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS deployment_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			deployment_id INTEGER NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+			level TEXT DEFAULT 'info',
+			message TEXT NOT NULL
+		)`,
 	}
 
 	for _, m := range migrations {

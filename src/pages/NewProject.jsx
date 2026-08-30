@@ -1,4 +1,4 @@
-import db from '@/lib/db';
+import * as api from "@/lib/api";
 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -7,7 +7,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Loader2, Rocket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { buildRepository, sourceReady, TEMPLATES } from "@/lib/newProject";
-import { randomSha } from "@/lib/format";
 import Stepper from "@/components/newproject/Stepper";
 import SourceStep from "@/components/newproject/steps/SourceStep";
 import InfrastructureStep from "@/components/newproject/steps/InfrastructureStep";
@@ -47,6 +46,7 @@ const qc = useQueryClient();
     region: "fra1",
     instance: "nano",
     autoDeploy: true,
+    buildStrategy: "detect",
   });
   const [creating, setCreating] = useState(false);
 
@@ -91,7 +91,7 @@ const qc = useQueryClient();
     try {
       const slug = config.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
       const framework = source.type === "github" && source.repo ? source.repo.framework : config.framework;
-      const project = await db.entities.Project.create({
+      const project = await api.projects.create({
         name: config.name,
         slug,
         status: "building",
@@ -103,13 +103,9 @@ const qc = useQueryClient();
         last_deployed_at: new Date().toISOString(),
         region: config.region,
         instance_type: config.instance,
+        build_strategy: config.buildStrategy,
       });
-      const sha = randomSha();
-      const deployment = await db.entities.Deployment.create({
-        project_id: project.id,
-        project_name: project.name,
-        status: "building",
-        commit_sha: sha,
+      const deployment = await api.deployments.create(project.id, {
         commit_message: "Initial production deployment",
         branch: config.branch,
         author: "you",

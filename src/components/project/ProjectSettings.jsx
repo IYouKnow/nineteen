@@ -1,4 +1,5 @@
 import db from '@/lib/db';
+import * as api from "@/lib/api";
 
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -15,7 +16,7 @@ export default function ProjectSettings({ project, envVars = [], mounts = [], en
   const navigate = useNavigate();
 
   const remove = async () => {
-    await db.entities.Project.delete(project.id);
+    await api.projects.delete(project.id);
     if (envVars.length) {
       await db.entities.EnvironmentVariable.deleteMany({ project_id: project.id });
     }

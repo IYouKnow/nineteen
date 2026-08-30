@@ -1,16 +1,14 @@
-import db from '@/lib/db';
+import * as api from "@/lib/api";
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
-import { Rocket, Loader2, GitCommitHorizontal, Clock, Zap, GitBranch, RotateCw } from "lucide-react";
+import { Rocket, Loader2, GitCommitHorizontal, Clock, Zap, GitBranch } from "lucide-react";
 import StatusDot from "@/components/dev/StatusDot";
 import EmptyState from "@/components/dev/EmptyState";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { timeAgo, formatDuration, shortSha } from "@/lib/format";
-import { randomSha } from "@/lib/format";
 
 const TRIGGER_LABEL = {
   git: "git push",
@@ -29,18 +27,13 @@ export default function ProjectDeployments({ project, deployments = [], environm
     }
     setDeploying(true);
     try {
-      const sha = randomSha();
-      const deployment = await db.entities.Deployment.create({
-        project_id: project.id,
-        project_name: project.name,
-        status: "building",
-        commit_sha: sha,
+      const deployment = await api.deployments.create(project.id, {
         commit_message: "Manual deployment from dashboard",
         branch: project.branch || "main",
         author: "you",
         trigger: "manual",
       });
-      await db.entities.Project.update(project.id, {
+      await api.projects.update(project.id, {
         status: "building",
         last_deployed_at: new Date().toISOString(),
       });

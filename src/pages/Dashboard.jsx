@@ -1,4 +1,4 @@
-import db from '@/lib/db';
+import * as api from "@/lib/api";
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -87,13 +87,13 @@ function DeploymentRow({ deployment }) {
 export default function Dashboard() {
   const { data: projects, isLoading, isError } = useQuery({
     queryKey: ["projects"],
-    queryFn: () => db.entities.Project.list("-created_date", 100),
+    queryFn: () => api.projects.list(),
     enabled: true,
   });
 
   const { data: deployments } = useQuery({
     queryKey: ["deployments-recent"],
-    queryFn: () => db.entities.Deployment.list("-created_date", 30),
+    queryFn: () => api.deployments.recent(),
     enabled: true,
   });
 

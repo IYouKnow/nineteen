@@ -1,4 +1,4 @@
-import db from '@/lib/db';
+import * as api from "@/lib/api";
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -15,7 +15,7 @@ export default function RuntimeControls({ project }) {
   const run = async (action, status) => {
     setBusy(action);
     try {
-      await db.entities.Project.update(project.id, { status });
+      await api.projects.update(project.id, { status });
       qc.invalidateQueries({ queryKey: ["project", project.id] });
       qc.invalidateQueries({ queryKey: ["projects"] });
     } finally {
@@ -24,7 +24,7 @@ export default function RuntimeControls({ project }) {
   };
 
   const updateConfig = async (field, value) => {
-    await db.entities.Project.update(project.id, { [field]: value });
+    await api.projects.update(project.id, { [field]: value });
     qc.invalidateQueries({ queryKey: ["project", project.id] });
     qc.invalidateQueries({ queryKey: ["projects"] });
   };

@@ -64,6 +64,13 @@ export const DATABASES = [
     color: "#47a248",
     description: "Document database for flexible schemas.",
   },
+  {
+    id: "sqlite",
+    label: "SQLite",
+    color: "#00657e",
+    description: "Embedded file-based database — bundled with your app, no server to provision.",
+    embedded: true,
+  },
 ];
 
 // Ready-made starter templates. `framework` maps to the runtime framework used

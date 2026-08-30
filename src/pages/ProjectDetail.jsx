@@ -1,4 +1,5 @@
 import db from '@/lib/db';
+import * as api from "@/lib/api";
 
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
@@ -72,12 +73,12 @@ export default function ProjectDetail() {
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
-    queryFn: () => db.entities.Project.get(projectId),
+    queryFn: () => api.projects.get(projectId),
   });
 
   const { data: deployments = [] } = useQuery({
     queryKey: ["deployments", projectId],
-    queryFn: () => db.entities.Deployment.filter({ project_id: projectId }, "-created_date", 50),
+    queryFn: () => api.deployments.list(projectId),
   });
 
   const { data: envVars = [] } = useQuery({
@@ -221,18 +222,13 @@ export default function ProjectDetail() {
     }
     setDeploying(true);
     try {
-      const sha = randomSha();
-      const deployment = await db.entities.Deployment.create({
-        project_id: project.id,
-        project_name: project.name,
-        status: "building",
-        commit_sha: sha,
+      const deployment = await api.deployments.create(project.id, {
         commit_message: "Manual deployment from dashboard",
         branch: project.branch || "main",
-author: "you",
+        author: "you",
         trigger: "manual",
       });
-      await db.entities.Project.update(project.id, {
+      await api.projects.update(project.id, {
         status: "building",
         last_deployed_at: new Date().toISOString(),
       });
@@ -250,7 +246,7 @@ author: "you",
   const run = async (status) => {
     setBusy(status);
     try {
-      await db.entities.Project.update(project.id, { status });
+      await api.projects.update(project.id, { status });
       qc.invalidateQueries({ queryKey: ["project", projectId] });
       qc.invalidateQueries({ queryKey: ["projects"] });
     } finally {
@@ -259,7 +255,7 @@ author: "you",
   };
 
   const remove = async () => {
-    await db.entities.Project.delete(project.id);
+    await api.projects.delete(project.id);
     if (envVars.length) await db.entities.EnvironmentVariable.deleteMany({ project_id: projectId });
     if (mounts.length) await db.entities.Mount.deleteMany({ project_id: projectId });
     qc.invalidateQueries({ queryKey: ["projects"] });

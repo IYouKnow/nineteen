@@ -1,4 +1,4 @@
-import db from '@/lib/db';
+import * as api from "@/lib/api";
 
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
@@ -21,7 +21,7 @@ import FrameworkIcon from "@/components/dev/FrameworkIcon";
 import BuildLog from "@/components/dev/BuildLog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { timeAgo, formatDate, formatDuration, shortSha } from "@/lib/format";
+import { timeAgo, formatDuration, shortSha } from "@/lib/format";
 import { getFramework } from "@/lib/devStatus";
 
 function Meta({ icon: Icon, label, value, mono }) {
@@ -43,12 +43,13 @@ export default function DeploymentDetail() {
 
   const { data: deployment, isLoading } = useQuery({
     queryKey: ["deployment", deploymentId],
-    queryFn: () => db.entities.Deployment.get(deploymentId),
+    queryFn: () => api.deployments.get(deploymentId),
+    refetchInterval: (query) => (query.state.data?.status === "building" ? 1500 : false),
   });
 
   const { data: project } = useQuery({
     queryKey: ["project", projectId],
-    queryFn: () => db.entities.Project.get(projectId),
+    queryFn: () => api.projects.get(projectId),
   });
 
   if (isLoading || !deployment) {

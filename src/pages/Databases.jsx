@@ -1,4 +1,5 @@
 import db from '@/lib/db';
+import * as api from "@/lib/api";
 
 import { useMemo, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -44,7 +45,7 @@ export default function Databases() {
   });
   const { data: projects = [] } = useQuery({
     queryKey: ["projects"],
-    queryFn: () => db.entities.Project.list("-created_date", 100),
+    queryFn: () => api.projects.list(),
   });
 
   const projectsById = useMemo(

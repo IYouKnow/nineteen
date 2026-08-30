@@ -54,6 +54,12 @@ func main() {
 	mux.HandleFunc("/api/settings/integrations/test", handlers.TestIntegrationHandler)
 	mux.HandleFunc("/api/settings/integrations/repos", handlers.IntegrationReposHandler)
 	mux.HandleFunc("/api/settings/integrations/", handlers.UpdateIntegrationHandler)
+	mux.HandleFunc("/api/projects", handlers.ProjectsHandler)
+	mux.HandleFunc("/api/projects/{id}", handlers.ProjectHandler)
+	mux.HandleFunc("/api/projects/{id}/deployments", handlers.ProjectDeploymentsHandler)
+	mux.HandleFunc("/api/deployments", handlers.DeploymentsHandler)
+	mux.HandleFunc("/api/deployments/{id}", handlers.DeploymentHandler)
+	mux.HandleFunc("/api/deployments/{id}/logs", handlers.DeploymentLogsHandler)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))

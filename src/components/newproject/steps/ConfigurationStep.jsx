@@ -81,6 +81,35 @@ export default function ConfigurationStep({ config, setConfig, sourceLabel }) {
         </div>
       </div>
 
+      <div className="mt-4">
+        <Label className="text-xs">Build strategy</Label>
+        <p className="text-xs text-muted-foreground">How your code is built into a runnable app.</p>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          {[
+            { id: "detect", label: "Auto-detect", desc: "Detect the framework and build automatically — no Dockerfile needed." },
+            { id: "dockerfile", label: "Dockerfile", desc: "Build using the Dockerfile in your repository." },
+          ].map((o) => {
+            const active = config.buildStrategy === o.id;
+            return (
+              <button
+                key={o.id}
+                type="button"
+                onClick={() => update({ buildStrategy: o.id })}
+                className={cn(
+                  "rounded-lg border p-3 text-left transition-all",
+                  active
+                    ? "border-primary bg-primary/5 ring-1 ring-primary"
+                    : "border-border bg-card hover:border-muted-foreground/30 hover:bg-muted/20"
+                )}
+              >
+                <p className="text-sm font-medium text-foreground">{o.label}</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{o.desc}</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="mt-4 flex items-center justify-between rounded-md border border-border p-3">
         <div>
           <p className="text-sm font-medium">Auto-deploy on push</p>
