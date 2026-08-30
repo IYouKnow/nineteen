@@ -16,6 +16,7 @@ dist
 dist-ssr
 *.local
 server/data
+server/nineteen-server.exe
 
 # Editor directories and files
 .vscode/*

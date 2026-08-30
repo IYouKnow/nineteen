@@ -46,7 +46,7 @@ function AppRoutes() {
         <Route path="/databases/new" element={<NewDatabase />} />
         <Route path="/databases/:databaseId" element={<DatabaseDetail />} />
         <Route path="/profile" element={<Profile />} />
-        <Route path="/settings" element={<Settings />} />
+        <Route path="/settings/*" element={<Settings />} />
       </Route>
       <Route path="*" element={<PageNotFound />} />
     </Routes>

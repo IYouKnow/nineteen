@@ -286,6 +286,7 @@ func listIntegrationsHandler(w http.ResponseWriter, r *http.Request) {
 		Connected bool   `json:"connected"`
 		CreatedAt string `json:"created_at"`
 		UpdatedAt string `json:"updated_at"`
+		RepoCount int    `json:"repo_count"`
 	}
 
 	var integrations []integrationResponse
@@ -298,6 +299,14 @@ func listIntegrationsHandler(w http.ResponseWriter, r *http.Request) {
 		ig.Connected = true
 		ig.CreatedAt = createdAt
 		ig.UpdatedAt = updatedAt
+		if ig.Metadata != "" {
+			var meta struct {
+				RepoCount int `json:"repo_count"`
+			}
+			if err := json.Unmarshal([]byte(ig.Metadata), &meta); err == nil {
+				ig.RepoCount = meta.RepoCount
+			}
+		}
 		integrations = append(integrations, ig)
 	}
 
@@ -349,6 +358,7 @@ func connectIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var username, avatarURL string
+	repoCount := 0
 
 	switch req.Provider {
 	case "github":
@@ -360,10 +370,15 @@ func connectIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		username = user.Login
 		avatarURL = user.AvatarURL
+		if count, err := ghClient.CountRepositories(); err == nil {
+			repoCount = count
+		}
 	default:
 		respondError(w, http.StatusBadRequest, "Unsupported provider")
 		return
 	}
+
+	metadata := fmt.Sprintf(`{"repo_count": %d}`, repoCount)
 
 	encryptedToken, err := auth.EncryptToken(req.AccessToken)
 	if err != nil {
@@ -372,8 +387,8 @@ func connectIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = db.DB.Exec(
-		`INSERT INTO integrations (user_id, provider, label, username, avatar_url, access_token, config) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		claims.UserID, req.Provider, req.Label, username, avatarURL, encryptedToken, req.Config,
+		`INSERT INTO integrations (user_id, provider, label, username, avatar_url, access_token, config, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		claims.UserID, req.Provider, req.Label, username, avatarURL, encryptedToken, req.Config, metadata,
 	)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to save integration")
@@ -381,9 +396,10 @@ func connectIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"message":  fmt.Sprintf("%s connected", req.Provider),
-		"username": username,
-		"avatar":   avatarURL,
+		"message":    fmt.Sprintf("%s connected", req.Provider),
+		"username":   username,
+		"avatar":     avatarURL,
+		"repo_count": repoCount,
 	})
 }
 
@@ -502,11 +518,17 @@ func TestIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusBadRequest, "Invalid token: "+err.Error())
 			return
 		}
+		repoCount := 0
+		if count, err := ghClient.CountRepositories(); err == nil {
+			repoCount = count
+		}
 		respondJSON(w, http.StatusOK, map[string]interface{}{
-			"valid":    true,
-			"username": user.Login,
-			"avatar":   user.AvatarURL,
-			"name":     user.Name,
+			"valid":      true,
+			"username":   user.Login,
+			"avatar":     user.AvatarURL,
+			"name":       user.Name,
+			"type":       user.Type,
+			"repo_count": repoCount,
 		})
 	default:
 		respondError(w, http.StatusBadRequest, "Unsupported provider")

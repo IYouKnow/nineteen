@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 
@@ -76,10 +77,6 @@ func runMigrations() {
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(user_id, provider)
 		)`,
-		`ALTER TABLE integrations ADD COLUMN label TEXT DEFAULT ''`,
-		`ALTER TABLE integrations ADD COLUMN username TEXT DEFAULT ''`,
-		`ALTER TABLE integrations ADD COLUMN avatar_url TEXT DEFAULT ''`,
-		`ALTER TABLE integrations ADD COLUMN metadata TEXT DEFAULT '{}'`,
 	}
 
 	for _, m := range migrations {
@@ -87,6 +84,53 @@ func runMigrations() {
 			log.Fatalf("Migration failed: %v", err)
 		}
 	}
+
+	columns := []struct {
+		table  string
+		column string
+		ddl    string
+	}{
+		{"integrations", "label", `ALTER TABLE integrations ADD COLUMN label TEXT DEFAULT ''`},
+		{"integrations", "username", `ALTER TABLE integrations ADD COLUMN username TEXT DEFAULT ''`},
+		{"integrations", "avatar_url", `ALTER TABLE integrations ADD COLUMN avatar_url TEXT DEFAULT ''`},
+		{"integrations", "metadata", `ALTER TABLE integrations ADD COLUMN metadata TEXT DEFAULT '{}'`},
+	}
+
+	for _, c := range columns {
+		exists, err := columnExists(c.table, c.column)
+		if err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
+		if exists {
+			continue
+		}
+		if _, err := DB.Exec(c.ddl); err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
+	}
+}
+
+func columnExists(table, column string) (bool, error) {
+	rows, err := DB.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	exists := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype, dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name.String == column {
+			exists = true
+			break
+		}
+	}
+
+	return exists, rows.Err()
 }
 
 func seedInviteCode() {

@@ -14,6 +14,7 @@ type GitHubUser struct {
 	AvatarURL string `json:"avatar_url"`
 	Name      string `json:"name"`
 	Email     string `json:"email"`
+	Type      string `json:"type"`
 }
 
 type GitHubRepo struct {
@@ -105,4 +106,22 @@ func (g *GitHubClient) ListRepositories(page, perPage int) ([]GitHubRepo, error)
 
 func (g *GitHubClient) ValidateToken() (*GitHubUser, error) {
 	return g.GetCurrentUser()
+}
+
+// CountRepositories returns the total number of repositories accessible to the
+// token by paginating through the user's repository list.
+func (g *GitHubClient) CountRepositories() (int, error) {
+	const perPage = 100
+	total := 0
+	for page := 1; ; page++ {
+		repos, err := g.ListRepositories(page, perPage)
+		if err != nil {
+			return 0, err
+		}
+		total += len(repos)
+		if len(repos) < perPage || page >= 50 {
+			break
+		}
+	}
+	return total, nil
 }

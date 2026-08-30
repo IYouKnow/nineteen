@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate, useLocation, Routes, Route, Navigate } from "react-router-dom";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -8,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -134,11 +135,11 @@ function useSettings() {
 
 function SectionHeader({ icon: Icon, title, description }) {
   return (
-    <div className="mb-3 flex items-center gap-2">
-      {Icon && <Icon className="h-4 w-4 text-muted-foreground" />}
+    <div className="mb-4 flex items-center gap-2.5">
+      {Icon && <Icon className="h-5 w-5 text-muted-foreground" />}
       <div>
-        <h2 className="text-sm font-medium text-foreground">{title}</h2>
-        {description && <p className="text-xs text-muted-foreground">{description}</p>}
+        <h2 className="text-xl font-semibold text-foreground">{title}</h2>
+        {description && <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>}
       </div>
     </div>
   );
@@ -226,7 +227,7 @@ function ThemePreview({ theme: t }) {
   );
 }
 
-function ThemeCard({ label, description, icon: Icon, theme: themeValue, selected, onClick }) {
+function ThemeCard({ label, description, icon: Icon, value: themeValue, selected, onClick }) {
   return (
     <button
       onClick={onClick}
@@ -539,7 +540,7 @@ function IntegrationsTab() {
 
   async function handleDisconnect(integration) {
     try {
-      const res = await fetch(`${API_URL}/api/settings/integrations?id=${integration.id}`, {
+      const res = await fetch(`${API_URL}/api/settings/integrations?provider=${integration.provider}`, {
         method: "DELETE",
         headers: getAuthHeaders(),
       });
@@ -712,8 +713,18 @@ function DeploymentDefaultsTab({ settings, onSave }) {
   );
 }
 
+const SETTINGS_TABS = ["general", "appearance", "integrations", "deployment"];
+
+function getActiveTab(pathname) {
+  const last = pathname.split("/").filter(Boolean).pop();
+  return SETTINGS_TABS.includes(last) ? last : "general";
+}
+
 export default function Settings() {
   const { settings, loading, saving, updateSettings } = useSettings();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const activeTab = getActiveTab(location.pathname);
 
   if (loading) {
     return (
@@ -738,7 +749,7 @@ export default function Settings() {
       </div>
 
       <div className="mt-7">
-        <Tabs defaultValue="general">
+        <Tabs value={activeTab} onValueChange={(value) => navigate(`/settings/${value}`)}>
           <TabsList className="w-full justify-start">
             <TabsTrigger value="general">General</TabsTrigger>
             <TabsTrigger value="appearance">Appearance</TabsTrigger>
@@ -747,31 +758,17 @@ export default function Settings() {
             <TabsTrigger value="integrations">Integrations</TabsTrigger>
             <TabsTrigger value="deployment">Deployment</TabsTrigger>
           </TabsList>
-
-          <TabsContent value="general">
-            <GeneralTab settings={settings} saving={saving} onSave={updateSettings} />
-          </TabsContent>
-
-          <TabsContent value="appearance">
-            <AppearanceTab settings={settings} onSave={updateSettings} />
-          </TabsContent>
-
-          <TabsContent value="notifications">
-            <NotificationsTab settings={settings} onSave={updateSettings} />
-          </TabsContent>
-
-          <TabsContent value="api-keys">
-            <ApiKeysTab />
-          </TabsContent>
-
-          <TabsContent value="integrations">
-            <IntegrationsTab />
-          </TabsContent>
-
-          <TabsContent value="deployment">
-            <DeploymentDefaultsTab settings={settings} onSave={updateSettings} />
-          </TabsContent>
         </Tabs>
+
+        <div className="mt-6 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+          <Routes>
+            <Route index element={<Navigate to="/settings/general" replace />} />
+            <Route path="general" element={<GeneralTab settings={settings} saving={saving} onSave={updateSettings} />} />
+            <Route path="appearance" element={<AppearanceTab settings={settings} onSave={updateSettings} />} />
+            <Route path="integrations" element={<IntegrationsTab />} />
+            <Route path="deployment" element={<DeploymentDefaultsTab settings={settings} onSave={updateSettings} />} />
+          </Routes>
+        </div>
       </div>
     </div>
   );

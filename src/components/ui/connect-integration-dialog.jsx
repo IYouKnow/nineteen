@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,7 +10,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { CheckCircle2, Loader2, Eye, EyeOff } from "lucide-react";
+import { CheckCircle2, Loader2, Eye, EyeOff, FolderGit2, Building2, UserRound } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
@@ -37,28 +37,45 @@ export function ConnectIntegrationDialog({ provider, open, onClose, onConnect })
     onClose();
   }
 
-  async function handleTest() {
-    if (!token.trim()) return;
-    setTesting(true);
+  useEffect(() => {
+    const trimmed = token.trim();
+    if (!trimmed) {
+      setTestResult(null);
+      setError(null);
+      setTesting(false);
+      return;
+    }
     setError(null);
     setTestResult(null);
+    const timer = setTimeout(() => {
+      runTest(trimmed);
+    }, 700);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  async function runTest(tok) {
+    setTesting(true);
     try {
       const res = await fetch(`${API_URL}/api/settings/integrations/test`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ provider: provider.id, access_token: token }),
+        body: JSON.stringify({ provider: provider.id, access_token: tok }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Test failed");
       setTestResult(data);
+      setError(null);
     } catch (err) {
       setError(err.message);
+      setTestResult(null);
     } finally {
       setTesting(false);
     }
   }
 
   async function handleConnect() {
+    if (!testResult) return;
     setConnecting(true);
     setError(null);
     try {
@@ -176,22 +193,29 @@ export function ConnectIntegrationDialog({ provider, open, onClose, onConnect })
                   {testResult.name || testResult.username}
                 </span>
               </div>
+              <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
+                <div className="flex items-center gap-1.5">
+                  <FolderGit2 className="h-3.5 w-3.5" />
+                  {testResult.repo_count} repositor{testResult.repo_count === 1 ? "y" : "ies"}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {testResult.type === "Organization" ? (
+                    <Building2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <UserRound className="h-3.5 w-3.5" />
+                  )}
+                  {testResult.type === "Organization" ? "Organization" : "User"}
+                </div>
+              </div>
             </div>
           )}
 
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!token.trim() || testing}
-              onClick={handleTest}
-            >
-              {testing ? (
-                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-              ) : null}
-              Test Connection
-            </Button>
-          </div>
+          {testing && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Validating token…
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={handleClose}>
@@ -199,7 +223,7 @@ export function ConnectIntegrationDialog({ provider, open, onClose, onConnect })
           </Button>
           <Button
             variant="white"
-            disabled={!token.trim() || connecting}
+            disabled={!token.trim() || !testResult || connecting}
             onClick={handleConnect}
           >
             {connecting ? (

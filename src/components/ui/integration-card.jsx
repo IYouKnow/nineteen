@@ -1,8 +1,19 @@
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import { CheckCircle2, Settings, Loader2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { CheckCircle2, Settings, Loader2, FolderGit2 } from "lucide-react";
 
 export function IntegrationCard({
   provider,
@@ -14,6 +25,7 @@ export function IntegrationCard({
 }) {
   const isConnected = !!integration;
   const isEnabled = provider.enabled !== false;
+  const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
 
   return (
     <div
@@ -79,11 +91,30 @@ export function IntegrationCard({
                     {integration.username.charAt(0).toUpperCase()}
                   </AvatarFallback>
                 </Avatar>
-                <span className="text-xs text-muted-foreground">
-                  {integration.label !== provider.name
-                    ? `${integration.label} (${integration.username})`
-                    : integration.username}
-                </span>
+                {integration.provider === "github" ? (
+                  <a
+                    href={`https://github.com/${integration.username}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    {integration.label !== provider.name
+                      ? `${integration.label} (${integration.username})`
+                      : integration.username}
+                  </a>
+                ) : (
+                  <span className="text-xs text-muted-foreground">
+                    {integration.label !== provider.name
+                      ? `${integration.label} (${integration.username})`
+                      : integration.username}
+                  </span>
+                )}
+              </div>
+            )}
+            {isConnected && typeof integration.repo_count === "number" && integration.repo_count > 0 && (
+              <div className="flex items-center gap-1.5 mt-1.5 text-xs text-muted-foreground">
+                <FolderGit2 className="h-3.5 w-3.5" />
+                {integration.repo_count} repositor{integration.repo_count === 1 ? "y" : "ies"}
               </div>
             )}
           </div>
@@ -102,7 +133,7 @@ export function IntegrationCard({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => onDisconnect(integration)}
+                onClick={() => setShowDisconnectConfirm(true)}
               >
                 Disconnect
               </Button>
@@ -122,6 +153,35 @@ export function IntegrationCard({
           )}
         </div>
       </div>
+
+      {integration && (
+        <AlertDialog
+          open={showDisconnectConfirm}
+          onOpenChange={setShowDisconnectConfirm}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Disconnect Integration?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will remove the connection to {integration.username} on{" "}
+                {integration.provider}. You can reconnect at any time.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  setShowDisconnectConfirm(false);
+                  onDisconnect(integration);
+                }}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Disconnect
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
     </div>
   );
 }
