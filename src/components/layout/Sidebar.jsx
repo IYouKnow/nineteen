@@ -57,7 +57,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
           </div>
           <button
             onClick={onClose}
-            className="text-muted-foreground hover:text-foreground md:hidden"
+            className="text-muted-foreground hover:text-foreground md:hidden cursor-pointer"
           >
             <X className="h-5 w-5" />
           </button>

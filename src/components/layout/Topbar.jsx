@@ -1,5 +1,15 @@
-import { Menu, Search, Bell } from "lucide-react";
+import { Menu, Search, Bell, User, Settings, LogOut, Sun, Moon } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 function initials(name = "User") {
   return name
@@ -13,11 +23,14 @@ function initials(name = "User") {
 
 export default function Topbar({ onMenu }) {
   const name = "User";
+  const navigate = useNavigate();
+  const { theme, setTheme } = useTheme();
+
   return (
     <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-md">
       <button
         onClick={onMenu}
-        className="text-muted-foreground hover:text-foreground md:hidden"
+        className="text-muted-foreground hover:text-foreground md:hidden cursor-pointer"
       >
         <Menu className="h-5 w-5" />
       </button>
@@ -29,29 +42,59 @@ export default function Topbar({ onMenu }) {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        <button className="hidden items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground sm:flex">
+        <button className="hidden items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground sm:flex cursor-pointer">
           <Search className="h-3.5 w-3.5" />
           <span>Search projects…</span>
           <kbd className="ml-3 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/70">
             ⌘K
           </kbd>
         </button>
-        <button className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground">
+        <button className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground cursor-pointer">
           <Bell className="h-4 w-4" />
         </button>
-        <div className="flex items-center gap-2 rounded-md border border-border bg-muted/20 py-1 pl-1 pr-2.5">
-          <span
-            className={cn(
-              "flex h-6 w-6 items-center justify-center rounded text-[11px] font-semibold",
-              "bg-foreground text-background"
-            )}
-          >
-            {initials("User")}
-          </span>
-          <span className="hidden max-w-[120px] truncate text-xs text-foreground/80 sm:inline">
-            User
-          </span>
-        </div>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className="flex items-center gap-2 rounded-md border border-border bg-muted/20 py-1 pl-1 pr-2.5 transition-colors hover:bg-muted/40 cursor-pointer">
+              <span
+                className={cn(
+                  "flex h-6 w-6 items-center justify-center rounded text-[11px] font-semibold",
+                  "bg-foreground text-background"
+                )}
+              >
+                {initials("User")}
+              </span>
+              <span className="hidden max-w-[120px] truncate text-xs text-foreground/80 sm:inline">
+                User
+              </span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuLabel>My Account</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => navigate('/profile')}>
+              <User className="h-4 w-4" />
+              Profile
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate('/settings')}>
+              <Settings className="h-4 w-4" />
+              Settings
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+              {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={() => console.log('logout')}
+            >
+              <LogOut className="h-4 w-4" />
+              Log out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </header>
   );

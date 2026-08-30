@@ -4,7 +4,52 @@
 
 @layer base {
   :root {
-    /* Near-black technical palette — dark by default */
+    /* Light theme */
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 217 91% 60%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 52%;
+    --warning-foreground: 0 0% 10%;
+    --info: 217 91% 60%;
+    --info-foreground: 0 0% 100%;
+
+    --radius: 0.5rem;
+    --font-heading: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-display: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas, monospace;
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217 91% 60%;
+  }
+
+  .dark {
+    /* Dark theme */
     --background: 240 6% 3.5%;
     --foreground: 0 0% 95%;
     --card: 240 6% 5.5%;
@@ -25,19 +70,12 @@
     --input: 240 5% 15%;
     --ring: 217 91% 60%;
 
-    /* Status tokens */
     --success: 142 64% 45%;
     --success-foreground: 0 0% 100%;
     --warning: 38 92% 52%;
     --warning-foreground: 0 0% 10%;
     --info: 217 91% 60%;
     --info-foreground: 0 0% 100%;
-
-    --radius: 0.5rem;
-    --font-heading: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-    --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-    --font-display: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas, monospace;
 
     --sidebar-background: 240 7% 4.5%;
     --sidebar-foreground: 240 5% 65%;
@@ -56,6 +94,9 @@
   }
 
   html {
+    color-scheme: light;
+  }
+  .dark html {
     color-scheme: dark;
   }
 
@@ -73,12 +114,23 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: hsl(240 5% 18%);
+    background: hsl(240 5% 80%);
     border-radius: 999px;
     border: 2px solid transparent;
     background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
+    background: hsl(240 5% 65%);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background: hsl(240 5% 18%);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  .dark ::-webkit-scrollbar-thumb:hover {
     background: hsl(240 5% 26%);
     background-clip: padding-box;
     border: 2px solid transparent;
@@ -89,9 +141,14 @@
   /* Subtle grid background for hero/empty areas */
   .bg-grid {
     background-image:
+      linear-gradient(to right, hsl(240 6% 80% / 0.6) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(240 6% 80% / 0.6) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  .dark .bg-grid {
+    background-image:
       linear-gradient(to right, hsl(240 6% 14% / 0.6) 1px, transparent 1px),
       linear-gradient(to bottom, hsl(240 6% 14% / 0.6) 1px, transparent 1px);
-    background-size: 32px 32px;
   }
 
   .bg-grid-fade {
@@ -101,6 +158,10 @@
 
   /* Terminal log surface */
   .terminal-surface {
+    background:
+      radial-gradient(ellipse at top, hsl(240 6% 92%) 0%, hsl(240 7% 96%) 100%);
+  }
+  .dark .terminal-surface {
     background:
       radial-gradient(ellipse at top, hsl(240 6% 7%) 0%, hsl(240 7% 4%) 100%);
   }
@@ -121,9 +182,12 @@
     animation: buildPulse 1.6s ease-in-out infinite;
   }
   .animate-shimmer {
-    background: linear-gradient(90deg, transparent, hsl(240 5% 16%), transparent);
+    background: linear-gradient(90deg, transparent, hsl(240 5% 85%), transparent);
     background-size: 200% 100%;
     animation: shimmer 1.4s infinite;
+  }
+  .dark .animate-shimmer {
+    background: linear-gradient(90deg, transparent, hsl(240 5% 16%), transparent);
   }
 }
 
