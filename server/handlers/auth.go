@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
-	"nexuscore-server/auth"
-	"nexuscore-server/db"
-	"nexuscore-server/models"
+	"nineteen-server/auth"
+	"nineteen-server/db"
+	"nineteen-server/models"
 )
 
 type RegisterRequest struct {
@@ -68,6 +68,44 @@ func HasUsersHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, map[string]bool{"has_users": count > 0})
+}
+
+func ValidateInviteHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	req.Code = strings.TrimSpace(req.Code)
+	if req.Code == "" {
+		respondError(w, http.StatusBadRequest, "Invite code is required")
+		return
+	}
+
+	var used bool
+	err := db.DB.QueryRow("SELECT used FROM invite_codes WHERE code = ?", req.Code).Scan(&used)
+	if err == sql.ErrNoRows {
+		respondError(w, http.StatusForbidden, "Invalid invite code")
+		return
+	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	if used {
+		respondError(w, http.StatusForbidden, "Invite code has already been used")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]bool{"valid": true})
 }
 
 func RegisterHandler(w http.ResponseWriter, r *http.Request) {

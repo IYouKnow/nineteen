@@ -1,29 +1,26 @@
-"use client";
-import { useTheme } from "next-themes"
-import { Toaster as Sonner } from "sonner"
+import { useTheme } from "@/lib/theme";
+import { Toaster as Sonner } from "sonner";
 
-const Toaster = ({
-  ...props
-}) => {
-  const { theme = "system" } = useTheme()
+function Toaster({ ...props }) {
+  const { theme } = useTheme();
 
   return (
-    (<Sonner
+    <Sonner
       theme={theme}
-      className="toaster group"
+      position="bottom-right"
+      duration={5000}
       toastOptions={{
+        className: "rounded-lg border border-border bg-card p-4 shadow-lg",
         classNames: {
-          toast:
-            "group toast group-[.toaster]:bg-background group-[.toaster]:text-foreground group-[.toaster]:border-border group-[.toaster]:shadow-lg",
-          description: "group-[.toast]:text-muted-foreground",
-          actionButton:
-            "group-[.toast]:bg-primary group-[.toast]:text-primary-foreground",
-          cancelButton:
-            "group-[.toast]:bg-muted group-[.toast]:text-muted-foreground",
+          success: "border-l-4 border-l-success",
+          error: "border-l-4 border-l-destructive",
+          warning: "border-l-4 border-l-warning",
+          info: "border-l-4 border-l-info",
         },
       }}
-      {...props} />)
+      {...props}
+    />
   );
 }
 
-export { Toaster }
+export { Toaster };

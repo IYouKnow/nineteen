@@ -7,8 +7,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"nexuscore-server/db"
-	"nexuscore-server/handlers"
+	"github.com/joho/godotenv"
+	"nineteen-server/db"
+	"nineteen-server/handlers"
 )
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -27,9 +28,11 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 func main() {
+	godotenv.Load("../.env")
+
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
-		dbPath = "./data/nexuscore.db"
+		dbPath = "./data/nineteen.db"
 	}
 
 	os.MkdirAll("./data", 0755)
@@ -39,6 +42,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/auth/has-users", handlers.HasUsersHandler)
+	mux.HandleFunc("/api/auth/validate-invite", handlers.ValidateInviteHandler)
 	mux.HandleFunc("/api/auth/register", handlers.RegisterHandler)
 	mux.HandleFunc("/api/auth/login", handlers.LoginHandler)
 	mux.HandleFunc("/api/auth/me", handlers.MeHandler)
@@ -61,7 +65,7 @@ func main() {
 		server.Close()
 	}()
 
-	log.Println("NexusCore server running on :8080")
+	log.Println("Nineteen server running on :8080")
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}

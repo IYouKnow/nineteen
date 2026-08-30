@@ -4,14 +4,14 @@ import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { useToast } from "@/components/ui/use-toast";
+import { toast } from "sonner";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
 export default function Login() {
   const [hasUsers, setHasUsers] = useState(null);
   const [step, setStep] = useState("code");
-  const [inviteCode, setInviteCode] = useState(import.meta.env.VITE_INVITE_CODE || "");
+  const [inviteCode, setInviteCode] = useState("");
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -19,7 +19,6 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const { login, register } = useAuth();
   const navigate = useNavigate();
-  const { toast } = useToast();
 
   useEffect(() => {
     fetch(`${API_URL}/api/auth/has-users`)
@@ -34,10 +33,25 @@ export default function Login() {
       });
   }, []);
 
-  const handleValidateCode = (e) => {
+  const handleValidateCode = async (e) => {
     e.preventDefault();
-    if (inviteCode.trim()) {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/auth/validate-invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: inviteCode.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error("Invalid invite code", { description: data.error });
+        return;
+      }
       setStep("create");
+    } catch {
+      toast.error("Could not validate invite code");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -50,7 +64,7 @@ export default function Login() {
     if (result.success) {
       navigate("/", { replace: true });
     } else {
-      toast({ title: "Registration failed", description: result.error, variant: "destructive" });
+      toast.error("Registration failed", { description: result.error, duration: Infinity });
     }
   };
 
@@ -63,7 +77,7 @@ export default function Login() {
     if (result.success) {
       navigate("/", { replace: true });
     } else {
-      toast({ title: "Login failed", description: result.error, variant: "destructive" });
+      toast.error("Login failed", { description: result.error, duration: Infinity });
     }
   };
 

@@ -56,7 +56,8 @@ func runMigrations() {
 func seedInviteCode() {
 	code := os.Getenv("INVITE_CODE")
 	if code == "" {
-		code = "nexuscore-invite-2026"
+		log.Println("No INVITE_CODE set, skipping seed")
+		return
 	}
 
 	var exists bool

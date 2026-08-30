@@ -7,6 +7,7 @@ const fallbackDb = {
     {},
     {
       get: () => ({
+        list: async () => [],
         filter: async () => [],
         get: async () => null,
         create: async () => ({}),

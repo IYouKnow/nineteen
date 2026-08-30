@@ -3,7 +3,7 @@ import { Hand, Zap, GitBranch, Tag, Rocket, Save, Loader2, Play } from "lucide-r
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { useToast } from "@/components/ui/use-toast";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import StrategyCard from "./StrategyCard";
 import TriggerHistory from "./TriggerHistory";
@@ -71,7 +71,6 @@ function ExampleRow({ text, match }) {
 }
 
 export default function ProjectStrategy({ project }) {
-  const { toast } = useToast();
   const [strategy, setStrategy] = useState(project.auto_deploy ? "commit" : "manual");
   const [branch, setBranch] = useState(project.branch || "main");
   const [tagMode, setTagMode] = useState("pattern");
@@ -87,12 +86,12 @@ export default function ProjectStrategy({ project }) {
     setSaving(true);
     setTimeout(() => {
       setSaving(false);
-      toast({ title: "Deployment strategy saved", description: "Your trigger configuration has been updated." });
+      toast.success("Deployment strategy saved", { description: "Your trigger configuration has been updated." });
     }, 600);
   };
 
   const deployNow = () => {
-    toast({ title: "Deployment queued", description: "A new deployment has been triggered manually." });
+    toast.success("Deployment queued", { description: "A new deployment has been triggered manually." });
   };
 
   return (

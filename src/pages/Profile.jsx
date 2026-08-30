@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { useToast } from "@/components/ui/use-toast";
+import { toast } from "sonner";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,14 +19,13 @@ import {
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
 function getAuthHeaders() {
-  const token = localStorage.getItem("nexuscore_token");
+  const token = localStorage.getItem("nineteen_token");
   return { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
 }
 
 export default function Profile() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const { toast } = useToast();
 
   const [email, setEmail] = useState(user?.email || "");
   const [displayName, setDisplayName] = useState(user?.display_name || "");
@@ -50,10 +49,10 @@ export default function Profile() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      localStorage.setItem("nexuscore_user", JSON.stringify(data));
-      toast({ title: "Profile updated" });
+      localStorage.setItem("nineteen_user", JSON.stringify(data));
+      toast.success("Profile updated");
     } catch (err) {
-      toast({ title: "Update failed", description: err.message, variant: "destructive" });
+      toast.error("Update failed", { description: err.message, duration: Infinity });
     } finally {
       setSaving(false);
     }
@@ -72,9 +71,9 @@ export default function Profile() {
       if (!res.ok) throw new Error(data.error);
       setCurrentPassword("");
       setNewPassword("");
-      toast({ title: "Password updated" });
+      toast.success("Password updated");
     } catch (err) {
-      toast({ title: "Change failed", description: err.message, variant: "destructive" });
+      toast.error("Change failed", { description: err.message, duration: Infinity });
     } finally {
       setChangingPassword(false);
     }
@@ -93,7 +92,7 @@ export default function Profile() {
       logout();
       navigate("/login", { replace: true });
     } catch (err) {
-      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
+      toast.error("Delete failed", { description: err.message, duration: Infinity });
     } finally {
       setDeleting(false);
       setDeletePassword("");
