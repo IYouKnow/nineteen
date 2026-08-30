@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { Boxes, LayoutDashboard, FolderGit2, Database, Plus, X, Server } from "lucide-react";
+import { Boxes, LayoutDashboard, FolderGit2, Database, Plus, X, Server, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -73,6 +73,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
           <p className="px-2.5 pb-1 pt-5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/50">
             System
           </p>
+          <NavItem to="/settings" label="Settings" icon={Settings} end={false} />
           <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm text-sidebar-foreground">
             <Server className="h-4 w-4 shrink-0" />
             <span>Activity</span>

@@ -18,6 +18,7 @@ import Databases from "@/pages/Databases";
 import NewDatabase from "@/pages/NewDatabase";
 import DatabaseDetail from "@/pages/DatabaseDetail";
 import Profile from "@/pages/Profile";
+import Settings from "@/pages/Settings";
 
 function LoadingScreen() {
   return (
@@ -45,6 +46,7 @@ function AppRoutes() {
         <Route path="/databases/new" element={<NewDatabase />} />
         <Route path="/databases/:databaseId" element={<DatabaseDetail />} />
         <Route path="/profile" element={<Profile />} />
+        <Route path="/settings" element={<Settings />} />
       </Route>
       <Route path="*" element={<PageNotFound />} />
     </Routes>

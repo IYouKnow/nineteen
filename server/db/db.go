@@ -44,6 +44,42 @@ func runMigrations() {
 			used_by INTEGER REFERENCES users(id),
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS settings (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			key TEXT NOT NULL,
+			value TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(user_id, key)
+		)`,
+		`CREATE TABLE IF NOT EXISTS api_keys (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			key_hash TEXT NOT NULL,
+			prefix TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			last_used_at DATETIME
+		)`,
+		`CREATE TABLE IF NOT EXISTS integrations (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			provider TEXT NOT NULL,
+			label TEXT DEFAULT '',
+			username TEXT DEFAULT '',
+			avatar_url TEXT DEFAULT '',
+			access_token TEXT DEFAULT '',
+			config TEXT DEFAULT '{}',
+			metadata TEXT DEFAULT '{}',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(user_id, provider)
+		)`,
+		`ALTER TABLE integrations ADD COLUMN label TEXT DEFAULT ''`,
+		`ALTER TABLE integrations ADD COLUMN username TEXT DEFAULT ''`,
+		`ALTER TABLE integrations ADD COLUMN avatar_url TEXT DEFAULT ''`,
+		`ALTER TABLE integrations ADD COLUMN metadata TEXT DEFAULT '{}'`,
 	}
 
 	for _, m := range migrations {

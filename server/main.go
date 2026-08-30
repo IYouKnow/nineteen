@@ -47,6 +47,12 @@ func main() {
 	mux.HandleFunc("/api/auth/login", handlers.LoginHandler)
 	mux.HandleFunc("/api/auth/me", handlers.MeHandler)
 	mux.HandleFunc("/api/auth/change-password", handlers.ChangePasswordHandler)
+	mux.HandleFunc("/api/settings", handlers.SettingsHandler)
+	mux.HandleFunc("/api/settings/api-keys", handlers.ApiKeysHandler)
+	mux.HandleFunc("/api/settings/api-keys/", handlers.ApiKeyDeleteHandler)
+	mux.HandleFunc("/api/settings/integrations", handlers.IntegrationsHandler)
+	mux.HandleFunc("/api/settings/integrations/test", handlers.TestIntegrationHandler)
+	mux.HandleFunc("/api/settings/integrations/", handlers.UpdateIntegrationHandler)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
