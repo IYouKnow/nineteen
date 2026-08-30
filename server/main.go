@@ -53,6 +53,7 @@ func main() {
 	mux.HandleFunc("/api/settings/integrations", handlers.IntegrationsHandler)
 	mux.HandleFunc("/api/settings/integrations/test", handlers.TestIntegrationHandler)
 	mux.HandleFunc("/api/settings/integrations/repos", handlers.IntegrationReposHandler)
+	mux.HandleFunc("/api/settings/integrations/scan", handlers.IntegrationScanHandler)
 	mux.HandleFunc("/api/settings/integrations/", handlers.UpdateIntegrationHandler)
 	mux.HandleFunc("/api/projects", handlers.ProjectsHandler)
 	mux.HandleFunc("/api/projects/{id}", handlers.ProjectHandler)
@@ -65,8 +66,12 @@ func main() {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
+	addr := os.Getenv("ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
 	server := &http.Server{
-		Addr:    ":8080",
+		Addr:    addr,
 		Handler: corsMiddleware(mux),
 	}
 
@@ -78,7 +83,7 @@ func main() {
 		server.Close()
 	}()
 
-	log.Println("Nineteen server running on :8080")
+	log.Println("Nineteen server running on " + addr)
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}

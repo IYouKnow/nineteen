@@ -138,6 +138,8 @@ func runMigrations() {
 		{"integrations", "username", `ALTER TABLE integrations ADD COLUMN username TEXT DEFAULT ''`},
 		{"integrations", "avatar_url", `ALTER TABLE integrations ADD COLUMN avatar_url TEXT DEFAULT ''`},
 		{"integrations", "metadata", `ALTER TABLE integrations ADD COLUMN metadata TEXT DEFAULT '{}'`},
+		{"projects", "dockerfile_path", `ALTER TABLE projects ADD COLUMN dockerfile_path TEXT DEFAULT ''`},
+		{"projects", "compose_path", `ALTER TABLE projects ADD COLUMN compose_path TEXT DEFAULT ''`},
 	}
 
 	for _, c := range columns {

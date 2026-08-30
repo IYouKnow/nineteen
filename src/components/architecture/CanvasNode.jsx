@@ -5,7 +5,7 @@ import DbTypeIcon from "@/components/db/DbTypeIcon";
 import StatusDot from "@/components/dev/StatusDot";
 import { getRole } from "@/lib/architecture";
 import { getDbType } from "@/lib/databases";
-import { getFramework, TONES } from "@/lib/devStatus";
+import { TONES } from "@/lib/devStatus";
 import { cn } from "@/lib/utils";
 
 const AUTOMATION_ICONS = { Archive, DatabaseBackup, RefreshCw, Zap };

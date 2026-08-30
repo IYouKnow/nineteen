@@ -1,24 +1,18 @@
 import * as api from "@/lib/api";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ArrowLeft, ArrowRight, Loader2, Rocket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { buildRepository, sourceReady, TEMPLATES } from "@/lib/newProject";
 import Stepper from "@/components/newproject/Stepper";
 import SourceStep from "@/components/newproject/steps/SourceStep";
+import BuildStep from "@/components/newproject/steps/BuildStep";
 import InfrastructureStep from "@/components/newproject/steps/InfrastructureStep";
 import ConfigurationStep from "@/components/newproject/steps/ConfigurationStep";
 import ReviewStep from "@/components/newproject/steps/ReviewStep";
-
-const STEPS = [
-  { id: "source", label: "Source" },
-  { id: "infra", label: "Infrastructure" },
-  { id: "config", label: "Configuration" },
-  { id: "review", label: "Review" },
-];
 
 const emptySource = {
   type: null,
@@ -35,8 +29,8 @@ const emptySource = {
 
 export default function NewProject() {
   const navigate = useNavigate();
-const qc = useQueryClient();
-  const [step, setStep] = useState(0);
+  const qc = useQueryClient();
+  const [stepId, setStepId] = useState("source");
   const [source, setSource] = useState(emptySource);
   const [services, setServices] = useState([]);
   const [config, setConfig] = useState({
@@ -46,9 +40,73 @@ const qc = useQueryClient();
     region: "fra1",
     instance: "nano",
     autoDeploy: true,
-    buildStrategy: "detect",
+    dockerMode: "dockerfile",
+    dockerfilePath: "",
+    composePath: "",
   });
   const [creating, setCreating] = useState(false);
+  const prefilledRef = useRef(false);
+
+  // Repositories we can scan for build files (GitHub source, or a public
+  // github.com URL).
+  const scanTarget = useMemo(() => {
+    if (source.type === "github" && source.repo?.full_name) {
+      return { repo: source.repo.full_name, branch: source.repo.branch || "main" };
+    }
+    if (source.type === "public" && source.publicUrl) {
+      const m = source.publicUrl
+        .trim()
+        .match(/^https?:\/\/(?:www\.)?github\.com\/([^/\s]+)\/([^/\s#?]+?)(?:\.git)?\/?$/i);
+      if (m) return { repo: `${m[1]}/${m[2]}`, branch: "" };
+    }
+    return null;
+  }, [source]);
+
+  const { data: scan, isLoading: scanLoading, isError: scanError } = useQuery({
+    queryKey: ["repo-scan", scanTarget?.repo, scanTarget?.branch],
+    queryFn: () => api.integrations.scanRepo(scanTarget.repo, scanTarget.branch),
+    enabled: !!scanTarget,
+    staleTime: 60000,
+    retry: false,
+  });
+
+  const scannable = !!scanTarget;
+  const scanRepo = scanTarget?.repo || "";
+
+  const STEPS = useMemo(() => {
+    const steps = [{ id: "source", label: "Source" }];
+    if (scannable) steps.push({ id: "build", label: "Build" });
+    steps.push(
+      { id: "infra", label: "Infrastructure" },
+      { id: "config", label: "Configuration" },
+      { id: "review", label: "Review" }
+    );
+    return steps;
+  }, [scannable]);
+
+  const stepIndex = Math.max(0, STEPS.findIndex((s) => s.id === stepId));
+  const activeStep = STEPS[stepIndex].id;
+
+  // Reset build selections when the target repository changes.
+  useEffect(() => {
+    setConfig((c) => ({ ...c, dockerMode: "dockerfile", dockerfilePath: "", composePath: "" }));
+    prefilledRef.current = false;
+  }, [scanRepo]);
+
+  // Preselect the best build file once a scan lands.
+  useEffect(() => {
+    if (!scan || prefilledRef.current) return;
+    prefilledRef.current = true;
+    if (scan.dockerfiles?.length > 0) {
+      setConfig((c) =>
+        c.dockerfilePath ? c : { ...c, dockerMode: "dockerfile", dockerfilePath: scan.dockerfiles[0] }
+      );
+    } else if (scan.compose_files?.length > 0) {
+      setConfig((c) =>
+        c.composePath ? c : { ...c, dockerMode: "compose", composePath: scan.compose_files[0] }
+      );
+    }
+  }, [scan]);
 
   // Prefill name & framework when a GitHub repo is selected.
   useEffect(() => {
@@ -57,6 +115,7 @@ const qc = useQueryClient();
         ...c,
         name: source.repo.full_name.split("/")[1],
         framework: source.repo.framework,
+        branch: source.repo.branch || "main",
       }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -71,11 +130,24 @@ const qc = useQueryClient();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source.template]);
 
-  const canContinue =
-    step === 0 ? sourceReady(source) : step === 2 ? config.name.trim().length > 0 : true;
+  const buildReady = () => {
+    if (scanError || !scan) return true; // manual entry / auto fallback
+    const list = config.dockerMode === "compose" ? scan.compose_files : scan.dockerfiles;
+    if (!list || list.length === 0) return true; // nothing to select — warned
+    return !!(config.dockerMode === "compose" ? config.composePath : config.dockerfilePath);
+  };
 
-  const goNext = () => setStep((s) => Math.min(s + 1, STEPS.length - 1));
-  const goBack = () => setStep((s) => Math.max(s - 1, 0));
+  const canContinue =
+    activeStep === "source"
+      ? sourceReady(source)
+      : activeStep === "build"
+      ? buildReady()
+      : activeStep === "config"
+      ? config.name.trim().length > 0
+      : true;
+
+  const goNext = () => setStepId(STEPS[Math.min(stepIndex + 1, STEPS.length - 1)].id);
+  const goBack = () => setStepId(STEPS[Math.max(stepIndex - 1, 0)].id);
 
   const repository = buildRepository(source);
   const template = source.type === "template" ? TEMPLATES.find((t) => t.id === source.template) : null;
@@ -84,6 +156,12 @@ const qc = useQueryClient();
     : source.type === "github"
     ? source.repo?.full_name || "GitHub"
     : repository || "—";
+
+  const buildLabel = !scannable
+    ? "Dockerfile · auto-detected at deploy time"
+    : config.dockerMode === "compose"
+    ? `Docker Compose${config.composePath ? ` · ${config.composePath}` : ""}`
+    : `Dockerfile${config.dockerfilePath ? ` · ${config.dockerfilePath}` : " · auto-detected"}`;
 
   const handleCreate = async () => {
     if (!config.name.trim()) return;
@@ -103,7 +181,9 @@ const qc = useQueryClient();
         last_deployed_at: new Date().toISOString(),
         region: config.region,
         instance_type: config.instance,
-        build_strategy: config.buildStrategy,
+        build_strategy: scannable ? config.dockerMode : "detect",
+        dockerfile_path: scannable && config.dockerMode === "dockerfile" ? config.dockerfilePath : "",
+        compose_path: scannable && config.dockerMode === "compose" ? config.composePath : "",
       });
       const deployment = await api.deployments.create(project.id, {
         commit_message: "Initial production deployment",
@@ -137,15 +217,38 @@ const qc = useQueryClient();
 
       <div className="mt-6 rounded-lg border border-border bg-card">
         <div className="border-b border-border px-6 py-4">
-          <Stepper steps={STEPS} current={step} />
+          <Stepper steps={STEPS} current={stepIndex} />
         </div>
 
         <div className="px-6 py-6">
-          {step === 0 && <SourceStep source={source} setSource={setSource} />}
-          {step === 1 && <InfrastructureStep services={services} setServices={setServices} />}
-          {step === 2 && <ConfigurationStep config={config} setConfig={setConfig} sourceLabel={sourceLabel} />}
-          {step === 3 && (
-            <ReviewStep source={source} services={services} config={config} repository={repository} />
+          {activeStep === "source" && <SourceStep source={source} setSource={setSource} />}
+          {activeStep === "build" && (
+            <BuildStep
+              config={config}
+              setConfig={setConfig}
+              scan={scan}
+              scanLoading={scanLoading}
+              scanError={scanError}
+              scanTarget={scanTarget}
+            />
+          )}
+          {activeStep === "infra" && <InfrastructureStep services={services} setServices={setServices} />}
+          {activeStep === "config" && (
+            <ConfigurationStep
+              config={config}
+              setConfig={setConfig}
+              sourceLabel={sourceLabel}
+              buildLabel={buildLabel}
+            />
+          )}
+          {activeStep === "review" && (
+            <ReviewStep
+              source={source}
+              services={services}
+              config={config}
+              repository={repository}
+              buildLabel={buildLabel}
+            />
           )}
         </div>
 
@@ -153,7 +256,7 @@ const qc = useQueryClient();
           <Button
             variant="ghost"
             onClick={goBack}
-            disabled={step === 0}
+            disabled={stepIndex === 0}
             className="gap-1.5"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -162,9 +265,9 @@ const qc = useQueryClient();
 
           <div className="flex items-center gap-3">
             <span className="font-mono text-xs text-muted-foreground/60">
-              Step {step + 1} of {STEPS.length}
+              Step {stepIndex + 1} of {STEPS.length}
             </span>
-            {step < STEPS.length - 1 ? (
+            {stepIndex < STEPS.length - 1 ? (
               <Button onClick={goNext} disabled={!canContinue} className="gap-2">
                 Continue
                 <ArrowRight className="h-4 w-4" />

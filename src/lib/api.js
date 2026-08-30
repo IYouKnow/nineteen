@@ -35,3 +35,10 @@ export const deployments = {
   create: (projectId, payload) =>
     doFetch(`/api/projects/${projectId}/deployments`, { method: "POST", body: JSON.stringify(payload) }),
 };
+
+export const integrations = {
+  scanRepo: (repository, branch) =>
+    doFetch(
+      `/api/settings/integrations/scan?repo=${encodeURIComponent(repository)}&branch=${encodeURIComponent(branch || "")}`
+    ),
+};

@@ -17,6 +17,8 @@ type Project struct {
 	Region        string    `json:"region"`
 	InstanceType  string    `json:"instance_type"`
 	BuildStrategy string    `json:"build_strategy"`
+	DockerfilePath string   `json:"dockerfile_path"`
+	ComposePath   string    `json:"compose_path"`
 	LastDeployedAt *string  `json:"last_deployed_at"`
 	CreatedDate   string    `json:"created_date"`
 	UpdatedDate   string    `json:"updated_date"`

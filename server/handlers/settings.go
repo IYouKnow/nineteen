@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -604,6 +605,82 @@ func IntegrationReposHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, list)
+}
+
+type ScanResponse struct {
+	Repository   string   `json:"repository"`
+	Branch       string   `json:"branch"`
+	Files        []string `json:"files"`
+	Truncated    bool     `json:"truncated"`
+	Dockerfiles  []string `json:"dockerfiles"`
+	ComposeFiles []string `json:"compose_files"`
+}
+
+var repoNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+
+const scanFileLimit = 2000
+
+// IntegrationScanHandler scans a repository's file tree (via the GitHub API)
+// and returns the full file list plus ranked Dockerfile / Compose candidates,
+// so the project wizard can let the user pick the build file. Private repos
+// require a stored GitHub integration; public repos work without one.
+func IntegrationScanHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	claims, err := extractUser(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
+	}
+
+	repo := strings.TrimSpace(r.URL.Query().Get("repo"))
+	branch := strings.TrimSpace(r.URL.Query().Get("branch"))
+	if repo == "" || !repoNameRe.MatchString(repo) {
+		respondError(w, http.StatusBadRequest, "repo query param must be owner/name")
+		return
+	}
+
+	// Use the user's GitHub integration token when available (private repos);
+	// fall back to an anonymous call for public repos.
+	token := ""
+	var enc string
+	if err := db.DB.QueryRow(
+		"SELECT access_token FROM integrations WHERE user_id = ? AND provider = 'github' ORDER BY id ASC LIMIT 1",
+		claims.UserID,
+	).Scan(&enc); err == nil {
+		if t, err := auth.DecryptToken(enc); err == nil {
+			token = t
+		}
+	}
+
+	client := services.NewGitHubClient(token)
+	files, truncated, err := client.GetRepoTree(repo, branch)
+	if err != nil {
+		respondError(w, http.StatusBadGateway, "Failed to scan repository: "+err.Error())
+		return
+	}
+
+	dockerfiles := services.RankDockerfiles(files)
+	composeFiles := services.RankComposeFiles(files)
+
+	if len(files) > scanFileLimit {
+		files = files[:scanFileLimit]
+	}
+	if files == nil {
+		files = []string{}
+	}
+
+	respondJSON(w, http.StatusOK, ScanResponse{
+		Repository:   repo,
+		Branch:       branch,
+		Files:        files,
+		Truncated:    truncated,
+		Dockerfiles:  dockerfiles,
+		ComposeFiles: composeFiles,
+	})
 }
 
 type TestIntegrationRequest struct {

@@ -6,7 +6,6 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -31,7 +30,7 @@ type rowScanner interface {
 
 const projectSelect = `SELECT id, user_id, name, slug, status, framework, repository, branch,
 	domain, description, auto_deploy, region, instance_type, build_strategy,
-	last_deployed_at, created_date, updated_date FROM projects`
+	dockerfile_path, compose_path, last_deployed_at, created_date, updated_date FROM projects`
 
 func ProjectsHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -63,7 +62,8 @@ func listProjectsHandler(w http.ResponseWriter, r *http.Request) {
 		var p models.Project
 		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Slug, &p.Status, &p.Framework,
 			&p.Repository, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
-			&p.InstanceType, &p.BuildStrategy, &p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate); err != nil {
+			&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
+			&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate); err != nil {
 			continue
 		}
 		projects = append(projects, p)
@@ -92,6 +92,8 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 		Region        string `json:"region"`
 		InstanceType  string `json:"instance_type"`
 		BuildStrategy string `json:"build_strategy"`
+		DockerfilePath string `json:"dockerfile_path"`
+		ComposePath   string `json:"compose_path"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
@@ -121,16 +123,23 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 	if req.BuildStrategy == "" {
 		req.BuildStrategy = "detect"
 	}
+	switch req.BuildStrategy {
+	case "detect", "dockerfile", "compose":
+	default:
+		respondError(w, http.StatusBadRequest, "build_strategy must be one of: detect, dockerfile, compose")
+		return
+	}
 	if req.Status == "" {
 		req.Status = "idle"
 	}
 
 	result, err := db.DB.Exec(
 		`INSERT INTO projects (user_id, name, slug, status, framework, repository, branch, domain,
-			description, auto_deploy, region, instance_type, build_strategy)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			description, auto_deploy, region, instance_type, build_strategy, dockerfile_path, compose_path)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		claims.UserID, req.Name, req.Slug, req.Status, req.Framework, req.Repository,
-		req.Branch, req.Domain, req.Description, req.AutoDeploy, req.Region, req.InstanceType, req.BuildStrategy,
+		req.Branch, req.Domain, req.Description, req.AutoDeploy, req.Region, req.InstanceType,
+		req.BuildStrategy, req.DockerfilePath, req.ComposePath,
 	)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to create project")
@@ -189,7 +198,8 @@ func getProject(userID, id int64) (models.Project, error) {
 	err := db.DB.QueryRow(projectSelect+" WHERE id = ? AND user_id = ?", id, userID).Scan(
 		&p.ID, &p.UserID, &p.Name, &p.Slug, &p.Status, &p.Framework,
 		&p.Repository, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
-		&p.InstanceType, &p.BuildStrategy, &p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
+		&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
+		&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
 	)
 	return p, err
 }
@@ -198,6 +208,7 @@ var updatableProjectColumns = map[string]bool{
 	"status": true, "framework": true, "repository": true, "branch": true,
 	"domain": true, "description": true, "auto_deploy": true, "region": true,
 	"instance_type": true, "build_strategy": true, "name": true, "slug": true,
+	"dockerfile_path": true, "compose_path": true,
 	"last_deployed_at": true,
 }
 
@@ -423,7 +434,9 @@ func DeploymentLogsHandler(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, logs)
 }
 
-// ---- deployment worker (Phase B: real Docker build) ----
+// ---- deployment worker (Docker: Dockerfile or Docker Compose) ----
+
+const composeSearchHint = "docker-compose.yml, docker-compose.yaml, compose.yml or compose.yaml"
 
 func buildAndDeploy(deployID int64, project models.Project) {
 	log := func(level, msg string) {
@@ -456,24 +469,66 @@ func buildAndDeploy(deployID int64, project models.Project) {
 	}
 	log("info", "Repository cloned")
 
-	if _, err := os.Stat(filepath.Join(dir, "Dockerfile")); err != nil {
-		log("error", "No Dockerfile found. Add a Dockerfile to the repo, or pick a different build strategy.")
-		finishDeployment(deployID, project.ID, statusError, 0, "")
+	if sha := d.GitHead(dir); sha != "" {
+		db.DB.Exec("UPDATE deployments SET commit_sha = ? WHERE id = ?", sha, deployID)
+	}
+
+	dockerfiles := d.FindDockerfiles(dir)
+	composeFiles := d.FindComposeFiles(dir)
+
+	useCompose := project.ComposePath != "" || project.BuildStrategy == "compose"
+	if !useCompose && project.DockerfilePath == "" && project.BuildStrategy != "dockerfile" && len(dockerfiles) == 0 && len(composeFiles) > 0 {
+		// auto mode: fall back to compose when the repo only has one
+		log("info", "No Dockerfile found — a Docker Compose file is available, using it")
+		useCompose = true
+	}
+
+	if useCompose {
+		composeDeploy(log, d, deployID, project, dir, composeFiles, start)
 		return
 	}
+	dockerfileDeploy(log, d, deployID, project, dir, dockerfiles, composeFiles, start)
+}
+
+func dockerfileDeploy(log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, dockerfiles, composeFiles []string, start time.Time) {
+	dockerfile := project.DockerfilePath
+	if dockerfile != "" && !d.RepoFileExists(dir, dockerfile) {
+		log("warn", fmt.Sprintf("Dockerfile %q from the project settings was not found in this branch — searching the repository", dockerfile))
+		dockerfile = ""
+	}
+	if dockerfile == "" {
+		if len(dockerfiles) == 0 {
+			log("error", noBuildFileMessage(len(composeFiles), composeFiles))
+			finishDeployment(deployID, project.ID, statusError, 0, "")
+			return
+		}
+		dockerfile = dockerfiles[0]
+	}
+	log("info", "Using Dockerfile at "+dockerfile)
 
 	buildRef := randomHex(8)
 	image := fmt.Sprintf("nineteen-%s:%s", project.Slug, buildRef)
 	containerName := fmt.Sprintf("nineteen-%s", project.Slug)
 	log("info", "Building image "+image)
-	if err := d.Build(image, dir, func(line string) { log("info", line) }); err != nil {
+	if err := d.Build(image, dir, dockerfile, func(line string) { log("info", line) }); err != nil {
 		log("error", "Build failed: "+err.Error())
 		finishDeployment(deployID, project.ID, statusError, 0, "")
 		return
 	}
 	log("info", "Image built successfully")
 
-	containerPort := d.ParseExpose(dir)
+	containerPort := d.ParseExpose(dir, dockerfile)
+	if containerPort == 0 {
+		containerPort = d.ImagePort(image)
+		if containerPort > 0 {
+			log("info", fmt.Sprintf("No EXPOSE in the Dockerfile — image exposes port %d", containerPort))
+		}
+	}
+	if containerPort == 0 {
+		containerPort = 3000
+		log("warn", "No EXPOSE found in the Dockerfile or the image — assuming port 3000. Add EXPOSE <port> to your Dockerfile if this is wrong.")
+	}
+
 	hostPort, err := d.FreePort()
 	if err != nil {
 		log("error", "Failed to reserve a port: "+err.Error())
@@ -481,6 +536,7 @@ func buildAndDeploy(deployID int64, project models.Project) {
 		return
 	}
 	d.CleanupContainer(containerName)
+	d.CleanupCompose(composeProjectName(project.Slug), func(line string) { log("info", line) })
 	log("info", fmt.Sprintf("Starting container on 127.0.0.1:%d", hostPort))
 	if _, err := d.Run(image, containerName, hostPort, containerPort, func(line string) { log("info", line) }); err != nil {
 		log("error", "Container failed: "+err.Error())
@@ -495,6 +551,78 @@ func buildAndDeploy(deployID int64, project models.Project) {
 	db.DB.Exec("UPDATE projects SET status = 'running', last_deployed_at = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
 		time.Now().UTC().Format(time.RFC3339), project.ID)
 	log("success", "Deployment ready at "+url)
+}
+
+func composeDeploy(log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, composeFiles []string, start time.Time) {
+	composeFile := project.ComposePath
+	if composeFile != "" && !d.RepoFileExists(dir, composeFile) {
+		log("warn", fmt.Sprintf("Compose file %q from the project settings was not found in this branch — searching the repository", composeFile))
+		composeFile = ""
+	}
+	if composeFile == "" {
+		if len(composeFiles) == 0 {
+			log("error", "No Docker Compose file found in the repository (looked for "+composeSearchHint+" in every folder). Add one, or switch the project to a Dockerfile build.")
+			finishDeployment(deployID, project.ID, statusError, 0, "")
+			return
+		}
+		composeFile = composeFiles[0]
+	}
+	log("info", "Using Docker Compose file at "+composeFile)
+
+	name := composeProjectName(project.Slug)
+	d.CleanupContainer(fmt.Sprintf("nineteen-%s", project.Slug))
+	d.CleanupCompose(name, func(line string) { log("info", line) })
+
+	if err := d.ComposeUp(dir, composeFile, name, func(line string) { log("info", line) }); err != nil {
+		log("error", "docker compose failed: "+err.Error())
+		finishDeployment(deployID, project.ID, statusError, 0, "")
+		return
+	}
+	log("info", "Compose stack started")
+
+	ports := d.ComposePorts(name)
+	if len(ports) == 0 {
+		duration := int64(time.Since(start).Seconds())
+		db.DB.Exec("UPDATE deployments SET status = ?, duration = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
+			statusReady, duration, deployID)
+		db.DB.Exec("UPDATE projects SET status = 'running', last_deployed_at = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
+			time.Now().UTC().Format(time.RFC3339), project.ID)
+		log("warn", "The compose stack is running but publishes no ports — there is no URL to open. Add a ports: mapping to your compose file.")
+		return
+	}
+
+	picked, _ := services.PickAppPort(ports)
+	for _, p := range ports {
+		if p.Port == picked.Port && p.Service == picked.Service {
+			log("info", fmt.Sprintf("Published port %d (service %q, image %s)", p.Port, p.Service, p.Image))
+		}
+	}
+
+	duration := int64(time.Since(start).Seconds())
+	url := fmt.Sprintf("http://127.0.0.1:%d", picked.Port)
+	db.DB.Exec("UPDATE deployments SET status = ?, port = ?, url = ?, duration = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
+		statusReady, picked.Port, url, duration, deployID)
+	db.DB.Exec("UPDATE projects SET status = 'running', last_deployed_at = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
+		time.Now().UTC().Format(time.RFC3339), project.ID)
+	log("success", "Deployment ready at "+url)
+}
+
+func composeProjectName(slug string) string {
+	name := "nineteen-" + slug
+	if len(name) > 60 {
+		name = name[:60]
+	}
+	return name
+}
+
+func noBuildFileMessage(composeCount int, composeFiles []string) string {
+	msg := "No Dockerfile found in the repository (searched every folder, skipping node_modules/.git). "
+	if composeCount > 0 {
+		msg += "This repo has a Docker Compose file (" + strings.Join(composeFiles, ", ") + ") — switch the project's build to Docker Compose to use it."
+	} else {
+		msg += "Add a Dockerfile (or a " + composeSearchHint + "), then deploy again."
+	}
+	return msg
 }
 
 func finishDeployment(deployID, projectID int64, status string, port int, url string) {

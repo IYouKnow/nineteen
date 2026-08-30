@@ -1,4 +1,3 @@
-import db from '@/lib/db';
 
 import { useState } from "react";
 import { Link } from "react-router-dom";

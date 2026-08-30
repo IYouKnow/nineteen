@@ -1,4 +1,4 @@
-import { GitBranch, Cpu, MapPin, Layers, Globe } from "lucide-react";
+import { GitBranch, Cpu, MapPin, Layers, Globe, Ship } from "lucide-react";
 import { FRAMEWORKS, INSTANCE_TYPES, REGIONS } from "@/lib/devStatus";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 const selectCls =
   "mt-1.5 h-9 w-full rounded-md border border-input bg-card px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
 
-export default function ConfigurationStep({ config, setConfig, sourceLabel }) {
+export default function ConfigurationStep({ config, setConfig, sourceLabel, buildLabel }) {
   const update = (patch) => setConfig((c) => ({ ...c, ...patch }));
 
   return (
@@ -24,6 +24,12 @@ export default function ConfigurationStep({ config, setConfig, sourceLabel }) {
         <Globe className="h-3.5 w-3.5 text-muted-foreground" />
         <span className="text-xs text-muted-foreground">Source</span>
         <span className="font-mono text-xs text-foreground">{sourceLabel}</span>
+      </div>
+
+      <div className="mb-4 flex items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2.5">
+        <Ship className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="text-xs text-muted-foreground">Build</span>
+        <span className="font-mono text-xs text-foreground">{buildLabel || "Dockerfile · auto-detected"}</span>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -78,35 +84,6 @@ export default function ConfigurationStep({ config, setConfig, sourceLabel }) {
               <option key={t.id} value={t.id}>{t.label} · {t.cpu} / {t.ram}</option>
             ))}
           </select>
-        </div>
-      </div>
-
-      <div className="mt-4">
-        <Label className="text-xs">Build strategy</Label>
-        <p className="text-xs text-muted-foreground">How your code is built into a runnable app.</p>
-        <div className="mt-2 grid gap-2 sm:grid-cols-2">
-          {[
-            { id: "detect", label: "Auto-detect", desc: "Detect the framework and build automatically — no Dockerfile needed." },
-            { id: "dockerfile", label: "Dockerfile", desc: "Build using the Dockerfile in your repository." },
-          ].map((o) => {
-            const active = config.buildStrategy === o.id;
-            return (
-              <button
-                key={o.id}
-                type="button"
-                onClick={() => update({ buildStrategy: o.id })}
-                className={cn(
-                  "rounded-lg border p-3 text-left transition-all",
-                  active
-                    ? "border-primary bg-primary/5 ring-1 ring-primary"
-                    : "border-border bg-card hover:border-muted-foreground/30 hover:bg-muted/20"
-                )}
-              >
-                <p className="text-sm font-medium text-foreground">{o.label}</p>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{o.desc}</p>
-              </button>
-            );
-          })}
         </div>
       </div>
 

@@ -6,7 +6,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Database, Plug, Unplug, Loader2, ArrowUpRight } from "lucide-react";
 import DbTypeIcon from "@/components/db/DbTypeIcon";
-import FrameworkIcon from "@/components/dev/FrameworkIcon";
 import StatusBadge from "@/components/dev/StatusBadge";
 import EmptyState from "@/components/dev/EmptyState";
 import { Button } from "@/components/ui/button";

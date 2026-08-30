@@ -1,4 +1,3 @@
-import db from '@/lib/db';
 
 import { useState, useEffect } from "react";
 import { Database, Zap, Archive, Share2, Plug, ArrowRight, ChevronLeft, Table2 } from "lucide-react";

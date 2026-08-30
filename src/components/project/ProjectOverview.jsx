@@ -12,7 +12,6 @@ import {
   Cpu,
   MapPin,
 } from "lucide-react";
-import StatusBadge from "@/components/dev/StatusBadge";
 import StatusDot from "@/components/dev/StatusDot";
 import FrameworkIcon from "@/components/dev/FrameworkIcon";
 import EmptyState from "@/components/dev/EmptyState";

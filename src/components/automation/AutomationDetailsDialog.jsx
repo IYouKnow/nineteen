@@ -10,7 +10,6 @@ import {
 import { Button } from "@/components/ui/button";
 import DbTypeIcon from "@/components/db/DbTypeIcon";
 import FrameworkIcon from "@/components/dev/FrameworkIcon";
-import StatusDot from "@/components/dev/StatusDot";
 import { getDbType } from "@/lib/databases";
 import { getFramework } from "@/lib/devStatus";
 import { getAutomationType, FREQUENCIES, RETENTIONS, statusTone } from "@/lib/automations";

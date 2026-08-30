@@ -17,7 +17,6 @@ import {
 } from "@/components/ui/dialog";
 import EmptyState from "@/components/dev/EmptyState";
 import ConfirmDialog from "@/components/dev/ConfirmDialog";
-import { cn } from "@/lib/utils";
 
 export default function EnvVarEditor({ projectId, envVars = [], environment, isProd = true, onAdd, onUpdate, onDelete }) {
   const qc = useQueryClient();

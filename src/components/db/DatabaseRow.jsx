@@ -1,4 +1,3 @@
-import db from '@/lib/db';
 
 import { Link } from "react-router-dom";
 import { ArrowUpRight, Layers } from "lucide-react";

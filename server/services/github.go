@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -54,7 +56,9 @@ func (g *GitHubClient) doRequest(url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+g.Token)
+	if g.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+g.Token)
+	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
 	resp, err := g.Client.Do(req)
@@ -109,6 +113,39 @@ func (g *GitHubClient) ListRepositories(page, perPage int) ([]GitHubRepo, error)
 	}
 
 	return repos, nil
+}
+
+// GetRepoTree returns every file path in a repository at the given ref
+// (branch name, tag or "HEAD"). The boolean reports whether GitHub truncated
+// the listing for very large repositories.
+func (g *GitHubClient) GetRepoTree(fullName, ref string) ([]string, bool, error) {
+	if ref == "" {
+		ref = "HEAD"
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/git/trees/%s?recursive=1", fullName, url.PathEscape(strings.TrimSpace(ref)))
+	body, err := g.doRequest(url)
+	if err != nil {
+		return nil, false, err
+	}
+
+	var tree struct {
+		Truncated bool `json:"truncated"`
+		Tree      []struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+		} `json:"tree"`
+	}
+	if err := json.Unmarshal(body, &tree); err != nil {
+		return nil, false, err
+	}
+
+	files := make([]string, 0, len(tree.Tree))
+	for _, e := range tree.Tree {
+		if e.Type == "blob" && e.Path != "" {
+			files = append(files, e.Path)
+		}
+	}
+	return files, tree.Truncated, nil
 }
 
 func (g *GitHubClient) ValidateToken() (*GitHubUser, error) {
