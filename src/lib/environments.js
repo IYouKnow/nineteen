@@ -1,4 +1,4 @@
-const db = globalThis.__B44_DB__;
+import db from '@/lib/db';
 
 // Frontend-only environment model for projects.
 // Environments are optional & configurable; every project starts with a single
