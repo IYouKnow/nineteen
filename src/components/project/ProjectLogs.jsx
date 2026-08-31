@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Search, Play, Pause, Copy, Check, Trash2, Terminal, Container, Clock,
+  Search, Copy, Check, Trash2, Terminal, Container, Clock,
   ArrowDown, Ban, Loader2, WifiOff,
 } from "lucide-react";
 import * as api from "@/lib/api";
@@ -40,7 +40,6 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
   const container = project?.slug ? `nineteen-${project.slug}` : "—";
 
   const [logs, setLogs] = useState([]);
-  const [live, setLive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
   const [query, setQuery] = useState("");
@@ -81,15 +80,10 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
 
-  // Keep the live flag in sync with the runtime status so the stream auto-opens
-  // when the project is running and closes when it stops.
+  // Live stream via SSE — always on while the project is running. EventSource
+  // auto-reconnects; a reconnection clears the offline note automatically.
   useEffect(() => {
-    if (!running) setLive(false);
-  }, [running]);
-
-  // Live stream via SSE while the project is running.
-  useEffect(() => {
-    if (!running || !live || !project?.id) return;
+    if (!running || !project?.id) return;
     const url = api.runtimeLogs.streamUrl(project.id);
     const es = new EventSource(url);
     let alive = true;
@@ -98,7 +92,7 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
       try {
         const d = JSON.parse(e.data);
         if (d.connected) { setOffline(false); return; }
-        if (d.error) { setOffline(true); setLive(false); return; }
+        if (d.error) { setOffline(true); return; }
         const entry = normalize(d);
         if (!entry.text) return;
         setLogs((prev) => {
@@ -112,7 +106,7 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
 
     return () => { alive = false; es.close(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, live, project?.id]);
+  }, [running, project?.id]);
 
   // Tick for relative timestamps + range cutoff.
   useEffect(() => {
@@ -121,12 +115,13 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
     return () => clearInterval(id);
   }, [running]);
 
-  // Auto-scroll to bottom when live and already at the bottom.
+  // Auto-scroll to bottom whenever new logs arrive and the user is at the
+  // bottom (manual scrolls up are respected via the "N new" chip).
   useEffect(() => {
-    if (live && atBottomRef.current && scrollRef.current) {
+    if (atBottomRef.current && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [logs.length, live]);
+  }, [logs.length]);
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -143,7 +138,6 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
     setAtBottom(true);
     setNewCount(0);
   };
-  const resume = () => { setLive(true); jumpToBottom(); };
 
   const toggleLevel = (lvl) =>
     setActiveLevels((prev) => {
@@ -199,23 +193,6 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <Clock className="h-3.5 w-3.5" />
           Last received <span className="font-mono text-foreground/80">{lastReceived}</span>
-        </div>
-        <div className="ml-auto flex items-center gap-1.5 text-xs">
-          {running ? (
-            live ? (
-              <span className="flex items-center gap-1.5 text-success">
-                <span className="h-1.5 w-1.5 rounded-full bg-success animate-build-pulse" /> Live
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5 text-muted-foreground">
-                <Pause className="h-3.5 w-3.5" /> Paused
-              </span>
-            )
-          ) : (
-            <span className="flex items-center gap-1.5 text-muted-foreground">
-              <Ban className="h-3.5 w-3.5" /> Not streaming
-            </span>
-          )}
         </div>
       </div>
 
@@ -285,42 +262,15 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
           >
             <Trash2 className="h-3.5 w-3.5" /> Clear
           </button>
-          {running &&
-            (live ? (
-              <button
-                type="button"
-                onClick={() => setLive(false)}
-                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-              >
-                <Pause className="h-3.5 w-3.5" /> Pause
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={resume}
-                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-success/30 bg-success/10 px-2.5 text-xs text-success transition-colors hover:bg-success/20"
-              >
-                <Play className="h-3.5 w-3.5" /> Resume
-              </button>
-            ))}
         </div>
       </div>
 
       {offline && !loading && (
         <div className="flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/5 p-3">
           <WifiOff className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
-          <div className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-            <span className="font-medium text-foreground">Log stream is offline.</span>{" "}
-            Showing history only. Make sure the container is running, then{" "}
-            <button
-              type="button"
-              onClick={resume}
-              className="text-foreground underline underline-offset-2 hover:text-foreground/80"
-            >
-              try to reconnect
-            </button>
-            .
-          </div>
+          <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
+            Log stream is offline — reconnecting automatically.
+          </p>
         </div>
       )}
 
@@ -393,7 +343,7 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
                   <span className="whitespace-pre-wrap break-all text-foreground/85">{l.text}</span>
                 </div>
               ))}
-              {running && live && (
+              {running && !building && !stopped && (
                 <div className="mt-1 flex items-center gap-2">
                   <span className="inline-block h-3.5 w-2 animate-pulse bg-info" />
                 </div>

@@ -1,5 +1,6 @@
 import * as api from "@/lib/api";
 
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -12,23 +13,30 @@ import {
 } from "lucide-react";
 import FrameworkIcon from "@/components/dev/FrameworkIcon";
 import StatusDot from "@/components/dev/StatusDot";
+import { Input } from "@/components/ui/input";
 import { timeAgo, shortSha } from "@/lib/format";
 import { getFramework } from "@/lib/devStatus";
-
-const BRANCHES = ["main", "develop", "staging", "production"];
 
 export default function ProjectSource({ project, deployments = [], environment, isProd = true, onBranchChange }) {
   const qc = useQueryClient();
   const fw = getFramework(project.framework);
   const repoOwner = project.repository?.split("/")[0] || "acme";
   const branch = isProd ? project.branch : environment?.branch;
+  const [branchValue, setBranchValue] = useState("");
 
-  const changeBranch = (b) => {
+  useEffect(() => {
+    setBranchValue(branch || "main");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branch]);
+
+  const commitBranch = (value) => {
+    const val = value.trim() || "main";
+    setBranchValue(val);
     if (!isProd) {
-      onBranchChange?.(b);
+      onBranchChange?.(val);
       return;
     }
-    api.projects.update(project.id, { branch: b }).then(() => {
+    api.projects.update(project.id, { branch: val }).then(() => {
       qc.invalidateQueries({ queryKey: ["project", project.id] });
       qc.invalidateQueries({ queryKey: ["projects"] });
     });
@@ -69,17 +77,16 @@ export default function ProjectSource({ project, deployments = [], environment, 
           <GitBranch className="h-3.5 w-3.5" />
           {isProd ? "Production branch" : "Environment branch"}
         </label>
-        <select
-          value={branch || "main"}
-          onChange={(e) => changeBranch(e.target.value)}
-          className="mt-2 h-9 w-full rounded-md border border-input bg-background px-2.5 font-mono text-sm"
-        >
-          {BRANCHES.map((b) => (
-            <option key={b} value={b}>{b}</option>
-          ))}
-        </select>
+        <Input
+          value={branchValue}
+          onChange={(e) => setBranchValue(e.target.value)}
+          onBlur={(e) => commitBranch(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") commitBranch(e.target.value); }}
+          placeholder="main"
+          className="mt-2 h-9 rounded-md font-mono text-sm"
+        />
         <p className="mt-2 text-xs text-muted-foreground">
-          Pushes to this branch trigger a new deployment.
+          The branch used when you deploy. Manual deploys default to this branch.
         </p>
       </div>
 
