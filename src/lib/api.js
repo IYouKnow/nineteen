@@ -25,6 +25,8 @@ export const projects = {
   create: (payload) => doFetch("/api/projects", { method: "POST", body: JSON.stringify(payload) }),
   update: (id, patch) => doFetch(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
   delete: (id) => doFetch(`/api/projects/${id}`, { method: "DELETE" }),
+  action: (id, action) =>
+    doFetch(`/api/projects/${id}/actions`, { method: "POST", body: JSON.stringify({ action }) }),
 };
 
 export const deployments = {

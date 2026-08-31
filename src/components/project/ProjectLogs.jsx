@@ -36,7 +36,7 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
   const status = isProd ? project?.status || "idle" : environment?.status || "running";
   const running = status === "running";
   const stopped = status === "stopped" || status === "idle";
-  const building = status === "building";
+  const building = status === "building" || status === "restarting";
   const container = project?.slug ? `nineteen-${project.slug}` : "—";
 
   const [logs, setLogs] = useState([]);

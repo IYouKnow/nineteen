@@ -7,15 +7,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   ExternalLink,
-  Rocket,
-  Loader2,
   MoreHorizontal,
   RotateCw,
   Play,
   Square,
   Trash2,
+  Loader2,
   Settings as SettingsIcon,
 } from "lucide-react";
+import { toast } from "sonner";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -54,11 +54,11 @@ const TABS = [
   { id: "overview", label: "Overview" },
   { id: "deployments", label: "Deployments" },
   { id: "logs", label: "Logs" },
-  { id: "strategy", label: "Strategy" },
+  { id: "strategy", label: "Strategy", disabled: true },
   { id: "source", label: "Source" },
-  { id: "architecture", label: "Architecture" },
-  { id: "databases", label: "Databases" },
-  { id: "environments", label: "Environments" },
+  { id: "architecture", label: "Architecture", disabled: true },
+  { id: "databases", label: "Databases", disabled: true },
+  { id: "environments", label: "Environments", disabled: true },
   { id: "settings", label: "Settings" },
 ];
 
@@ -67,13 +67,16 @@ export default function ProjectDetail() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [deploying, setDeploying] = useState(false);
   const [busy, setBusy] = useState(null);
-  const tab = searchParams.get("tab") || "overview";
+  const requestedTab = searchParams.get("tab") || "overview";
+  const requestedTabDef = TABS.find((t) => t.id === requestedTab);
+  const tab = requestedTabDef?.disabled ? "overview" : (requestedTabDef?.id || "overview");
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
     queryFn: () => api.projects.get(projectId),
+    refetchInterval: (query) =>
+      ["building", "restarting"].includes(query.state.data?.status) ? 1500 : false,
   });
 
   const { data: deployments = [] } = useQuery({
@@ -83,6 +86,7 @@ export default function ProjectDetail() {
 
   const latestDeployment = deployments[0];
   const liveUrl = latestDeployment?.url || project?.domain;
+  const isRunning = project?.status === "running";
 
   const { data: envVars = [] } = useQuery({
     queryKey: ["envvars", projectId],
@@ -216,42 +220,21 @@ export default function ProjectDetail() {
       return { ...o, [environment.id]: { ...cur, connections: (cur.connections || []).filter((c) => c.id !== conn.id) } };
     });
 
-  const deploy = async () => {
-    if (!project) return;
-    if (!isProd) {
-      onDeployMock();
-      setTab("deployments");
-      return;
-    }
-    setDeploying(true);
+  const run = async (action) => {
+    const labels = { start: "Start", stop: "Stop", restart: "Restart" };
+    setBusy(action);
     try {
-      const deployment = await api.deployments.create(project.id, {
-        commit_message: "Manual deployment from dashboard",
-        branch: project.branch || "main",
-        author: "you",
-        trigger: "manual",
-      });
-      await api.projects.update(project.id, {
-        status: "building",
-        last_deployed_at: new Date().toISOString(),
-      });
-      qc.invalidateQueries({ queryKey: ["projects"] });
+      await api.projects.action(project.id, action);
+      if (action === "restart") {
+        toast.success("Restarting project…", { description: "It will go back to running when ready." });
+      } else {
+        toast.success(`${labels[action]} successful`);
+      }
       qc.invalidateQueries({ queryKey: ["project", projectId] });
+      qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["deployments", projectId] });
-      qc.invalidateQueries({ queryKey: ["deployments-recent"] });
-      navigate(`/projects/${projectId}/deployments/${deployment.id}`);
     } catch (e) {
-      console.error(e);
-      setDeploying(false);
-    }
-  };
-
-  const run = async (status) => {
-    setBusy(status);
-    try {
-      await api.projects.update(project.id, { status });
-      qc.invalidateQueries({ queryKey: ["project", projectId] });
-      qc.invalidateQueries({ queryKey: ["projects"] });
+      toast.error(`${labels[action]} failed`, { description: e?.message });
     } finally {
       setBusy(null);
     }
@@ -320,9 +303,29 @@ export default function ProjectDetail() {
               onManage={() => setTab("environments")}
             />
           )}
-          <Button onClick={deploy} disabled={deploying} className="gap-2">
-            {deploying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
-            Deploy
+          <Button variant="outline" size="sm" onClick={() => run("start")} disabled={!!busy} className="gap-1.5">
+            {busy === "start" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+            Start
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => run("restart")}
+            disabled={!isRunning || !!busy}
+            className="gap-1.5"
+          >
+            {busy === "restart" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
+            {busy === "restart" ? "Restarting…" : "Restart"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => run("stop")}
+            disabled={!isRunning || !!busy}
+            className="gap-1.5"
+          >
+            {busy === "stop" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
+            Stop
           </Button>
           {liveUrl && (
             <Button asChild variant="outline" size="icon" className="h-9 w-9">
@@ -338,19 +341,10 @@ export default function ProjectDetail() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44 border-border bg-popover">
-              <DropdownMenuItem onClick={() => run("running")} className="gap-2">
-                <Play className="h-3.5 w-3.5" /> Start
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => run("running")} className="gap-2">
-                <RotateCw className="h-3.5 w-3.5" /> Restart
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => run("stopped")} className="gap-2">
-                <Square className="h-3.5 w-3.5" /> Stop
-              </DropdownMenuItem>
-              <DropdownMenuSeparator className="bg-border" />
               <DropdownMenuItem onClick={() => setTab("settings")} className="gap-2">
                 <SettingsIcon className="h-3.5 w-3.5" /> Settings
               </DropdownMenuItem>
+              <DropdownMenuSeparator className="bg-border" />
               <ConfirmDialog
                 trigger={
                   <DropdownMenuItem
@@ -372,20 +366,31 @@ export default function ProjectDetail() {
 
       {/* Tabs */}
       <div className="mt-6 border-b border-border">
-        <nav className="flex gap-1 overflow-x-auto">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={cn(
-                "relative whitespace-nowrap px-3 py-2.5 text-sm transition-colors",
-                tab === t.id ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {t.label}
-              {tab === t.id && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-foreground" />}
-            </button>
-          ))}
+        <nav className="flex gap-1 overflow-x-auto overflow-y-hidden">
+          {TABS.map((t) => {
+            const disabled = !!t.disabled;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                disabled={disabled}
+                onClick={() => setTab(t.id)}
+                className={cn(
+                  "relative whitespace-nowrap px-3 py-2.5 text-sm transition-colors",
+                  disabled
+                    ? "cursor-not-allowed text-muted-foreground/50"
+                    : tab === t.id
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {t.label}
+                {!disabled && tab === t.id && (
+                  <span className="absolute inset-x-0 -bottom-px h-0.5 bg-foreground" />
+                )}
+              </button>
+            );
+          })}
         </nav>
       </div>
 

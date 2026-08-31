@@ -172,6 +172,31 @@ func (d *Deployer) CleanupContainer(name string) {
 	_ = exec.Command("docker", "rm", "-f", name).Run()
 }
 
+// ContainerState returns the current Docker state (running / exited / …) of a
+// container, or "" if it does not exist.
+func (d *Deployer) ContainerState(name string) string {
+	out, err := exec.Command("docker", "inspect", "--format", "{{.State.Status}}", name).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// StartContainer starts an existing (stopped) container.
+func (d *Deployer) StartContainer(name string) error {
+	return exec.Command("docker", "start", name).Run()
+}
+
+// StopContainer stops a running container.
+func (d *Deployer) StopContainer(name string) error {
+	return exec.Command("docker", "stop", name).Run()
+}
+
+// RestartContainer restarts a running container.
+func (d *Deployer) RestartContainer(name string) error {
+	return exec.Command("docker", "restart", name).Run()
+}
+
 // Run starts a published container and returns its id.
 func (d *Deployer) Run(image, name string, hostPort, containerPort int, log func(string)) (string, error) {
 	cmd := exec.Command("docker", "run", "-d",

@@ -281,6 +281,86 @@ func ProjectDeploymentsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ProjectActionHandler performs a Docker lifecycle action (start / stop /
+// restart) on the project's running container and syncs the DB status.
+func ProjectActionHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	claims, err := extractUser(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
+	}
+	id, ok := pathID(r)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "Invalid project ID")
+		return
+	}
+	project, err := getProject(claims.UserID, id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+
+	var req struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	req.Action = strings.TrimSpace(req.Action)
+
+	container := services.ResolveContainer(project.Slug, project.BuildStrategy)
+	if container == "" {
+		respondError(w, http.StatusBadRequest, "No container found for this project — deploy first")
+		return
+	}
+
+	d := &services.Deployer{}
+	switch req.Action {
+	case "start":
+		if err := d.StartContainer(container); err != nil {
+			respondError(w, http.StatusInternalServerError, "Docker start failed: "+err.Error())
+			return
+		}
+		setProjectStatus(project.ID, "running")
+	case "stop":
+		if err := d.StopContainer(container); err != nil {
+			respondError(w, http.StatusInternalServerError, "Docker stop failed: "+err.Error())
+			return
+		}
+		setProjectStatus(project.ID, "stopped")
+	case "restart":
+		// Restart can take a few seconds (stop + start). Run it in the background
+		// and report progress via the project status (restarting → running).
+		setProjectStatus(project.ID, "restarting")
+		go func() {
+			status := "running"
+			if err := d.RestartContainer(container); err != nil {
+				status = "error"
+			}
+			setProjectStatus(project.ID, status)
+		}()
+	default:
+		respondError(w, http.StatusBadRequest, "action must be one of: start, stop, restart")
+		return
+	}
+
+	updated, err := getProject(claims.UserID, id)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to load project")
+		return
+	}
+	respondJSON(w, http.StatusOK, updated)
+}
+
+func setProjectStatus(projectID int64, status string) {
+	db.DB.Exec("UPDATE projects SET status = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?", status, projectID)
+}
+
 func createDeploymentHandler(w http.ResponseWriter, r *http.Request, userID, projectID int64) {
 	project, err := getProject(userID, projectID)
 	if err != nil {
