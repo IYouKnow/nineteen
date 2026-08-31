@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search, Play, Pause, Copy, Check, Trash2, Terminal, Container, Clock,
-  ArrowDown, Ban, Loader2,
+  ArrowDown, Ban, Loader2, WifiOff,
 } from "lucide-react";
+import * as api from "@/lib/api";
 import StatusBadge from "@/components/dev/StatusBadge";
 import { cn } from "@/lib/utils";
 import {
-  generateRuntimeLogs, nextRuntimeLog, projectInstance,
   formatLogTime, levelMeta,
 } from "@/lib/runtimeLogs";
 
@@ -18,11 +18,10 @@ const RANGES = [
 ];
 const LEVELS = [
   { id: "info", label: "Info" },
-  { id: "warn", label: "Warning" },
   { id: "error", label: "Error" },
 ];
-const LEVEL_DOT = { info: "bg-info", warn: "bg-warning", error: "bg-destructive" };
-const LEVEL_TEXT = { info: "text-info", warn: "text-warning", error: "text-destructive" };
+const LEVEL_DOT = { info: "bg-info", error: "bg-destructive" };
+const LEVEL_TEXT = { info: "text-info", error: "text-destructive" };
 
 function relativeTime(ts, now) {
   const s = Math.max(0, Math.round((now - ts) / 1000));
@@ -38,19 +37,14 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
   const running = status === "running";
   const stopped = status === "stopped" || status === "idle";
   const building = status === "building";
-  const instance = useMemo(
-    () =>
-      isProd
-        ? projectInstance(project)
-        : `${project?.region || "fra1"}-${(environment?.id || "env").slice(-4)}`,
-    [project?.id, environment?.id, isProd]
-  );
+  const container = project?.slug ? `nineteen-${project.slug}` : "—";
 
   const [logs, setLogs] = useState([]);
-  const [live, setLive] = useState(running);
-  const [loading, setLoading] = useState(running);
+  const [live, setLive] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
   const [query, setQuery] = useState("");
-  const [activeLevels, setActiveLevels] = useState(new Set(["info", "warn", "error"]));
+  const [activeLevels, setActiveLevels] = useState(new Set(["info", "error"]));
   const [range, setRange] = useState("5m");
   const [now, setNow] = useState(Date.now());
   const [copied, setCopied] = useState(false);
@@ -59,30 +53,66 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
   const atBottomRef = useRef(true);
   const scrollRef = useRef(null);
 
-  // Seed the log buffer on mount / project switch.
+  const normalize = (l) => ({
+    id: l.id,
+    ts: new Date(l.timestamp).getTime() || Date.now(),
+    level: l.level === "error" ? "error" : "info",
+    text: l.message ?? l.text ?? "",
+    instance: l.container || container,
+  });
+
+  // Load persisted history on mount / project switch. Clear only resets the
+  // live buffer, never the database, so history stays across reloads.
   useEffect(() => {
-    if (building) { setLogs([]); setLoading(false); return; }
-    setLoading(running);
-    setLogs(generateRuntimeLogs(project, instance, running ? 80 : 40));
-    if (running) {
-      const id = setTimeout(() => setLoading(false), 650);
-      return () => clearTimeout(id);
-    }
-    setLoading(false);
-    setLive(running);
+    if (building) { setLogs([]); setLoading(false); setOffline(false); return; }
+    let alive = true;
+    setLoading(true);
+    setOffline(false);
+    setNewCount(0);
+    api.runtimeLogs
+      .list(project?.id, { limit: 1000 })
+      .then((rows) => {
+        if (!alive) return;
+        setLogs(rows.map(normalize));
+        setLoading(false);
+      })
+      .catch(() => { if (alive) { setOffline(true); setLoading(false); } });
+    return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
 
-  // Simulated live stream while running & live.
+  // Keep the live flag in sync with the runtime status so the stream auto-opens
+  // when the project is running and closes when it stops.
   useEffect(() => {
-    if (!running || !live || loading) return;
-    const id = setInterval(() => {
-      const entry = nextRuntimeLog(instance);
-      setLogs((prev) => [...prev, entry]);
-      if (!atBottomRef.current) setNewCount((n) => n + 1);
-    }, 1100 + Math.random() * 700);
-    return () => clearInterval(id);
-  }, [running, live, loading, instance]);
+    if (!running) setLive(false);
+  }, [running]);
+
+  // Live stream via SSE while the project is running.
+  useEffect(() => {
+    if (!running || !live || !project?.id) return;
+    const url = api.runtimeLogs.streamUrl(project.id);
+    const es = new EventSource(url);
+    let alive = true;
+
+    es.onmessage = (e) => {
+      try {
+        const d = JSON.parse(e.data);
+        if (d.connected) { setOffline(false); return; }
+        if (d.error) { setOffline(true); setLive(false); return; }
+        const entry = normalize(d);
+        if (!entry.text) return;
+        setLogs((prev) => {
+          if (entry.id && prev.some((x) => x.id === entry.id)) return prev;
+          return [...prev, entry];
+        });
+        if (!atBottomRef.current) setNewCount((n) => n + 1);
+      } catch { /* ignore malformed frame */ }
+    };
+    es.onerror = () => { if (alive) setOffline(true); };
+
+    return () => { alive = false; es.close(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, live, project?.id]);
 
   // Tick for relative timestamps + range cutoff.
   useEffect(() => {
@@ -164,7 +194,7 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
         </div>
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <Container className="h-3.5 w-3.5" />
-          <span className="font-mono text-foreground/80">{instance}</span>
+          <span className="font-mono text-foreground/80">{container}</span>
         </div>
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <Clock className="h-3.5 w-3.5" />
@@ -276,6 +306,24 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
         </div>
       </div>
 
+      {offline && !loading && (
+        <div className="flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/5 p-3">
+          <WifiOff className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+          <div className="min-w-0 text-xs leading-relaxed text-muted-foreground">
+            <span className="font-medium text-foreground">Log stream is offline.</span>{" "}
+            Showing history only. Make sure the container is running, then{" "}
+            <button
+              type="button"
+              onClick={resume}
+              className="text-foreground underline underline-offset-2 hover:text-foreground/80"
+            >
+              try to reconnect
+            </button>
+            .
+          </div>
+        </div>
+      )}
+
       {/* Terminal */}
       <div className="overflow-hidden rounded-lg border border-border bg-background">
         <div className="flex items-center justify-between border-b border-border bg-muted/30 px-3.5 py-2">
@@ -288,7 +336,7 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
             <Terminal className="ml-1 h-3.5 w-3.5 text-muted-foreground/60" />
             <span>runtime.log</span>
             <span className="text-muted-foreground/40">·</span>
-            <span className="text-muted-foreground/70">{instance}</span>
+            <span className="text-muted-foreground/70">{container}</span>
           </div>
           <span className="font-mono text-[11px] text-muted-foreground/60">{filtered.length} lines</span>
         </div>
@@ -302,8 +350,8 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
             <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/60" />
               <div>
-                <p className="text-sm font-medium text-foreground">Connecting to log stream…</p>
-                <p className="mt-1 text-xs text-muted-foreground">Attaching to {instance}</p>
+                <p className="text-sm font-medium text-foreground">Loading logs…</p>
+                <p className="mt-1 text-xs text-muted-foreground">Fetching {container}</p>
               </div>
             </div>
           ) : building ? (

@@ -81,6 +81,9 @@ export default function ProjectDetail() {
     queryFn: () => api.deployments.list(projectId),
   });
 
+  const latestDeployment = deployments[0];
+  const liveUrl = latestDeployment?.url || project?.domain;
+
   const { data: envVars = [] } = useQuery({
     queryKey: ["envvars", projectId],
     queryFn: () => db.entities.EnvironmentVariable.filter({ project_id: projectId }),
@@ -298,10 +301,10 @@ export default function ProjectDetail() {
               )}
               <span className="text-muted-foreground/30">·</span>
               <span>{isProd ? project.branch || "main" : environment?.branch || "main"}</span>
-              {project.domain && (
+              {liveUrl && (
                 <>
                   <span className="text-muted-foreground/30">·</span>
-                  <span>{project.domain}</span>
+                  <span>{liveUrl}</span>
                 </>
               )}
             </div>
@@ -321,9 +324,9 @@ export default function ProjectDetail() {
             {deploying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
             Deploy
           </Button>
-          {project.domain && (
+          {liveUrl && (
             <Button asChild variant="outline" size="icon" className="h-9 w-9">
-              <a href={`https://${project.domain}`} target="_blank" rel="noreferrer" title="Visit">
+              <a href={liveUrl} target="_blank" rel="noreferrer" title="Visit">
                 <ExternalLink className="h-4 w-4" />
               </a>
             </Button>

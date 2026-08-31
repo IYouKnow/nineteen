@@ -88,6 +88,48 @@ export const TEMPLATES = [
   { id: "docker", label: "Docker", code: "D", framework: "docker", color: "#2496ed", description: "Bring-your-own Dockerfile — we build and run the image.", generator: "template:docker" },
 ];
 
+// Detect the runtime framework from a scanned repository file list. Uses only
+// file paths (the scan returns names, not contents). Returns a FRAMEWORKS id or
+// null when nothing confident is found.
+export function detectFrameworkFromFiles(files) {
+  if (!files || files.length === 0) return null;
+  const lower = files.map((f) => f.toLowerCase());
+  const hasBase = (base) => lower.some((f) => f === base || f.endsWith("/" + base));
+  const any = (re) => lower.some((f) => re.test(f));
+
+  // Go services are containerized by convention.
+  if (hasBase("go.mod")) return "docker";
+
+  // Python services.
+  if (
+    any(
+      /(^|\/)(requirements\.txt|pyproject\.toml|pipfile(\..*)?|setup\.py|setup\.cfg|poetry\.lock)$/i
+    )
+  )
+    return "python";
+
+  // JS/TS ecosystem — Narrow frameworks by their config files first.
+  if (hasBase("package.json")) {
+    if (any(/(^|\/)next\.config\./i)) return "nextjs";
+    if (any(/(^|\/)astro\.config\./i)) return "astro";
+    if (any(/(^|\/)remix\.config\./i)) return "remix";
+    if (any(/(^|\/)vite\.config\./i)) return "vite";
+    return "node";
+  }
+
+  // Static sites with no build tooling.
+  if (hasBase("index.html")) return "static";
+
+  // Dockerfile / Compose-only repos.
+  if (
+    any(/dockerfile($|\.)/i) ||
+    any(/(^|\/)(docker-compose\.ya?ml|compose\.ya?ml)$/i)
+  )
+    return "docker";
+
+  return null;
+}
+
 export function sourceReady(source) {
   switch (source.type) {
     case "template":

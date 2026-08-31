@@ -291,23 +291,19 @@ export default function SourceStep({ source, setSource }) {
             <button
               key={t.id}
               type="button"
+              disabled
               onClick={() => selectTemplate(t.id)}
               className={cn(
                 "group relative flex flex-col gap-2 rounded-lg border p-4 text-left transition-all",
-                active
-                  ? "border-primary bg-primary/5 ring-1 ring-primary"
-                  : "border-border bg-card hover:border-muted-foreground/30 hover:bg-muted/20"
+                "cursor-not-allowed border-border bg-muted/20 opacity-60"
               )}
             >
               <div className="flex items-center justify-between">
                 <TemplateIcon template={t} />
-                <span
-                  className={cn(
-                    "flex h-5 w-5 items-center justify-center rounded-full border transition-colors",
-                    active ? "border-primary bg-primary text-primary-foreground" : "border-border"
-                  )}
-                >
-                  {active && <Check className="h-3 w-3" />}
+                <span className="flex h-5 w-5 items-center justify-center rounded-full border border-border">
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                    Coming soon
+                  </span>
                 </span>
               </div>
               <div>

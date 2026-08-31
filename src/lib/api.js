@@ -42,3 +42,17 @@ export const integrations = {
       `/api/settings/integrations/scan?repo=${encodeURIComponent(repository)}&branch=${encodeURIComponent(branch || "")}`
     ),
 };
+
+export const runtimeLogs = {
+  list: (projectId, { after, limit } = {}) => {
+    const params = new URLSearchParams();
+    if (after) params.set("after", after);
+    if (limit) params.set("limit", limit);
+    const qs = params.toString();
+    return doFetch(`/api/projects/${projectId}/runtime-logs${qs ? `?${qs}` : ""}`);
+  },
+  streamUrl: (projectId) => {
+    const token = localStorage.getItem("nineteen_token") || "";
+    return `${API_URL}/api/projects/${projectId}/runtime-logs/stream?token=${encodeURIComponent(token)}`;
+  },
+};

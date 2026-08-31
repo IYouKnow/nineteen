@@ -121,6 +121,16 @@ func runMigrations() {
 			level TEXT DEFAULT 'info',
 			message TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS runtime_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			deployment_id INTEGER NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+			container TEXT DEFAULT '',
+			level TEXT DEFAULT 'info',
+			message TEXT NOT NULL,
+			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_runtime_logs_project ON runtime_logs(project_id, id)`,
 	}
 
 	for _, m := range migrations {

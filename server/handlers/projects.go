@@ -545,12 +545,13 @@ func dockerfileDeploy(log func(string, string), d *services.Deployer, deployID i
 	}
 
 	duration := int64(time.Since(start).Seconds())
-	url := fmt.Sprintf("http://127.0.0.1:%d", hostPort)
+	url := fmt.Sprintf("http://localhost:%d", hostPort)
 	db.DB.Exec("UPDATE deployments SET status = ?, port = ?, url = ?, duration = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
 		statusReady, hostPort, url, duration, deployID)
 	db.DB.Exec("UPDATE projects SET status = 'running', last_deployed_at = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
 		time.Now().UTC().Format(time.RFC3339), project.ID)
 	log("success", "Deployment ready at "+url)
+	services.EnsureTailed(project.ID, deployID, containerName)
 }
 
 func composeDeploy(log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, composeFiles []string, start time.Time) {
@@ -599,12 +600,15 @@ func composeDeploy(log func(string, string), d *services.Deployer, deployID int6
 	}
 
 	duration := int64(time.Since(start).Seconds())
-	url := fmt.Sprintf("http://127.0.0.1:%d", picked.Port)
+	url := fmt.Sprintf("http://localhost:%d", picked.Port)
 	db.DB.Exec("UPDATE deployments SET status = ?, port = ?, url = ?, duration = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
 		statusReady, picked.Port, url, duration, deployID)
 	db.DB.Exec("UPDATE projects SET status = 'running', last_deployed_at = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
 		time.Now().UTC().Format(time.RFC3339), project.ID)
 	log("success", "Deployment ready at "+url)
+	if cname := services.ResolveContainer(project.Slug, project.BuildStrategy); cname != "" {
+		services.EnsureTailed(project.ID, deployID, cname)
+	}
 }
 
 func composeProjectName(slug string) string {

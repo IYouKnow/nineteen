@@ -50,3 +50,13 @@ type DeploymentLog struct {
 	Level        string    `json:"level"`
 	Message      string    `json:"message"`
 }
+
+type RuntimeLog struct {
+	ID           int64     `json:"id"`
+	ProjectID    int64     `json:"project_id"`
+	DeploymentID int64     `json:"deployment_id"`
+	Container    string    `json:"container"`
+	Level        string    `json:"level"`
+	Message      string    `json:"message"`
+	Timestamp    time.Time `json:"timestamp"`
+}

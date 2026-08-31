@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
-import { AlertTriangle, Check, Container, FileSearch, Layers, Loader2, Search, Ship } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, Check, Container, FileSearch, Layers, Loader2, Search, Ship, Wand2 } from "lucide-react";
 import { FRAMEWORKS } from "@/lib/devStatus";
+import { detectFrameworkFromFiles } from "@/lib/newProject";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -81,7 +82,27 @@ function FileBrowser({ files, selected, onPick, truncated }) {
 
 export default function BuildStep({ config, setConfig, scan, scanLoading, scanError, scanTarget }) {
   const [browserOpen, setBrowserOpen] = useState(false);
+  const frameworkManualRef = useRef(false);
   const update = (patch) => setConfig((c) => ({ ...c, ...patch }));
+
+  const detectedFramework = useMemo(
+    () => (scan ? detectFrameworkFromFiles(scan.files) : null),
+    [scan]
+  );
+
+  // Reset the manual-override flag whenever a different repo/branch is scanned,
+  // so detection can re-run for the new target.
+  useEffect(() => {
+    frameworkManualRef.current = false;
+  }, [scanTarget?.repo, scanTarget?.branch]);
+
+  // Auto-set the framework once the scan lands, unless the user already picked.
+  useEffect(() => {
+    if (detectedFramework && !frameworkManualRef.current) {
+      update({ framework: detectedFramework });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detectedFramework]);
 
   const dockerfiles = scan?.dockerfiles || [];
   const composeFiles = scan?.compose_files || [];
@@ -275,7 +296,10 @@ export default function BuildStep({ config, setConfig, scan, scanLoading, scanEr
         </Label>
         <select
           value={config.framework}
-          onChange={(e) => update({ framework: e.target.value })}
+          onChange={(e) => {
+            frameworkManualRef.current = true;
+            update({ framework: e.target.value });
+          }}
           className={cn(selectCls)}
         >
           {Object.entries(FRAMEWORKS).map(([id, f]) => (
@@ -285,7 +309,18 @@ export default function BuildStep({ config, setConfig, scan, scanLoading, scanEr
           ))}
         </select>
         <p className="mt-1.5 text-xs text-muted-foreground">
-          Used for the project icon and metadata — the actual build is always Docker.
+          {detectedFramework ? (
+            <span className="inline-flex items-center gap-1.5">
+              <Wand2 className="h-3 w-3 text-primary" />
+              Detected from your files as{" "}
+              <span className="font-medium text-foreground">
+                {FRAMEWORKS[detectedFramework]?.label}
+              </span>
+              — change it if we got it wrong.
+            </span>
+          ) : (
+            "Used for the project icon and metadata — we couldn't auto-detect, so pick the closest match."
+          )}
         </p>
       </div>
     </div>

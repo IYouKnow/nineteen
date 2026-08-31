@@ -58,6 +58,8 @@ func main() {
 	mux.HandleFunc("/api/projects", handlers.ProjectsHandler)
 	mux.HandleFunc("/api/projects/{id}", handlers.ProjectHandler)
 	mux.HandleFunc("/api/projects/{id}/deployments", handlers.ProjectDeploymentsHandler)
+	mux.HandleFunc("/api/projects/{id}/runtime-logs", handlers.ProjectRuntimeLogsHandler)
+	mux.HandleFunc("/api/projects/{id}/runtime-logs/stream", handlers.ProjectRuntimeLogsStreamHandler)
 	mux.HandleFunc("/api/deployments", handlers.DeploymentsHandler)
 	mux.HandleFunc("/api/deployments/{id}", handlers.DeploymentHandler)
 	mux.HandleFunc("/api/deployments/{id}/logs", handlers.DeploymentLogsHandler)

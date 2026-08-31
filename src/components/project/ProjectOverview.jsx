@@ -34,6 +34,7 @@ function InfoTile({ icon: Icon, label, value, mono }) {
 
 export default function ProjectOverview({ project, deployments = [], envVars = [], mounts = [], environment }) {
   const latest = deployments[0];
+  const liveUrl = latest?.url || project.domain;
   const envType = environment ? getEnvType(environment.type) : null;
   const fw = getFramework(project.framework);
   const instance = INSTANCE_TYPES.find((i) => i.id === project.instance_type) || INSTANCE_TYPES[0];
@@ -69,11 +70,11 @@ export default function ProjectOverview({ project, deployments = [], envVars = [
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {project.domain && (
+              {liveUrl && (
                 <Button asChild variant="outline" size="sm" className="gap-2">
-                  <a href={`https://${project.domain}`} target="_blank" rel="noreferrer">
+                  <a href={liveUrl} target="_blank" rel="noreferrer">
                     <ExternalLink className="h-3.5 w-3.5" />
-                    {project.domain}
+                    {liveUrl}
                   </a>
                 </Button>
               )}
