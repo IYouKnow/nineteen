@@ -196,6 +196,92 @@ func ProjectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ProjectResourcesHandler returns live CPU/memory usage for a project's
+// running container (via docker stats), or an empty "not running" snapshot.
+func ProjectResourcesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	claims, err := extractUser(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
+	}
+	id, ok := pathID(r)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "Invalid project ID")
+		return
+	}
+	project, err := getProject(claims.UserID, id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+	stats, err := services.NewDeployer().Stats(project.Slug, project.BuildStrategy)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to read container stats")
+		return
+	}
+	respondJSON(w, http.StatusOK, stats)
+}
+
+// ProjectResourcesStreamHandler pushes live container CPU/memory samples over
+// SSE (one JSON frame per second) so the UI can render without refreshing.
+// Auth is accepted via the Authorization header or a `token` query param.
+func ProjectResourcesStreamHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	claims, err := authFromRequest(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
+	}
+	projectID, ok := pathID(r)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "Invalid project ID")
+		return
+	}
+	project, err := getProject(claims.UserID, projectID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		respondError(w, http.StatusInternalServerError, "Streaming unsupported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	writeSSE(w, fl, map[string]interface{}{"connected": true})
+
+	d := services.NewDeployer()
+	ctx := r.Context()
+	tick := time.NewTicker(1 * time.Second)
+	defer tick.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			stats, err := d.Stats(project.Slug, project.BuildStrategy)
+			if err != nil {
+				continue
+			}
+			writeSSE(w, fl, stats)
+		}
+	}
+}
+
 func getProject(userID, id int64) (models.Project, error) {
 	var p models.Project
 	err := db.DB.QueryRow(projectSelect+" WHERE id = ? AND user_id = ?", id, userID).Scan(

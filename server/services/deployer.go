@@ -197,6 +197,96 @@ func (d *Deployer) RestartContainer(name string) error {
 	return exec.Command("docker", "restart", name).Run()
 }
 
+// ContainerStats is a point-in-time CPU/memory reading for a running container.
+// CPU is expressed as a percentage of a single host core (so >100 is possible
+// on multi-core hosts), and Memory is bytes in use.
+type ContainerStats struct {
+	CPU     float64 `json:"cpu"`
+	Memory  int64   `json:"memory"`
+	Running bool    `json:"running"`
+}
+
+// Stats reads one-shot usage for a project's running container, resolving the
+// name the same way runtime logs do. An empty result (Running=false) means the
+// project has no live container yet, not an error.
+func (d *Deployer) Stats(slug, buildStrategy string) (ContainerStats, error) {
+	name := ResolveContainer(slug, buildStrategy)
+	if name == "" {
+		return ContainerStats{}, nil
+	}
+	out, err := exec.Command("docker", "stats", "--no-stream", "--format", "{{json .}}", name).Output()
+	if err != nil {
+		return ContainerStats{}, nil // container stopped or gone
+	}
+
+	var s dockerStatsRow
+	if json.Unmarshal(out, &s) != nil {
+		return ContainerStats{}, nil
+	}
+	return ContainerStats{
+		CPU:     percentValue(s.CPUPerc),
+		Memory:  parseBytes(s.MemUsage),
+		Running: true,
+	}, nil
+}
+
+// dockerStatsRow is the subset of `docker stats --format '{{json .}}'` we read.
+type dockerStatsRow struct {
+	CPUPerc  string `json:"CPUPerc"`
+	MemUsage string `json:"MemUsage"`
+}
+
+// percentValue parses a float percentage string like "0.35%", returning 0 on
+// empty or malformed input.
+func percentValue(s string) float64 {
+	v, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(s), "%"), 64)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+// parseBytes reads a Docker size like "29.2MiB" from the first token of a
+// "usage / limit" string, returning bytes. It returns 0 when unparseable.
+func parseBytes(s string) int64 {
+	head := strings.TrimSpace(s)
+	if i := strings.Index(head, "/"); i >= 0 {
+		head = strings.TrimSpace(head[:i])
+	}
+	head = strings.TrimSpace(head)
+	if head == "" {
+		return 0
+	}
+	var val float64
+	idx := 0
+	for idx < len(head) {
+		c := head[idx]
+		if (c >= '0' && c <= '9') || c == '.' {
+			idx++
+			continue
+		}
+		break
+	}
+	if idx == 0 {
+		return 0
+	}
+	val, err := strconv.ParseFloat(head[:idx], 64)
+	if err != nil {
+		return 0
+	}
+	mult, ok := sizeUnits[strings.ToUpper(strings.TrimSpace(head[idx:]))]
+	if !ok {
+		return int64(val)
+	}
+	return int64(val * float64(mult))
+}
+
+var sizeUnits = map[string]int64{
+	"B": 1,
+	"KB": 1000, "MB": 1000 * 1000, "GB": 1000 * 1000 * 1000, "TB": 1000 * 1000 * 1000 * 1000,
+	"KIB": 1 << 10, "MIB": 1 << 20, "GIB": 1 << 30, "TIB": 1 << 40,
+}
+
 // Run starts a published container and returns its id. If envFile is non-empty
 // its content is passed to the container via --env-file.
 func (d *Deployer) Run(image, name string, hostPort, containerPort int, envFile string, log func(string)) (string, error) {

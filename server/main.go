@@ -57,6 +57,8 @@ func main() {
 	mux.HandleFunc("/api/settings/integrations/", handlers.UpdateIntegrationHandler)
 	mux.HandleFunc("/api/projects", handlers.ProjectsHandler)
 	mux.HandleFunc("/api/projects/{id}", handlers.ProjectHandler)
+	mux.HandleFunc("/api/projects/{id}/resources", handlers.ProjectResourcesHandler)
+	mux.HandleFunc("/api/projects/{id}/resources/stream", handlers.ProjectResourcesStreamHandler)
 	mux.HandleFunc("/api/projects/{id}/deployments", handlers.ProjectDeploymentsHandler)
 	mux.HandleFunc("/api/projects/{id}/actions", handlers.ProjectActionHandler)
 	mux.HandleFunc("/api/projects/{id}/env-vars", handlers.ProjectEnvVarsHandler)

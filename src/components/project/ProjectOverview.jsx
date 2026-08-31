@@ -9,15 +9,16 @@ import {
   Zap,
   Calendar,
   GitBranch,
-  Cpu,
   MapPin,
 } from "lucide-react";
 import StatusDot from "@/components/dev/StatusDot";
 import FrameworkIcon from "@/components/dev/FrameworkIcon";
 import EmptyState from "@/components/dev/EmptyState";
+import ProjectResources from "@/components/project/ProjectResources";
 import { Button } from "@/components/ui/button";
 import { timeAgo, formatDate, formatDuration, shortSha } from "@/lib/format";
 import { getFramework, INSTANCE_TYPES, REGIONS } from "@/lib/devStatus";
+
 import { getEnvType } from "@/lib/environments";
 
 function InfoTile({ icon: Icon, label, value, mono }) {
@@ -131,12 +132,16 @@ export default function ProjectOverview({ project, deployments = [], envVars = [
         )}
       </div>
 
+      {/* Resources */}
+      <div>
+        <ProjectResources project={project} />
+      </div>
+
       {/* Info grid */}
       <div>
         <h3 className="mb-2 text-sm font-medium">Details</h3>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           <InfoTile icon={GitBranch} label="Branch" value={environment?.branch || project.branch || "main"} mono />
-          <InfoTile icon={Cpu} label="Instance" value={instance.label} />
           <InfoTile icon={MapPin} label="Region" value={region.label} />
           <InfoTile
             icon={Zap}
