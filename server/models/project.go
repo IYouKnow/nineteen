@@ -19,6 +19,7 @@ type Project struct {
 	BuildStrategy string    `json:"build_strategy"`
 	DockerfilePath string   `json:"dockerfile_path"`
 	ComposePath   string    `json:"compose_path"`
+	Port          *int      `json:"port"`
 	LastDeployedAt *string  `json:"last_deployed_at"`
 	CreatedDate   string    `json:"created_date"`
 	UpdatedDate   string    `json:"updated_date"`
@@ -59,4 +60,20 @@ type RuntimeLog struct {
 	Level        string    `json:"level"`
 	Message      string    `json:"message"`
 	Timestamp    time.Time `json:"timestamp"`
+}
+
+// EnvVar is a project environment variable. Value holds a plaintext value only
+// for non-secret vars; for secrets it is empty and HasValue reports presence so
+// the UI can render it as write-only.
+type EnvVar struct {
+	ID        int64  `json:"id"`
+	ProjectID int64  `json:"project_id"`
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	HasValue  bool   `json:"has_value"`
+	IsSecret  bool   `json:"is_secret"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+	// Encrypted holds the ciphertext at rest; never marshaled to JSON.
+	Encrypted string `json:"-"`
 }

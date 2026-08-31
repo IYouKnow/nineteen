@@ -1,4 +1,4 @@
-import { GitBranch, Cpu, MapPin, Layers, Globe, Ship } from "lucide-react";
+import { GitBranch, Cpu, MapPin, Layers, Globe, Ship, Plug2 } from "lucide-react";
 import { FRAMEWORKS, INSTANCE_TYPES, REGIONS } from "@/lib/devStatus";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -84,6 +84,20 @@ export default function ConfigurationStep({ config, setConfig, sourceLabel, buil
               <option key={t.id} value={t.id}>{t.label} · {t.cpu} / {t.ram}</option>
             ))}
           </select>
+        </div>
+
+        <div>
+          <Label className="text-xs flex items-center gap-1"><Plug2 className="h-3 w-3" /> Port</Label>
+          <Input
+            value={config.port}
+            onChange={(e) => update({ port: e.target.value.replace(/[^0-9]/g, "") })}
+            placeholder="auto"
+            inputMode="numeric"
+            className="mt-1.5 font-mono text-sm"
+          />
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Leave empty to auto-assign. Set a fixed port to match an app that expects one.
+          </p>
         </div>
       </div>
 

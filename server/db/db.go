@@ -131,6 +131,18 @@ func runMigrations() {
 			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_runtime_logs_project ON runtime_logs(project_id, id)`,
+		`CREATE TABLE IF NOT EXISTS env_vars (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			key TEXT NOT NULL,
+			value_encrypted TEXT NOT NULL,
+			is_secret BOOLEAN DEFAULT FALSE,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(project_id, key)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_env_vars_project ON env_vars(project_id)`,
 	}
 
 	for _, m := range migrations {
@@ -150,6 +162,7 @@ func runMigrations() {
 		{"integrations", "metadata", `ALTER TABLE integrations ADD COLUMN metadata TEXT DEFAULT '{}'`},
 		{"projects", "dockerfile_path", `ALTER TABLE projects ADD COLUMN dockerfile_path TEXT DEFAULT ''`},
 		{"projects", "compose_path", `ALTER TABLE projects ADD COLUMN compose_path TEXT DEFAULT ''`},
+		{"projects", "port", `ALTER TABLE projects ADD COLUMN port INTEGER`},
 	}
 
 	for _, c := range columns {

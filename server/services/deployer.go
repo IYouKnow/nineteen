@@ -197,14 +197,21 @@ func (d *Deployer) RestartContainer(name string) error {
 	return exec.Command("docker", "restart", name).Run()
 }
 
-// Run starts a published container and returns its id.
-func (d *Deployer) Run(image, name string, hostPort, containerPort int, log func(string)) (string, error) {
-	cmd := exec.Command("docker", "run", "-d",
+// Run starts a published container and returns its id. If envFile is non-empty
+// its content is passed to the container via --env-file.
+func (d *Deployer) Run(image, name string, hostPort, containerPort int, envFile string, log func(string)) (string, error) {
+	args := []string{
+		"run", "-d",
 		"--name", name,
 		"--restart", "unless-stopped",
 		"-p", fmt.Sprintf("127.0.0.1:%d:%d", hostPort, containerPort),
-		image,
-	)
+	}
+	if envFile != "" {
+		args = append(args, "--env-file", envFile)
+	}
+	args = append(args, image)
+
+	cmd := exec.Command("docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		log(string(out))
@@ -216,9 +223,15 @@ func (d *Deployer) Run(image, name string, hostPort, containerPort int, log func
 }
 
 // ComposeUp builds and starts the stack defined by composeFile
-// (repo-relative) under the given compose project name.
-func (d *Deployer) ComposeUp(dir, composeFile, projectName string, log func(string)) error {
-	cmd := exec.Command("docker", "compose", "-f", composeFile, "-p", projectName, "up", "-d", "--build")
+// (repo-relative) under the given compose project name. When overrideFile is
+// non-empty it is merged with the base compose file (e.g. to inject env_file).
+func (d *Deployer) ComposeUp(dir, composeFile, overrideFile, projectName string, log func(string)) error {
+	args := []string{"compose", "-f", composeFile}
+	if overrideFile != "" {
+		args = append(args, "-f", overrideFile)
+	}
+	args = append(args, "-p", projectName, "up", "-d", "--build")
+	cmd := exec.Command("docker", args...)
 	cmd.Dir = dir
 	return streamCommand(cmd, log)
 }

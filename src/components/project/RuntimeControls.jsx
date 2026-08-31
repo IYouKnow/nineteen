@@ -3,8 +3,9 @@ import * as api from "@/lib/api";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { Play, Square, RotateCw, Loader2, Cpu, MapPin, Activity } from "lucide-react";
+import { Play, Square, RotateCw, Loader2, Cpu, MapPin, Activity, Plug2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import StatusBadge from "@/components/dev/StatusBadge";
 import { INSTANCE_TYPES, REGIONS } from "@/lib/devStatus";
 
@@ -115,6 +116,26 @@ export default function RuntimeControls({ project }) {
               </option>
             ))}
           </select>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <Plug2 className="h-3.5 w-3.5" />
+            Public port
+          </label>
+          <Input
+            defaultValue={project.port || ""}
+            inputMode="numeric"
+            onBlur={(e) => {
+              const v = e.target.value.replace(/[^0-9]/g, "");
+              e.target.value = v;
+              updateConfig("port", v ? Number(v) : null);
+            }}
+            placeholder="auto (random)"
+            className="mt-2 h-9 rounded-md font-mono text-sm"
+          />
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            Set a fixed port to match an app that expects one (e.g. 38427).
+          </p>
         </div>
       </div>
     </div>

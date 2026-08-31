@@ -58,3 +58,12 @@ export const runtimeLogs = {
     return `${API_URL}/api/projects/${projectId}/runtime-logs/stream?token=${encodeURIComponent(token)}`;
   },
 };
+
+export const envVars = {
+  list: (projectId) => doFetch(`/api/projects/${projectId}/env-vars`),
+  create: (projectId, payload) =>
+    doFetch(`/api/projects/${projectId}/env-vars`, { method: "POST", body: JSON.stringify(payload) }),
+  update: (projectId, id, payload) =>
+    doFetch(`/api/projects/${projectId}/env-vars/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
+  remove: (projectId, id) => doFetch(`/api/projects/${projectId}/env-vars/${id}`, { method: "DELETE" }),
+};

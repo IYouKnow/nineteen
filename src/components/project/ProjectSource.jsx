@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import FrameworkIcon from "@/components/dev/FrameworkIcon";
 import StatusDot from "@/components/dev/StatusDot";
-import { Switch } from "@/components/ui/switch";
 import { timeAgo, shortSha } from "@/lib/format";
 import { getFramework } from "@/lib/devStatus";
 
@@ -23,12 +22,6 @@ export default function ProjectSource({ project, deployments = [], environment, 
   const fw = getFramework(project.framework);
   const repoOwner = project.repository?.split("/")[0] || "acme";
   const branch = isProd ? project.branch : environment?.branch;
-
-  const toggleAutoDeploy = async (value) => {
-    await api.projects.update(project.id, { auto_deploy: value });
-    qc.invalidateQueries({ queryKey: ["project", project.id] });
-    qc.invalidateQueries({ queryKey: ["projects"] });
-  };
 
   const changeBranch = (b) => {
     if (!isProd) {
@@ -70,36 +63,24 @@ export default function ProjectSource({ project, deployments = [], environment, 
         </div>
       </div>
 
-      {/* Branch & auto-deploy */}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-lg border border-border bg-card p-4">
-          <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-            <GitBranch className="h-3.5 w-3.5" />
-            {isProd ? "Production branch" : "Environment branch"}
-          </label>
-          <select
-            value={branch || "main"}
-            onChange={(e) => changeBranch(e.target.value)}
-            className="mt-2 h-9 w-full rounded-md border border-input bg-background px-2.5 font-mono text-sm"
-          >
-            {BRANCHES.map((b) => (
-              <option key={b} value={b}>{b}</option>
-            ))}
-          </select>
-          <p className="mt-2 text-xs text-muted-foreground">
-            Pushes to this branch trigger a new deployment.
-          </p>
-        </div>
-
-        <div className="flex items-center justify-between rounded-lg border border-border bg-card p-4">
-          <div>
-            <p className="text-sm font-medium">Auto-deploy on push</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Automatically build when code lands on {branch || "main"}.
-            </p>
-          </div>
-          <Switch checked={!!project.auto_deploy} onCheckedChange={toggleAutoDeploy} />
-        </div>
+      {/* Branch */}
+      <div className="rounded-lg border border-border bg-card p-4">
+        <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <GitBranch className="h-3.5 w-3.5" />
+          {isProd ? "Production branch" : "Environment branch"}
+        </label>
+        <select
+          value={branch || "main"}
+          onChange={(e) => changeBranch(e.target.value)}
+          className="mt-2 h-9 w-full rounded-md border border-input bg-background px-2.5 font-mono text-sm"
+        >
+          {BRANCHES.map((b) => (
+            <option key={b} value={b}>{b}</option>
+          ))}
+        </select>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Pushes to this branch trigger a new deployment.
+        </p>
       </div>
 
       {/* Recent commits */}

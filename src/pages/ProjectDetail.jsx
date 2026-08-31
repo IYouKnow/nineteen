@@ -90,7 +90,7 @@ export default function ProjectDetail() {
 
   const { data: envVars = [] } = useQuery({
     queryKey: ["envvars", projectId],
-    queryFn: () => db.entities.EnvironmentVariable.filter({ project_id: projectId }),
+    queryFn: () => api.envVars.list(projectId),
   });
 
   const { data: mounts = [] } = useQuery({

@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +31,7 @@ type rowScanner interface {
 
 const projectSelect = `SELECT id, user_id, name, slug, status, framework, repository, branch,
 	domain, description, auto_deploy, region, instance_type, build_strategy,
-	dockerfile_path, compose_path, last_deployed_at, created_date, updated_date FROM projects`
+	dockerfile_path, compose_path, port, last_deployed_at, created_date, updated_date FROM projects`
 
 func ProjectsHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -63,6 +64,7 @@ func listProjectsHandler(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Slug, &p.Status, &p.Framework,
 			&p.Repository, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
 			&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
+			&p.Port,
 			&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate); err != nil {
 			continue
 		}
@@ -94,6 +96,7 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 		BuildStrategy string `json:"build_strategy"`
 		DockerfilePath string `json:"dockerfile_path"`
 		ComposePath   string `json:"compose_path"`
+		Port          *int   `json:"port"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
@@ -135,11 +138,11 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	result, err := db.DB.Exec(
 		`INSERT INTO projects (user_id, name, slug, status, framework, repository, branch, domain,
-			description, auto_deploy, region, instance_type, build_strategy, dockerfile_path, compose_path)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			description, auto_deploy, region, instance_type, build_strategy, dockerfile_path, compose_path, port)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		claims.UserID, req.Name, req.Slug, req.Status, req.Framework, req.Repository,
 		req.Branch, req.Domain, req.Description, req.AutoDeploy, req.Region, req.InstanceType,
-		req.BuildStrategy, req.DockerfilePath, req.ComposePath,
+		req.BuildStrategy, req.DockerfilePath, req.ComposePath, req.Port,
 	)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to create project")
@@ -199,6 +202,7 @@ func getProject(userID, id int64) (models.Project, error) {
 		&p.ID, &p.UserID, &p.Name, &p.Slug, &p.Status, &p.Framework,
 		&p.Repository, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
 		&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
+		&p.Port,
 		&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
 	)
 	return p, err
@@ -209,7 +213,7 @@ var updatableProjectColumns = map[string]bool{
 	"domain": true, "description": true, "auto_deploy": true, "region": true,
 	"instance_type": true, "build_strategy": true, "name": true, "slug": true,
 	"dockerfile_path": true, "compose_path": true,
-	"last_deployed_at": true,
+	"last_deployed_at": true, "port": true,
 }
 
 func updateProject(w http.ResponseWriter, r *http.Request, userID, id int64) (models.Project, error) {
@@ -227,6 +231,8 @@ func updateProject(w http.ResponseWriter, r *http.Request, userID, id int64) (mo
 		sets = append(sets, col+" = ?")
 		if col == "auto_deploy" {
 			args = append(args, boolToInt(toBool(val)))
+		} else if col == "port" {
+			args = append(args, intOrNil(val))
 		} else {
 			args = append(args, valueToString(val))
 		}
@@ -553,6 +559,21 @@ func buildAndDeploy(deployID int64, project models.Project) {
 		db.DB.Exec("UPDATE deployments SET commit_sha = ? WHERE id = ?", sha, deployID)
 	}
 
+	// Load the project's env vars and write a temp .env to inject at runtime.
+	envVars, envErr := services.LoadEnvVars(project.ID)
+	if envErr != nil {
+		log("warn", "Failed to load environment variables: "+envErr.Error())
+		envVars = nil
+	}
+	envPath, envErr := services.WriteEnvFile(envVars)
+	if envErr != nil {
+		log("warn", "Failed to write env file: "+envErr.Error())
+		envPath = ""
+	}
+	if envPath != "" {
+		defer os.Remove(envPath)
+	}
+
 	dockerfiles := d.FindDockerfiles(dir)
 	composeFiles := d.FindComposeFiles(dir)
 
@@ -564,13 +585,13 @@ func buildAndDeploy(deployID int64, project models.Project) {
 	}
 
 	if useCompose {
-		composeDeploy(log, d, deployID, project, dir, composeFiles, start)
+		composeDeploy(log, d, deployID, project, dir, composeFiles, envPath, start)
 		return
 	}
-	dockerfileDeploy(log, d, deployID, project, dir, dockerfiles, composeFiles, start)
+	dockerfileDeploy(log, d, deployID, project, dir, dockerfiles, composeFiles, envPath, start)
 }
 
-func dockerfileDeploy(log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, dockerfiles, composeFiles []string, start time.Time) {
+func dockerfileDeploy(log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, dockerfiles, composeFiles []string, envPath string, start time.Time) {
 	dockerfile := project.DockerfilePath
 	if dockerfile != "" && !d.RepoFileExists(dir, dockerfile) {
 		log("warn", fmt.Sprintf("Dockerfile %q from the project settings was not found in this branch — searching the repository", dockerfile))
@@ -609,16 +630,23 @@ func dockerfileDeploy(log func(string, string), d *services.Deployer, deployID i
 		log("warn", "No EXPOSE found in the Dockerfile or the image — assuming port 3000. Add EXPOSE <port> to your Dockerfile if this is wrong.")
 	}
 
-	hostPort, err := d.FreePort()
-	if err != nil {
-		log("error", "Failed to reserve a port: "+err.Error())
-		finishDeployment(deployID, project.ID, statusError, 0, "")
-		return
+	hostPort := 0
+	if project.Port != nil && *project.Port > 0 {
+		hostPort = *project.Port
+		log("info", fmt.Sprintf("Using configured port %d", hostPort))
+	} else {
+		hp, err := d.FreePort()
+		if err != nil {
+			log("error", "Failed to reserve a port: "+err.Error())
+			finishDeployment(deployID, project.ID, statusError, 0, "")
+			return
+		}
+		hostPort = hp
 	}
 	d.CleanupContainer(containerName)
 	d.CleanupCompose(composeProjectName(project.Slug), func(line string) { log("info", line) })
 	log("info", fmt.Sprintf("Starting container on 127.0.0.1:%d", hostPort))
-	if _, err := d.Run(image, containerName, hostPort, containerPort, func(line string) { log("info", line) }); err != nil {
+	if _, err := d.Run(image, containerName, hostPort, containerPort, envPath, func(line string) { log("info", line) }); err != nil {
 		log("error", "Container failed: "+err.Error())
 		finishDeployment(deployID, project.ID, statusError, 0, "")
 		return
@@ -634,7 +662,7 @@ func dockerfileDeploy(log func(string, string), d *services.Deployer, deployID i
 	services.EnsureTailed(project.ID, deployID, containerName)
 }
 
-func composeDeploy(log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, composeFiles []string, start time.Time) {
+func composeDeploy(log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, composeFiles []string, envPath string, start time.Time) {
 	composeFile := project.ComposePath
 	if composeFile != "" && !d.RepoFileExists(dir, composeFile) {
 		log("warn", fmt.Sprintf("Compose file %q from the project settings was not found in this branch — searching the repository", composeFile))
@@ -650,11 +678,26 @@ func composeDeploy(log func(string, string), d *services.Deployer, deployID int6
 	}
 	log("info", "Using Docker Compose file at "+composeFile)
 
+	// Inject env vars into every service via a generated override.
+	overridePath := ""
+	if envPath != "" {
+		if names := services.ComposeServiceNames(filepath.Join(dir, composeFile)); len(names) > 0 {
+			if p, err := services.WriteComposeEnvOverride(names, envPath); err == nil {
+				overridePath = p
+				defer os.Remove(overridePath)
+			} else {
+				log("warn", "Failed to generate compose env override: "+err.Error())
+			}
+		} else {
+			log("warn", "Could not list compose services — environment variables not injected")
+		}
+	}
+
 	name := composeProjectName(project.Slug)
 	d.CleanupContainer(fmt.Sprintf("nineteen-%s", project.Slug))
 	d.CleanupCompose(name, func(line string) { log("info", line) })
 
-	if err := d.ComposeUp(dir, composeFile, name, func(line string) { log("info", line) }); err != nil {
+	if err := d.ComposeUp(dir, composeFile, overridePath, name, func(line string) { log("info", line) }); err != nil {
 		log("error", "docker compose failed: "+err.Error())
 		finishDeployment(deployID, project.ID, statusError, 0, "")
 		return
@@ -824,4 +867,28 @@ func boolToString(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// intOrNil returns a *int for a JSON port value, or nil when the value is
+// empty / null (meaning "auto-assign a port at deploy time").
+func intOrNil(v interface{}) interface{} {
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case float64:
+		if x <= 0 {
+			return nil
+		}
+		return int(x)
+	case string:
+		if strings.TrimSpace(x) == "" {
+			return nil
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(x)); err == nil && n > 0 {
+			return n
+		}
+		return nil
+	default:
+		return nil
+	}
 }

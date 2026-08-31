@@ -1,9 +1,9 @@
-import db from '@/lib/db';
+import * as api from "@/lib/api";
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { Plus, Trash2, Pencil, Eye, EyeOff, KeyRound } from "lucide-react";
+import { Plus, Trash2, Pencil, Eye, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,50 +25,47 @@ export default function EnvVarEditor({ projectId, envVars = [], environment, isP
   const [key, setKey] = useState("");
   const [value, setValue] = useState("");
   const [isSecret, setIsSecret] = useState(false);
-  const [revealed, setRevealed] = useState({});
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["envvars", String(projectId)] });
 
   const openAdd = () => {
     setEditing(null);
     setKey("");
     setValue("");
     setIsSecret(false);
+    setError("");
     setOpen(true);
   };
   const openEdit = (v) => {
     setEditing(v);
     setKey(v.key);
-    setValue(v.value || "");
+    setValue("");
     setIsSecret(!!v.is_secret);
+    setError("");
     setOpen(true);
   };
 
   const save = async () => {
-    if (!key.trim()) return;
+    const trimmed = key.trim();
+    if (!trimmed) return;
+    const payload = { key: trimmed, value, is_secret: isSecret };
     if (!isProd) {
-      if (editing) onUpdate?.(editing.id, { key, value, is_secret: isSecret });
-      else onAdd?.({ key, value, is_secret: isSecret });
+      if (editing) onUpdate?.(editing.id, payload);
+      else onAdd?.(payload);
       setOpen(false);
       return;
     }
     setSaving(true);
+    setError("");
     try {
-      if (editing) {
-        await db.entities.EnvironmentVariable.update(editing.id, {
-          key,
-          value,
-          is_secret: isSecret,
-        });
-      } else {
-        await db.entities.EnvironmentVariable.create({
-          project_id: projectId,
-          key,
-          value,
-          is_secret: isSecret,
-        });
-      }
-      qc.invalidateQueries({ queryKey: ["envvars", projectId] });
+      if (editing) await api.envVars.update(projectId, editing.id, payload);
+      else await api.envVars.create(projectId, payload);
+      invalidate();
       setOpen(false);
+    } catch (e) {
+      setError(e?.message || "Failed to save variable");
     } finally {
       setSaving(false);
     }
@@ -79,9 +76,7 @@ export default function EnvVarEditor({ projectId, envVars = [], environment, isP
       onDelete?.(v.id);
       return;
     }
-    db.entities.EnvironmentVariable.delete(v.id).then(() =>
-      qc.invalidateQueries({ queryKey: ["envvars", projectId] })
-    );
+    api.envVars.remove(projectId, v.id).then(invalidate).catch(() => invalidate());
   };
 
   return (
@@ -90,7 +85,7 @@ export default function EnvVarEditor({ projectId, envVars = [], environment, isP
         <div>
           <h3 className="text-sm font-medium">Environment Variables</h3>
           <p className="text-xs text-muted-foreground">
-            Injected into your runtime at build and runtime.
+            Injected into your runtime at deploy time.
           </p>
         </div>
         <Button size="sm" variant="outline" onClick={openAdd} className="gap-2">
@@ -117,16 +112,17 @@ export default function EnvVarEditor({ projectId, envVars = [], environment, isP
                   </div>
                   <div className="flex-1 min-w-0">
                     <span className="block truncate font-mono text-sm text-muted-foreground">
-                      {v.is_secret && !revealed[v.id] ? "••••••••••••" : v.value || "—"}
+                      {v.is_secret ? "••••••••••••" : v.value || "—"}
                     </span>
                   </div>
                   <div className="flex items-center gap-0.5">
-                    {v.is_secret && (
+                    {v.has_value === false && !v.is_secret && (
                       <button
-                        onClick={() => setRevealed((r) => ({ ...r, [v.id]: !r[v.id] }))}
+                        onClick={() => openEdit(v)}
                         className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                        title="Set value"
                       >
-                        {revealed[v.id] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                        <Eye className="h-3.5 w-3.5" />
                       </button>
                     )}
                     <button
@@ -174,17 +170,18 @@ export default function EnvVarEditor({ projectId, envVars = [], environment, isP
               <Input
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
-                placeholder="postgres://…"
+                placeholder={editing?.is_secret ? "Leave blank to keep the existing secret" : "postgres://…"}
                 className="mt-1.5 font-mono"
               />
             </div>
             <div className="flex items-center justify-between rounded-md border border-border p-3">
               <div>
                 <p className="text-sm font-medium">Secret</p>
-                <p className="text-xs text-muted-foreground">Masked in the dashboard and logs.</p>
+                <p className="text-xs text-muted-foreground">Masked everywhere — the value is write-only.</p>
               </div>
               <Switch checked={isSecret} onCheckedChange={setIsSecret} />
             </div>
+            {error && <p className="text-xs text-destructive">{error}</p>}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>
