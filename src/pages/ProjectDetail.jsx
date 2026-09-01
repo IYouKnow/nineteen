@@ -32,6 +32,7 @@ import ProjectOverview from "@/components/project/ProjectOverview";
 import ProjectDeployments from "@/components/project/ProjectDeployments";
 import ProjectSource from "@/components/project/ProjectSource";
 import ProjectSettings from "@/components/project/ProjectSettings";
+import BuildFileTab from "@/components/project/BuildFileTab";
 import ProjectDatabases from "@/components/project/ProjectDatabases";
 import ProjectStrategy from "@/components/project/ProjectStrategy";
 import ProjectArchitecture from "@/components/project/ProjectArchitecture";
@@ -56,6 +57,7 @@ const TABS = [
   { id: "logs", label: "Logs" },
   { id: "strategy", label: "Strategy", disabled: true },
   { id: "source", label: "Source" },
+  { id: "buildfile", label: "Build file" },
   { id: "architecture", label: "Architecture", disabled: true },
   { id: "databases", label: "Databases", disabled: true },
   { id: "environments", label: "Environments", disabled: true },
@@ -425,6 +427,7 @@ export default function ProjectDetail() {
             onBranchChange={onBranchChange}
           />
         )}
+        {tab === "buildfile" && <BuildFileTab project={project} />}
         {tab === "architecture" &&
           (isProd ? (
             <ProjectArchitecture project={project} onOpenLogs={() => setTab("logs")} />

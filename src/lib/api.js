@@ -28,6 +28,7 @@ export const projects = {
   action: (id, action) =>
     doFetch(`/api/projects/${id}/actions`, { method: "POST", body: JSON.stringify({ action }) }),
   resources: (id) => doFetch(`/api/projects/${id}/resources`),
+  buildFile: (id) => doFetch(`/api/projects/${id}/buildfile`),
   resourcesStreamUrl: (id) => {
     const token = localStorage.getItem("nineteen_token") || "";
     return `${API_URL}/api/projects/${id}/resources/stream?token=${encodeURIComponent(token)}`;

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -146,6 +147,57 @@ func (g *GitHubClient) GetRepoTree(fullName, ref string) ([]string, bool, error)
 		}
 	}
 	return files, tree.Truncated, nil
+}
+
+// GetRepoFile fetches a single file's decoded content at a given ref (branch,
+// tag or "HEAD") using the GitHub Contents API. Works for private repositories
+// when g.Token is set; returns the decoded bytes.
+func (g *GitHubClient) GetRepoFile(fullName, ref, path string) ([]byte, error) {
+	if ref == "" {
+		ref = "HEAD"
+	}
+	fullName = strings.TrimSpace(fullName)
+	path = strings.TrimSpace(path)
+	if fullName == "" || path == "" {
+		return nil, fmt.Errorf("fullName and path are required")
+	}
+	u := fmt.Sprintf("https://api.github.com/repos/%s/contents/%s?ref=%s",
+		fullName, url.PathEscape(path), url.QueryEscape(ref))
+	body, err := g.doRequest(u)
+	if err != nil {
+		return nil, err
+	}
+
+	var file struct {
+		Type     string `json:"type"`
+		Size     int    `json:"size"`
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	if err := json.Unmarshal(body, &file); err != nil {
+		return nil, err
+	}
+	if file.Type != "" && file.Type != "file" {
+		return nil, fmt.Errorf("%s is not a file", path)
+	}
+	if file.Content == "" {
+		return nil, fmt.Errorf("file %q has no content", path)
+	}
+	cleaned := strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
+			return -1
+		}
+		return r
+	}, file.Content)
+	decoded, err := base64.StdEncoding.DecodeString(cleaned)
+	if err != nil {
+		// Some responses are base64-encoded without padding; retry decoded-safe.
+		if dec, derr := base64.RawStdEncoding.DecodeString(cleaned); derr == nil {
+			return dec, nil
+		}
+		return nil, fmt.Errorf("failed to decode %q: %w", path, err)
+	}
+	return decoded, nil
 }
 
 func (g *GitHubClient) ValidateToken() (*GitHubUser, error) {

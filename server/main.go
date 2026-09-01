@@ -62,6 +62,7 @@ func main() {
 	mux.HandleFunc("/api/projects/{id}/deployments", handlers.ProjectDeploymentsHandler)
 	mux.HandleFunc("/api/projects/{id}/actions", handlers.ProjectActionHandler)
 	mux.HandleFunc("/api/projects/{id}/env-vars", handlers.ProjectEnvVarsHandler)
+	mux.HandleFunc("/api/projects/{id}/buildfile", handlers.ProjectBuildFileHandler)
 	mux.HandleFunc("/api/projects/{id}/env-vars/{varId}", handlers.ProjectEnvVarHandler)
 	mux.HandleFunc("/api/projects/{id}/runtime-logs", handlers.ProjectRuntimeLogsHandler)
 	mux.HandleFunc("/api/projects/{id}/runtime-logs/stream", handlers.ProjectRuntimeLogsStreamHandler)

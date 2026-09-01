@@ -212,6 +212,119 @@ func ProjectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// buildFileResponse is the shape returned by the build-file viewer.
+type buildFileResponse struct {
+	Path          string `json:"path"`
+	Kind          string `json:"kind"` // "dockerfile" or "compose"
+	BuildStrategy string `json:"build_strategy"`
+	Branch        string `json:"branch"`
+	Repository    string `json:"repository"`
+	Content       string `json:"content"`
+	Size          int    `json:"size"`
+}
+
+// ProjectBuildFileHandler returns the Dockerfile (or Docker Compose file)
+// currently used to build a project, so the UI can show what the deploy
+// actually runs. It reuses the same selection logic as the deployment worker:
+// an explicit dockerfile_path / compose_path wins, otherwise the highest-ranked
+// candidate from the repository's file tree is used.
+func ProjectBuildFileHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	claims, err := extractUser(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
+	}
+	id, ok := pathID(r)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "Invalid project ID")
+		return
+	}
+
+	project, err := getProject(claims.UserID, id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+	if project.Repository == "" {
+		respondError(w, http.StatusBadRequest, "Project has no repository linked")
+		return
+	}
+
+	token, err := githubToken(claims.UserID)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "No GitHub integration available to read the repository")
+		return
+	}
+
+	branch := project.Branch
+	if branch == "" {
+		branch = "main"
+	}
+
+	client := services.NewGitHubClient(token)
+	files, _, err := client.GetRepoTree(project.Repository, branch)
+	if err != nil {
+		respondError(w, http.StatusBadGateway, "Failed to read repository: "+err.Error())
+		return
+	}
+	present := make(map[string]bool, len(files))
+	for _, f := range files {
+		present[f] = true
+	}
+
+	dockerfiles := services.RankDockerfiles(files)
+	composeFiles := services.RankComposeFiles(files)
+
+	// Mirror buildAndDeploy: pick the effective build file.
+	useCompose := project.ComposePath != "" || project.BuildStrategy == "compose"
+	if !useCompose && project.DockerfilePath == "" && project.BuildStrategy != "dockerfile" &&
+		len(dockerfiles) == 0 && len(composeFiles) > 0 {
+		useCompose = true
+	}
+
+	var resp buildFileResponse
+	resp.Repository = project.Repository
+	resp.Branch = branch
+	resp.BuildStrategy = project.BuildStrategy
+
+	if useCompose {
+		resp.Kind = "compose"
+		resp.Path = project.ComposePath
+		if resp.Path == "" || !present[resp.Path] {
+			if len(composeFiles) == 0 {
+				respondError(w, http.StatusNotFound, "No Docker Compose file found in this branch")
+				return
+			}
+			resp.Path = composeFiles[0]
+		}
+	} else {
+		resp.Kind = "dockerfile"
+		resp.Path = project.DockerfilePath
+		if resp.Path == "" || !present[resp.Path] {
+			if len(dockerfiles) == 0 {
+				respondError(w, http.StatusNotFound, "No Dockerfile found in this branch")
+				return
+			}
+			resp.Path = dockerfiles[0]
+		}
+	}
+
+	raw, err := client.GetRepoFile(project.Repository, branch, resp.Path)
+	if err != nil {
+		respondError(w, http.StatusBadGateway, "Failed to read "+resp.Path+": "+err.Error())
+		return
+	}
+	resp.Content = string(raw)
+	resp.Size = len(raw)
+
+	respondJSON(w, http.StatusOK, resp)
+}
+
 // ProjectResourcesHandler returns live CPU/memory usage for a project's
 // running container (via docker stats), or an empty "not running" snapshot.
 func ProjectResourcesHandler(w http.ResponseWriter, r *http.Request) {
