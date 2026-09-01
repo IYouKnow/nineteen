@@ -44,6 +44,21 @@ func ProjectsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// reconcileProjectStatus corrects a project's status to its live container
+// state so the UI badge never reads "running" for a container that is actually
+// stopped or gone (e.g. Docker closed). Corrections that can be confirmed are
+// written back to the DB; ambiguous ones (daemon down) only affect this read.
+func reconcileProjectStatus(p *models.Project) {
+	newStatus, persist := services.NewDeployer().ReconcileStatus(p.Slug, p.BuildStrategy, p.Status)
+	if newStatus == p.Status {
+		return
+	}
+	p.Status = newStatus
+	if persist {
+		db.DB.Exec("UPDATE projects SET status = ? WHERE id = ?", newStatus, p.ID)
+	}
+}
+
 func listProjectsHandler(w http.ResponseWriter, r *http.Request) {
 	claims, err := extractUser(r)
 	if err != nil {
@@ -69,6 +84,7 @@ func listProjectsHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		projects = append(projects, p)
+		reconcileProjectStatus(&projects[len(projects)-1])
 	}
 
 	respondJSON(w, http.StatusOK, projects)
@@ -265,19 +281,26 @@ func ProjectResourcesStreamHandler(w http.ResponseWriter, r *http.Request) {
 
 	d := services.NewDeployer()
 	ctx := r.Context()
-	tick := time.NewTicker(1 * time.Second)
-	defer tick.Stop()
 
+	// Use a single long-running `docker stats` (streaming) process so Docker
+	// pushes a fresh, per-interval CPU/memory sample every ~1s with no
+	// per-second CLI spawn latency — true point-in-time usage. If the container
+	// exits or is redeployed (new name), re-resolve and re-attach.
 	for {
+		name := services.ResolveContainer(project.Slug, project.BuildStrategy)
+		if name == "" || d.ContainerState(name) != "running" {
+			return // no live container — stream ends, client reconnects on redeploy
+		}
+		if err := d.StreamStats(ctx, name, func(stats services.ContainerStats) {
+			writeSSE(w, fl, stats)
+		}); err != nil && ctx.Err() != nil {
+			return // request cancelled / client disconnected
+		}
+
 		select {
 		case <-ctx.Done():
 			return
-		case <-tick.C:
-			stats, err := d.Stats(project.Slug, project.BuildStrategy)
-			if err != nil {
-				continue
-			}
-			writeSSE(w, fl, stats)
+		case <-time.After(2 * time.Second):
 		}
 	}
 }
@@ -291,6 +314,7 @@ func getProject(userID, id int64) (models.Project, error) {
 		&p.Port,
 		&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
 	)
+	reconcileProjectStatus(&p)
 	return p, err
 }
 

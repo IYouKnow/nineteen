@@ -2,6 +2,7 @@ package services
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -182,6 +183,42 @@ func (d *Deployer) ContainerState(name string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// ReconcileStatus returns a project's status corrected against the live
+// container state, and whether that correction should be persisted. Actions in
+// flight ("building", "restarting") and never-deployed states are returned
+// untouched. When the daemon is unreachable or a container cannot be confirmed
+// we report the conservative "stopped" without persisting, so the DB isn't
+// corrupted by a transient Docker outage.
+func (d *Deployer) ReconcileStatus(slug, buildStrategy, current string) (string, bool) {
+	switch current {
+	case "running":
+		name := ResolveContainer(slug, buildStrategy)
+		if name == "" {
+			return "stopped", false
+		}
+		switch d.ContainerState(name) {
+		case "running":
+			return "running", false
+		case "":
+			// container gone or daemon down — cannot confirm
+			return "stopped", false
+		default: // exited, dead, paused, created…
+			return "stopped", true
+		}
+	case "stopped":
+		name := ResolveContainer(slug, buildStrategy)
+		if name == "" {
+			return "stopped", false
+		}
+		if d.ContainerState(name) == "running" {
+			return "running", true
+		}
+		return "stopped", false
+	default:
+		return current, false
+	}
+}
+
 // StartContainer starts an existing (stopped) container.
 func (d *Deployer) StartContainer(name string) error {
 	return exec.Command("docker", "start", name).Run()
@@ -228,6 +265,47 @@ func (d *Deployer) Stats(slug, buildStrategy string) (ContainerStats, error) {
 		Memory:  parseBytes(s.MemUsage),
 		Running: true,
 	}, nil
+}
+
+// StreamStats runs `docker stats` in streaming mode — a single long-lived
+// docker process that Docker pushes a fresh sample to every ~1s — and calls
+// emit for each one. Unlike the per-tick Stats() poll, this avoids spawning a
+// docker CLI (and paying its latency) once per sample, so readings arrive in
+// near real-time with no dropped seconds.
+//
+// emit runs on one goroutine; it returns when ctx is done or the command exits.
+func (d *Deployer) StreamStats(ctx context.Context, name string, emit func(ContainerStats)) error {
+	cmd := exec.CommandContext(ctx, "docker", "stats", "--format", "{{json .}}", name)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		var s dockerStatsRow
+		if json.Unmarshal([]byte(strings.TrimSpace(stripANSI(sc.Text()))), &s) != nil {
+			continue // header line or unknown frame
+		}
+		emit(ContainerStats{
+			CPU:     percentValue(s.CPUPerc),
+			Memory:  parseBytes(s.MemUsage),
+			Running: true,
+		})
+	}
+	return cmd.Wait()
+}
+
+// ansiRe matches the terminal control codes `docker stats` emits in streaming
+// mode (ESC[ H / K / J and friends). Without stripping them the JSON frame is
+// wrapped in invalid characters and would fail to decode.
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
+
+func stripANSI(s string) string {
+	return ansiRe.ReplaceAllString(s, "")
 }
 
 // dockerStatsRow is the subset of `docker stats --format '{{json .}}'` we read.
