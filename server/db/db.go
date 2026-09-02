@@ -143,6 +143,15 @@ func runMigrations() {
 			UNIQUE(project_id, key)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_env_vars_project ON env_vars(project_id)`,
+		`CREATE TABLE IF NOT EXISTS build_file_overrides (
+			project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			file_path TEXT NOT NULL,
+			content TEXT DEFAULT '',
+			one_shot BOOLEAN DEFAULT FALSE,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY(project_id, file_path)
+		)`,
 	}
 
 	for _, m := range migrations {

@@ -221,6 +221,74 @@ type buildFileResponse struct {
 	Repository    string `json:"repository"`
 	Content       string `json:"content"`
 	Size          int    `json:"size"`
+	Overridden    bool   `json:"overridden"` // a saved edit is active for this file
+	OneShot       bool   `json:"one_shot"`   // the override is used once then cleared
+}
+
+// effectiveBuildFile picks the Dockerfile (or Compose file) a project is
+// actually built with, mirroring buildAndDeploy: an explicit path wins, then
+// the highest-ranked candidate. present reports whether a repo-relative path
+// exists in the source (the repo tree via the API, or the clone at deploy).
+func effectiveBuildFile(p models.Project, dockerfiles, composeFiles []string, present func(string) bool) (path, kind string) {
+	useCompose := p.ComposePath != "" || p.BuildStrategy == "compose"
+	if !useCompose && p.DockerfilePath == "" && p.BuildStrategy != "dockerfile" &&
+		len(dockerfiles) == 0 && len(composeFiles) > 0 {
+		useCompose = true
+	}
+	if useCompose {
+		kind = "compose"
+		path = p.ComposePath
+		if path == "" || !present(path) {
+			if len(composeFiles) == 0 {
+				return "", kind
+			}
+			path = composeFiles[0]
+		}
+		return path, kind
+	}
+	kind = "dockerfile"
+	path = p.DockerfilePath
+	if path == "" || !present(path) {
+		if len(dockerfiles) == 0 {
+			return "", kind
+		}
+		path = dockerfiles[0]
+	}
+	return path, kind
+}
+
+// loadBuildFileOverride returns the saved override content for a project's
+// build file, and whether it is a one-shot override.
+func loadBuildFileOverride(projectID int64, path string) (content string, oneShot, ok bool) {
+	err := db.DB.QueryRow(
+		"SELECT content, one_shot FROM build_file_overrides WHERE project_id = ? AND file_path = ?",
+		projectID, path,
+	).Scan(&content, &oneShot)
+	if err != nil {
+		return "", false, false
+	}
+	return content, oneShot, true
+}
+
+// saveBuildFileOverride upserts the edited content for a build file.
+// oneShot marks the override to be used only by the next deploy.
+func saveBuildFileOverride(projectID int64, path, content string, oneShot bool) error {
+	_, err := db.DB.Exec(
+		`INSERT INTO build_file_overrides (project_id, file_path, content, one_shot, updated_at)
+		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+		 ON CONFLICT(project_id, file_path) DO UPDATE SET
+			content = excluded.content, one_shot = excluded.one_shot, updated_at = CURRENT_TIMESTAMP`,
+		projectID, path, content, oneShot,
+	)
+	return err
+}
+
+// deleteBuildFileOverride removes any saved override for a build file.
+func deleteBuildFileOverride(projectID int64, path string) error {
+	_, err := db.DB.Exec(
+		"DELETE FROM build_file_overrides WHERE project_id = ? AND file_path = ?", projectID, path,
+	)
+	return err
 }
 
 // ProjectBuildFileHandler returns the Dockerfile (or Docker Compose file)
@@ -228,12 +296,11 @@ type buildFileResponse struct {
 // actually runs. It reuses the same selection logic as the deployment worker:
 // an explicit dockerfile_path / compose_path wins, otherwise the highest-ranked
 // candidate from the repository's file tree is used.
+//
+// GET returns the effective file from the repository plus any active override.
+// PUT saves an edit as an override (used by future deploys; one_shot applies to
+// the next deploy only). DELETE removes the override so the repo file is used.
 func ProjectBuildFileHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
 	claims, err := extractUser(r)
 	if err != nil {
 		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
@@ -250,11 +317,28 @@ func ProjectBuildFileHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return
 	}
+
+	if r.Method == http.MethodDelete {
+		path, kind := effectiveBuildFile(project, nil, nil, func(string) bool { return false })
+		if path == "" {
+			respondError(w, http.StatusNotFound, "No build file to reset")
+			return
+		}
+		if err := deleteBuildFileOverride(project.ID, path); err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to reset build file")
+			return
+		}
+		respondJSON(w, http.StatusOK, buildFileResponse{
+			Path: path, Kind: kind, BuildStrategy: project.BuildStrategy,
+			Branch: project.Branch, Repository: project.Repository, Overridden: false,
+		})
+		return
+	}
+
 	if project.Repository == "" {
 		respondError(w, http.StatusBadRequest, "Project has no repository linked")
 		return
 	}
-
 	token, err := githubToken(claims.UserID)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "No GitHub integration available to read the repository")
@@ -265,7 +349,6 @@ func ProjectBuildFileHandler(w http.ResponseWriter, r *http.Request) {
 	if branch == "" {
 		branch = "main"
 	}
-
 	client := services.NewGitHubClient(token)
 	files, _, err := client.GetRepoTree(project.Repository, branch)
 	if err != nil {
@@ -276,52 +359,62 @@ func ProjectBuildFileHandler(w http.ResponseWriter, r *http.Request) {
 	for _, f := range files {
 		present[f] = true
 	}
-
 	dockerfiles := services.RankDockerfiles(files)
 	composeFiles := services.RankComposeFiles(files)
-
-	// Mirror buildAndDeploy: pick the effective build file.
-	useCompose := project.ComposePath != "" || project.BuildStrategy == "compose"
-	if !useCompose && project.DockerfilePath == "" && project.BuildStrategy != "dockerfile" &&
-		len(dockerfiles) == 0 && len(composeFiles) > 0 {
-		useCompose = true
-	}
-
-	var resp buildFileResponse
-	resp.Repository = project.Repository
-	resp.Branch = branch
-	resp.BuildStrategy = project.BuildStrategy
-
-	if useCompose {
-		resp.Kind = "compose"
-		resp.Path = project.ComposePath
-		if resp.Path == "" || !present[resp.Path] {
-			if len(composeFiles) == 0 {
-				respondError(w, http.StatusNotFound, "No Docker Compose file found in this branch")
-				return
-			}
-			resp.Path = composeFiles[0]
-		}
-	} else {
-		resp.Kind = "dockerfile"
-		resp.Path = project.DockerfilePath
-		if resp.Path == "" || !present[resp.Path] {
-			if len(dockerfiles) == 0 {
-				respondError(w, http.StatusNotFound, "No Dockerfile found in this branch")
-				return
-			}
-			resp.Path = dockerfiles[0]
-		}
-	}
-
-	raw, err := client.GetRepoFile(project.Repository, branch, resp.Path)
-	if err != nil {
-		respondError(w, http.StatusBadGateway, "Failed to read "+resp.Path+": "+err.Error())
+	path, kind := effectiveBuildFile(project, dockerfiles, composeFiles, func(p string) bool { return present[p] })
+	if path == "" {
+		respondError(w, http.StatusNotFound, "No Dockerfile or Docker Compose file found in this branch")
 		return
 	}
-	resp.Content = string(raw)
-	resp.Size = len(raw)
 
+	// PUT: save the edited content as an override.
+	if r.Method == http.MethodPut {
+		var req struct {
+			Content string `json:"content"`
+			OneShot bool   `json:"one_shot"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			respondError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+		if strings.TrimSpace(req.Content) == "" {
+			respondError(w, http.StatusBadRequest, "content is required")
+			return
+		}
+		if err := saveBuildFileOverride(project.ID, path, req.Content, req.OneShot); err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to save build file")
+			return
+		}
+		respondJSON(w, http.StatusOK, buildFileResponse{
+			Path: path, Kind: kind, BuildStrategy: project.BuildStrategy,
+			Branch: branch, Repository: project.Repository, Content: req.Content,
+			Size: len(req.Content), Overridden: true, OneShot: req.OneShot,
+		})
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	raw, err := client.GetRepoFile(project.Repository, branch, path)
+	if err != nil {
+		respondError(w, http.StatusBadGateway, "Failed to read "+path+": "+err.Error())
+		return
+	}
+
+	resp := buildFileResponse{
+		Path: path, Kind: kind, BuildStrategy: project.BuildStrategy,
+		Branch: branch, Repository: project.Repository,
+		Content: string(raw), Size: len(raw),
+	}
+	if content, oneShot, ok := loadBuildFileOverride(project.ID, path); ok {
+		resp.Overridden = true
+		resp.OneShot = oneShot
+		resp.Content = content
+		resp.Size = len(content)
+	}
 	respondJSON(w, http.StatusOK, resp)
 }
 
@@ -747,6 +840,28 @@ func DeploymentLogsHandler(w http.ResponseWriter, r *http.Request) {
 
 const composeSearchHint = "docker-compose.yml, docker-compose.yaml, compose.yml or compose.yaml"
 
+// writeBuildOverride applies a saved override (if any) for a build file into
+// the cloned directory, overwriting the file the build will read. One-shot
+// overrides are consumed here and cleared. Returns whether an override applied.
+func writeBuildOverride(projectID int64, dir, path string, log func(string, string)) bool {
+	content, oneShot, ok := loadBuildFileOverride(projectID, path)
+	if !ok {
+		return false
+	}
+	full := filepath.Join(dir, filepath.FromSlash(path))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err == nil {
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			log("warn", "Failed to write build-file override: "+err.Error())
+		}
+	} else {
+		log("warn", "Failed to prepare build-file override path: "+err.Error())
+	}
+	if oneShot {
+		_ = deleteBuildFileOverride(projectID, path)
+	}
+	return true
+}
+
 func buildAndDeploy(deployID int64, project models.Project) {
 	log := func(level, msg string) {
 		db.DB.Exec("INSERT INTO deployment_logs (deployment_id, level, message) VALUES (?, ?, ?)", deployID, level, msg)
@@ -829,6 +944,9 @@ func dockerfileDeploy(log func(string, string), d *services.Deployer, deployID i
 		dockerfile = dockerfiles[0]
 	}
 	log("info", "Using Dockerfile at "+dockerfile)
+	if writeBuildOverride(project.ID, dir, dockerfile, log) {
+		log("info", "Applying saved build-file override to "+dockerfile)
+	}
 
 	buildRef := randomHex(8)
 	image := fmt.Sprintf("nineteen-%s:%s", project.Slug, buildRef)
@@ -900,6 +1018,9 @@ func composeDeploy(log func(string, string), d *services.Deployer, deployID int6
 		composeFile = composeFiles[0]
 	}
 	log("info", "Using Docker Compose file at "+composeFile)
+	if writeBuildOverride(project.ID, dir, composeFile, log) {
+		log("info", "Applying saved build-file override to "+composeFile)
+	}
 
 	// Inject env vars into every service via a generated override.
 	overridePath := ""
@@ -1115,3 +1236,4 @@ func intOrNil(v interface{}) interface{} {
 		return nil
 	}
 }
+
