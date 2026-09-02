@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback } from 'rea
 
 const ThemeContext = createContext(undefined);
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
+const API_URL = import.meta.env.VITE_API_URL || "";
 
 function getSystemTheme() {
   if (typeof window === 'undefined') return 'dark';

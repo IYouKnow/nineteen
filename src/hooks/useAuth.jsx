@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useCallback, useEffect } from "rea
 
 const AuthContext = createContext(null);
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
+const API_URL = import.meta.env.VITE_API_URL || "";
 const AUTH_TOKEN_KEY = "nineteen_token";
 const AUTH_USER_KEY = "nineteen_user";
 

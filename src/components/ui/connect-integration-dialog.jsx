@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { CheckCircle2, Loader2, Eye, EyeOff, FolderGit2, Building2, UserRound } from "lucide-react";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
+const API_URL = import.meta.env.VITE_API_URL || "";
 
 function getAuthHeaders() {
   const token = localStorage.getItem("nineteen_token");

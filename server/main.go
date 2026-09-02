@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/joho/godotenv"
@@ -74,6 +76,13 @@ func main() {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
+	staticDir := os.Getenv("STATIC_DIR")
+	if staticDir == "" {
+		staticDir = "./static"
+	}
+	log.Printf("Serving static assets from %q", staticDir)
+	mux.Handle("/", spaStatic(staticDir))
+
 	addr := os.Getenv("ADDR")
 	if addr == "" {
 		addr = ":8080"
@@ -95,4 +104,32 @@ func main() {
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
+}
+
+// spaStatic serves the built frontend (static assets) and falls back to
+// index.html for any extension-less path so client-side routes (e.g. /projects)
+// work on refresh. Paths that look like files (have an extension) but don't
+// exist return 404 instead of being rewritten.
+func spaStatic(staticDir string) http.Handler {
+	root := filepath.Clean(staticDir)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.NotFound(w, r)
+			return
+		}
+		full := filepath.Join(root, filepath.Clean("/"+r.URL.Path))
+		if !strings.HasPrefix(full, root) {
+			http.NotFound(w, r)
+			return
+		}
+		if info, err := os.Stat(full); err == nil && !info.IsDir() {
+			http.ServeFile(w, r, full)
+			return
+		}
+		if filepath.Ext(r.URL.Path) == "" {
+			http.ServeFile(w, r, filepath.Join(root, "index.html"))
+			return
+		}
+		http.NotFound(w, r)
+	})
 }

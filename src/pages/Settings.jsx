@@ -22,7 +22,7 @@ import {
   Plus, Trash2, CheckCircle2, Sun, Moon, Monitor,
 } from "lucide-react";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
+const API_URL = import.meta.env.VITE_API_URL || "";
 
 function getAuthHeaders() {
   const token = localStorage.getItem("nineteen_token");

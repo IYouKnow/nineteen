@@ -1,0 +1,22 @@
+services:
+  nineteen:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nineteen
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      ADDR: ":8080"
+      DB_PATH: "/app/data/nineteen.db"
+      STATIC_DIR: "/app/static"
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in the .env file}"
+      INVITE_CODE: "${INVITE_CODE:?Set INVITE_CODE in the .env file}"
+    volumes:
+      # The app deploys project containers on the *host* Docker daemon, so it
+      # needs the daemon socket. Project containers run on the host network,
+      # not nested inside this container.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persist the SQLite database (and any build/local state) on the host.
+      - ./data:/app/data

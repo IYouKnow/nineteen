@@ -1,0 +1,29 @@
+# VCS
+.git
+.gitignore
+
+# Secrets & local env (must never ship into the image; the browser must
+# resolve /api on the same origin at runtime, so VITE_API_URL is left unset)
+.env
+.env.*
+.env.example
+
+# Frontend build artifacts / deps (rebuilt inside the image)
+node_modules
+dist
+dist-ssr
+
+# Server build artifacts & local data (mounted as a volume at runtime)
+server/data
+server/nineteen-server.exe
+server/tmpcheck
+
+# Misc local files
+*.bak
+*.log
+logs
+lint-output.txt
+export-report.json
+.vscode
+.idea
+.DS_Store
