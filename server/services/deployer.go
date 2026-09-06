@@ -124,15 +124,7 @@ func (d *Deployer) ParseExpose(dir, dockerfile string) int {
 	if err != nil {
 		return 0
 	}
-	re := regexp.MustCompile(`(?i)^\s*EXPOSE\s+(\d+)`)
-	for _, line := range strings.Split(string(data), "\n") {
-		if m := re.FindStringSubmatch(line); m != nil {
-			if p, err := strconv.Atoi(m[1]); err == nil && p > 0 {
-				return p
-			}
-		}
-	}
-	return 0
+	return ParseExposeContent(data)
 }
 
 // ImagePort returns the lowest port the built image EXPOSEs (inherited from a

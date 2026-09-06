@@ -70,6 +70,7 @@ func main() {
 	mux.HandleFunc("/api/settings/integrations/test", handlers.TestIntegrationHandler)
 	mux.HandleFunc("/api/settings/integrations/repos", handlers.IntegrationReposHandler)
 	mux.HandleFunc("/api/settings/integrations/scan", handlers.IntegrationScanHandler)
+	mux.HandleFunc("/api/settings/integrations/port", handlers.IntegrationPortHandler)
 	mux.HandleFunc("/api/settings/integrations/", handlers.UpdateIntegrationHandler)
 	mux.HandleFunc("/api/projects", handlers.ProjectsHandler)
 	mux.HandleFunc("/api/projects/{id}", handlers.ProjectHandler)

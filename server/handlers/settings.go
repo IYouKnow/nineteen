@@ -614,6 +614,7 @@ type ScanResponse struct {
 	Truncated    bool     `json:"truncated"`
 	Dockerfiles  []string `json:"dockerfiles"`
 	ComposeFiles []string `json:"compose_files"`
+	Port         int      `json:"port"`
 }
 
 var repoNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
@@ -666,6 +667,15 @@ func IntegrationScanHandler(w http.ResponseWriter, r *http.Request) {
 	dockerfiles := services.RankDockerfiles(files)
 	composeFiles := services.RankComposeFiles(files)
 
+	// Detect a fixed port from the best-ranked Dockerfile so the wizard can
+	// pre-fill it for apps that only work on a specific port.
+	port := 0
+	if len(dockerfiles) > 0 {
+		if data, err := client.GetRepoFile(repo, branch, dockerfiles[0]); err == nil {
+			port = services.ParseExposeContent(data)
+		}
+	}
+
 	if len(files) > scanFileLimit {
 		files = files[:scanFileLimit]
 	}
@@ -680,7 +690,54 @@ func IntegrationScanHandler(w http.ResponseWriter, r *http.Request) {
 		Truncated:    truncated,
 		Dockerfiles:  dockerfiles,
 		ComposeFiles: composeFiles,
+		Port:         port,
 	})
+}
+
+// IntegrationPortHandler fetches a single repository file (typically a
+// Dockerfile) and returns the EXPOSE port it declares, so the project wizard
+// can pre-fill a fixed port for apps that require one.
+func IntegrationPortHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	claims, err := extractUser(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
+	}
+
+	repo := strings.TrimSpace(r.URL.Query().Get("repo"))
+	branch := strings.TrimSpace(r.URL.Query().Get("branch"))
+	file := strings.TrimSpace(r.URL.Query().Get("file"))
+	if repo == "" || !repoNameRe.MatchString(repo) || file == "" {
+		respondError(w, http.StatusBadRequest, "repo and file query params are required")
+		return
+	}
+
+	// Use the user's GitHub integration token when available (private repos);
+	// fall back to an anonymous call for public repos.
+	token := ""
+	var enc string
+	if err := db.DB.QueryRow(
+		"SELECT access_token FROM integrations WHERE user_id = ? AND provider = 'github' ORDER BY id ASC LIMIT 1",
+		claims.UserID,
+	).Scan(&enc); err == nil {
+		if t, err := auth.DecryptToken(enc); err == nil {
+			token = t
+		}
+	}
+
+	client := services.NewGitHubClient(token)
+	data, err := client.GetRepoFile(repo, branch, file)
+	if err != nil {
+		respondError(w, http.StatusBadGateway, "Failed to fetch file: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]int{"port": services.ParseExposeContent(data)})
 }
 
 type TestIntegrationRequest struct {

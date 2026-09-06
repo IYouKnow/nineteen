@@ -2,9 +2,28 @@ package services
 
 import (
 	"path"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
+
+// exposeRe matches a Dockerfile EXPOSE directive, e.g. "EXPOSE 8080" or
+// "EXPOSE 3000 3001". Only the first (lowest) port is returned.
+var exposeRe = regexp.MustCompile(`(?i)^\s*EXPOSE\s+(\d+)`)
+
+// ParseExposeContent returns the first port declared by an EXPOSE directive in
+// Dockerfile content. Returns 0 when no EXPOSE is found.
+func ParseExposeContent(content []byte) int {
+	for _, line := range strings.Split(string(content), "\n") {
+		if m := exposeRe.FindStringSubmatch(line); m != nil {
+			if p, err := strconv.Atoi(m[1]); err == nil && p > 0 {
+				return p
+			}
+		}
+	}
+	return 0
+}
 
 // Build-file detection shared by the repo scan endpoint and the deploy worker.
 // Paths are repository-relative, slash-separated.

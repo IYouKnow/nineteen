@@ -52,6 +52,10 @@ export const integrations = {
     doFetch(
       `/api/settings/integrations/scan?repo=${encodeURIComponent(repository)}&branch=${encodeURIComponent(branch || "")}`
     ),
+  port: (repository, branch, file) =>
+    doFetch(
+      `/api/settings/integrations/port?repo=${encodeURIComponent(repository)}&branch=${encodeURIComponent(branch || "")}&file=${encodeURIComponent(file)}`
+    ),
 };
 
 export const runtimeLogs = {

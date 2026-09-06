@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Check, Container, FileSearch, Layers, Loader2, Search, Ship, Wand2 } from "lucide-react";
+import * as api from "@/lib/api";
 import { FRAMEWORKS } from "@/lib/devStatus";
 import { detectFrameworkFromFiles } from "@/lib/newProject";
 import { Label } from "@/components/ui/label";
@@ -112,7 +113,24 @@ export default function BuildStep({ config, setConfig, scan, scanLoading, scanEr
   const mode = config.dockerMode || "dockerfile";
   const candidates = mode === "compose" ? composeFiles : dockerfiles;
   const selected = mode === "compose" ? config.composePath : config.dockerfilePath;
-  const pick = (p) => (mode === "compose" ? update({ composePath: p }) : update({ dockerfilePath: p }));
+
+  // When a Dockerfile is picked, detect its EXPOSE port and pre-fill the
+  // configuration port so fixed-port apps are addressed correctly.
+  const pick = async (p) => {
+    if (mode === "compose") {
+      update({ composePath: p });
+      return;
+    }
+    update({ dockerfilePath: p });
+    if (scanTarget?.repo) {
+      try {
+        const res = await api.integrations.port(scanTarget.repo, scanTarget.branch, p);
+        if (res?.port > 0) update({ port: String(res.port) });
+      } catch {
+        /* ignore — port stays as-is */
+      }
+    }
+  };
 
   const nothingFound = !scanLoading && !scanError && dockerfiles.length === 0 && composeFiles.length === 0;
 

@@ -91,7 +91,7 @@ export default function NewProject() {
 
   // Reset build selections when the target repository changes.
   useEffect(() => {
-    setConfig((c) => ({ ...c, dockerMode: "dockerfile", dockerfilePath: "", composePath: "" }));
+    setConfig((c) => ({ ...c, dockerMode: "dockerfile", dockerfilePath: "", composePath: "", port: "" }));
     prefilledRef.current = false;
   }, [scanRepo]);
 
@@ -107,6 +107,11 @@ export default function NewProject() {
       setConfig((c) =>
         c.composePath ? c : { ...c, dockerMode: "compose", composePath: scan.compose_files[0] }
       );
+    }
+    // Pre-fill a fixed port detected from the Dockerfile's EXPOSE directive,
+    // but never clobber a port the user has already chosen.
+    if (scan.port > 0) {
+      setConfig((c) => (c.port ? c : { ...c, port: String(scan.port) }));
     }
   }, [scan]);
 
