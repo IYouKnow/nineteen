@@ -45,6 +45,7 @@ func main() {
 	godotenv.Load("../.env")
 
 	handlers.UpdateSvc = services.NewUpdateService(version)
+	handlers.UpdateSvc.ReconcileOnStartup()
 
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {

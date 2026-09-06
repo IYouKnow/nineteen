@@ -125,6 +125,31 @@ func (u *UpdateService) SetState(s UpdateState) {
 	_ = os.WriteFile(u.StateFile, b, 0o644)
 }
 
+// ReconcileOnStartup finalizes a leftover in-progress update. If the helper
+// failed to write its terminal state (e.g. the helper could not reach the host
+// data dir), the state file can be stuck on "swapping"/"building" after a swap.
+// A running server that is at the target version means the swap succeeded; a
+// running server at a different version means the update was rolled back.
+func (u *UpdateService) ReconcileOnStartup() {
+	st := u.GetState()
+	switch st.State {
+	case "swapping", "building":
+		switch {
+		case st.LatestVersion != "" && u.Version == st.LatestVersion:
+			st.State = "success"
+			st.Message = "Update complete — new version is healthy"
+		case st.LatestVersion != "" && u.Version != "" && u.Version != "dev" && u.Version != st.LatestVersion:
+			st.State = "rolled_back"
+			st.Message = "Update rolled back — running the previous version"
+		default:
+			st.State = "idle"
+			st.Message = "Update finished"
+		}
+		u.Log("Reconciled in-progress update state -> " + st.State)
+		u.SetState(st)
+	}
+}
+
 func (u *UpdateService) fail(msg string) {
 	u.Log("error: " + msg)
 	st := u.GetState()
@@ -419,6 +444,10 @@ func (u *UpdateService) buildRunArgs(insp *inspectResult) ([]string, error) {
 
 func (u *UpdateService) findDataMount(insp *inspectResult) string {
 	target := u.DataDir
+	if target == "" {
+		target = "/app/data"
+	}
+	// Prefer an explicit bind mount whose target matches the data directory.
 	for _, m := range insp.Mounts {
 		if m.Type == "bind" && m.Target == target && m.Source != "" {
 			return m.Source
@@ -430,10 +459,14 @@ func (u *UpdateService) findDataMount(insp *inspectResult) string {
 			return parts[0]
 		}
 	}
-	for _, b := range insp.HostConfig.Binds {
-		parts := strings.SplitN(b, ":", 2)
-		if len(parts) == 2 {
-			return parts[0]
+	// Fall back to a bind mount that ends with the data directory name (some
+	// compose setups report the target slightly differently). Never return the
+	// docker socket bind, which would mount the socket as the data dir.
+	for _, m := range insp.Mounts {
+		if m.Type == "bind" && m.Source != "" &&
+			strings.HasSuffix(m.Target, target) &&
+			!strings.Contains(m.Source, "docker.sock") {
+			return m.Source
 		}
 	}
 	return ""
@@ -749,7 +782,9 @@ func writeHelperState(stateFile, state, message string) {
 	s.Message = message
 	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	b, _ := json.MarshalIndent(s, "", "  ")
-	_ = os.WriteFile(stateFile, b, 0o644)
+	if err := os.WriteFile(stateFile, b, 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "nineteen-update-helper: failed to write state file %s: %v\n", stateFile, err)
+	}
 }
 
 // ---- small helpers ----
