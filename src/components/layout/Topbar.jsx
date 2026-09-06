@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { Menu, Search, Bell, User, Settings, LogOut, Sun, Moon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useTheme } from "@/lib/theme";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
+import GlobalSearch from "@/components/layout/GlobalSearch";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,6 +28,7 @@ export default function Topbar({ onMenu }) {
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
   const { user, logout } = useAuth();
+  const [searchOpen, setSearchOpen] = useState(false);
   const name = user?.display_name || user?.username || "User";
 
   return (
@@ -38,15 +41,18 @@ export default function Topbar({ onMenu }) {
       </button>
 
       <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground/60">
-        <span>nineteen@1.9.0</span>
+        <span>nineteen@0.2.0</span>
         <span className="hidden sm:inline text-muted-foreground/30">·</span>
         <span className="hidden sm:inline">self-hosted</span>
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        <button className="hidden items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground sm:flex cursor-pointer">
+        <button
+          onClick={() => setSearchOpen(true)}
+          className="hidden items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground sm:flex cursor-pointer"
+        >
           <Search className="h-3.5 w-3.5" />
-          <span>Search projects…</span>
+          <span>Search…</span>
           <kbd className="ml-3 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/70">
             ⌘K
           </kbd>
@@ -71,7 +77,11 @@ export default function Topbar({ onMenu }) {
               </span>
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuContent
+            align="end"
+            className="w-48"
+            onCloseAutoFocus={(e) => e.preventDefault()}
+          >
             <DropdownMenuLabel>My Account</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => navigate('/profile')}>
@@ -83,7 +93,10 @@ export default function Topbar({ onMenu }) {
               Settings
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+            <DropdownMenuItem
+              onSelect={(e) => e.preventDefault()}
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            >
               {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               {theme === 'dark' ? 'Light mode' : 'Dark mode'}
             </DropdownMenuItem>
@@ -98,6 +111,7 @@ export default function Topbar({ onMenu }) {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />
     </header>
   );
 }

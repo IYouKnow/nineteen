@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"nineteen-server/auth"
@@ -21,7 +23,42 @@ const (
 	statusBuilding = "building"
 	statusReady    = "ready"
 	statusError    = "error"
+	statusCanceled = "canceled"
 )
+
+// deployCancels tracks the cancellation handle for each in-flight deployment
+// worker, so a request can abort a running build (git clone / docker build /
+// compose up) and mark the deployment cancelled.
+var (
+	deployCancelMu sync.Mutex
+	deployCancels  = map[int64]context.CancelFunc{}
+)
+
+func registerDeployCancel(deployID int64, cancel context.CancelFunc) {
+	deployCancelMu.Lock()
+	defer deployCancelMu.Unlock()
+	deployCancels[deployID] = cancel
+}
+
+func unregisterDeployCancel(deployID int64) {
+	deployCancelMu.Lock()
+	defer deployCancelMu.Unlock()
+	delete(deployCancels, deployID)
+}
+
+// requestDeployCancel cancels an in-flight deployment worker. It returns false
+// when no worker is registered for the deployment (already finished or never
+// started).
+func requestDeployCancel(deployID int64) bool {
+	deployCancelMu.Lock()
+	cancel, ok := deployCancels[deployID]
+	deployCancelMu.Unlock()
+	if ok && cancel != nil {
+		cancel()
+		return true
+	}
+	return false
+}
 
 // ---- project helpers ----
 
@@ -789,6 +826,51 @@ func DeploymentHandler(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, d)
 }
 
+// CancelDeploymentHandler aborts an in-flight deployment: it cancels the build
+// worker (killing any running git clone / docker build / compose up) and marks
+// the deployment cancelled. The project returns to "running" if its previous
+// container survived, otherwise "idle".
+func CancelDeploymentHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	claims, err := extractUser(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
+	}
+	id, ok := pathID(r)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "Invalid deployment ID")
+		return
+	}
+	d, err := getDeployment(claims.UserID, id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Deployment not found")
+		return
+	}
+	if d.Status != statusBuilding {
+		respondError(w, http.StatusBadRequest, "Only an in-progress deployment can be cancelled")
+		return
+	}
+
+	project, _ := getProject(claims.UserID, d.ProjectID)
+
+	if !requestDeployCancel(d.ID) {
+		// No worker is registered (it finished between the status read and now,
+		// or was never started) — mark cancelled directly.
+		finishDeploymentCancelled(d.ID, project)
+		respondJSON(w, http.StatusOK, map[string]string{"status": statusCanceled})
+		return
+	}
+
+	// Restore the project status now; the worker will also mark the deployment
+	// cancelled when its context is observed.
+	finishDeploymentCancelled(d.ID, project)
+	respondJSON(w, http.StatusOK, map[string]string{"status": statusCanceled})
+}
+
 func DeploymentLogsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -863,6 +945,13 @@ func writeBuildOverride(projectID int64, dir, path string, log func(string, stri
 }
 
 func buildAndDeploy(deployID int64, project models.Project) {
+	ctx, cancel := context.WithCancel(context.Background())
+	registerDeployCancel(deployID, cancel)
+	defer func() {
+		unregisterDeployCancel(deployID)
+		cancel()
+	}()
+
 	log := func(level, msg string) {
 		db.DB.Exec("INSERT INTO deployment_logs (deployment_id, level, message) VALUES (?, ?, ?)", deployID, level, msg)
 	}
@@ -884,9 +973,13 @@ func buildAndDeploy(deployID int64, project models.Project) {
 	}
 
 	log("info", fmt.Sprintf("Deploying %s (%s)", project.Repository, project.Slug))
-	dir, err := d.CloneRepo(token, project.Repository, func(line string) { log("info", line) })
+	dir, err := d.CloneRepo(ctx, token, project.Repository, func(line string) { log("info", line) })
 	defer os.RemoveAll(dir)
 	if err != nil {
+		if ctx.Err() != nil {
+			finishDeploymentCancelled(deployID, project)
+			return
+		}
 		log("error", "Clone failed: "+err.Error())
 		finishDeployment(deployID, project.ID, statusError, 0, "")
 		return
@@ -923,13 +1016,13 @@ func buildAndDeploy(deployID int64, project models.Project) {
 	}
 
 	if useCompose {
-		composeDeploy(log, d, deployID, project, dir, composeFiles, envPath, start)
+		composeDeploy(ctx, log, d, deployID, project, dir, composeFiles, envPath, start)
 		return
 	}
-	dockerfileDeploy(log, d, deployID, project, dir, dockerfiles, composeFiles, envPath, start)
+	dockerfileDeploy(ctx, log, d, deployID, project, dir, dockerfiles, composeFiles, envPath, start)
 }
 
-func dockerfileDeploy(log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, dockerfiles, composeFiles []string, envPath string, start time.Time) {
+func dockerfileDeploy(ctx context.Context, log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, dockerfiles, composeFiles []string, envPath string, start time.Time) {
 	dockerfile := project.DockerfilePath
 	if dockerfile != "" && !d.RepoFileExists(dir, dockerfile) {
 		log("warn", fmt.Sprintf("Dockerfile %q from the project settings was not found in this branch — searching the repository", dockerfile))
@@ -952,7 +1045,12 @@ func dockerfileDeploy(log func(string, string), d *services.Deployer, deployID i
 	image := fmt.Sprintf("nineteen-%s:%s", project.Slug, buildRef)
 	containerName := fmt.Sprintf("nineteen-%s", project.Slug)
 	log("info", "Building image "+image)
-	if err := d.Build(image, dir, dockerfile, func(line string) { log("info", line) }); err != nil {
+	if err := d.Build(ctx, image, dir, dockerfile, func(line string) { log("info", line) }); err != nil {
+		if ctx.Err() != nil {
+			log("warn", "Deployment cancelled")
+			finishDeploymentCancelled(deployID, project)
+			return
+		}
 		log("error", "Build failed: "+err.Error())
 		finishDeployment(deployID, project.ID, statusError, 0, "")
 		return
@@ -987,7 +1085,12 @@ func dockerfileDeploy(log func(string, string), d *services.Deployer, deployID i
 	d.CleanupContainer(containerName)
 	d.CleanupCompose(composeProjectName(project.Slug), func(line string) { log("info", line) })
 	log("info", fmt.Sprintf("Starting container on 127.0.0.1:%d", hostPort))
-	if _, err := d.Run(image, containerName, hostPort, containerPort, envPath, func(line string) { log("info", line) }); err != nil {
+	if _, err := d.Run(ctx, image, containerName, hostPort, containerPort, envPath, func(line string) { log("info", line) }); err != nil {
+		if ctx.Err() != nil {
+			log("warn", "Deployment cancelled")
+			finishDeploymentCancelled(deployID, project)
+			return
+		}
 		log("error", "Container failed: "+err.Error())
 		finishDeployment(deployID, project.ID, statusError, 0, "")
 		return
@@ -1003,7 +1106,7 @@ func dockerfileDeploy(log func(string, string), d *services.Deployer, deployID i
 	services.EnsureTailed(project.ID, deployID, containerName)
 }
 
-func composeDeploy(log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, composeFiles []string, envPath string, start time.Time) {
+func composeDeploy(ctx context.Context, log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, composeFiles []string, envPath string, start time.Time) {
 	composeFile := project.ComposePath
 	if composeFile != "" && !d.RepoFileExists(dir, composeFile) {
 		log("warn", fmt.Sprintf("Compose file %q from the project settings was not found in this branch — searching the repository", composeFile))
@@ -1041,7 +1144,12 @@ func composeDeploy(log func(string, string), d *services.Deployer, deployID int6
 	d.CleanupContainer(fmt.Sprintf("nineteen-%s", project.Slug))
 	d.CleanupCompose(name, func(line string) { log("info", line) })
 
-	if err := d.ComposeUp(dir, composeFile, overridePath, name, func(line string) { log("info", line) }); err != nil {
+	if err := d.ComposeUp(ctx, dir, composeFile, overridePath, name, func(line string) { log("info", line) }); err != nil {
+		if ctx.Err() != nil {
+			log("warn", "Deployment cancelled")
+			finishDeploymentCancelled(deployID, project)
+			return
+		}
 		log("error", "docker compose failed: "+err.Error())
 		finishDeployment(deployID, project.ID, statusError, 0, "")
 		return
@@ -1106,6 +1214,27 @@ func finishDeployment(deployID, projectID int64, status string, port int, url st
 	case statusError:
 		db.DB.Exec("UPDATE projects SET status = 'error', updated_date = CURRENT_TIMESTAMP WHERE id = ?", projectID)
 	}
+}
+
+// finishDeploymentCancelled marks a deployment as cancelled and returns the
+// project to a realistic state: "running" if its previous container is still
+// up, otherwise "idle". The deployment's build worker was aborted before the
+// new image/container replaced the running one, so the old container survives.
+//
+// The deployment status is updated synchronously so the cancel request returns
+// promptly; the project status check runs in the background because it shells
+// out to docker, which can be slow while a build is in flight.
+func finishDeploymentCancelled(deployID int64, project models.Project) {
+	db.DB.Exec("UPDATE deployments SET status = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
+		statusCanceled, deployID)
+	go func() {
+		status := "idle"
+		if name := services.ResolveContainer(project.Slug, project.BuildStrategy); name != "" &&
+			services.NewDeployer().ContainerState(name) == "running" {
+			status = "running"
+		}
+		setProjectStatus(project.ID, status)
+	}()
 }
 
 func githubToken(userID int64) (string, error) {

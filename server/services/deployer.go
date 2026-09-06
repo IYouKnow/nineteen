@@ -36,14 +36,15 @@ func (d *Deployer) DockerAvailable() error {
 }
 
 // CloneRepo clones repository into a fresh temp dir using token auth.
-// Returns the clone directory.
-func (d *Deployer) CloneRepo(token, repository string, log func(string)) (string, error) {
+// Returns the clone directory. The clone is cancellable via ctx — cancelling
+// kills the git process so an in-flight deployment can be aborted.
+func (d *Deployer) CloneRepo(ctx context.Context, token, repository string, log func(string)) (string, error) {
 	dir, err := os.MkdirTemp("", "nineteen-build-")
 	if err != nil {
 		return "", err
 	}
 	url := fmt.Sprintf("https://oauth2:%s@github.com/%s.git", token, repository)
-	cmd := exec.Command("git", "clone", "--depth", "1", url, dir)
+	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", url, dir)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if err := streamCommand(cmd, log); err != nil {
 		return dir, err
@@ -158,7 +159,7 @@ func (d *Deployer) ImagePort(image string) int {
 // cloudflared download URL using ${TARGETARCH}) still resolve to a real value.
 // We do not force BuildKit (DOCKER_BUILDKIT=1) because that hard-errors on
 // hosts missing the buildx component.
-func (d *Deployer) Build(image, dir, dockerfile string, log func(string)) error {
+func (d *Deployer) Build(ctx context.Context, image, dir, dockerfile string, log func(string)) error {
 	useBuildx := d.buildxAvailable()
 
 	var args []string
@@ -176,7 +177,7 @@ func (d *Deployer) Build(image, dir, dockerfile string, log func(string)) error 
 		args = append(args, buildPlatformArgs()...)
 	}
 	args = append(args, ".")
-	cmd := exec.Command("docker", args...)
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = dir
 	return streamCommand(cmd, log)
 }
@@ -408,7 +409,7 @@ var sizeUnits = map[string]int64{
 
 // Run starts a published container and returns its id. If envFile is non-empty
 // its content is passed to the container via --env-file.
-func (d *Deployer) Run(image, name string, hostPort, containerPort int, envFile string, log func(string)) (string, error) {
+func (d *Deployer) Run(ctx context.Context, image, name string, hostPort, containerPort int, envFile string, log func(string)) (string, error) {
 	args := []string{
 		"run", "-d",
 		"--name", name,
@@ -420,7 +421,7 @@ func (d *Deployer) Run(image, name string, hostPort, containerPort int, envFile 
 	}
 	args = append(args, image)
 
-	cmd := exec.Command("docker", args...)
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		log(string(out))
@@ -434,13 +435,14 @@ func (d *Deployer) Run(image, name string, hostPort, containerPort int, envFile 
 // ComposeUp builds and starts the stack defined by composeFile
 // (repo-relative) under the given compose project name. When overrideFile is
 // non-empty it is merged with the base compose file (e.g. to inject env_file).
-func (d *Deployer) ComposeUp(dir, composeFile, overrideFile, projectName string, log func(string)) error {
+// The build/up process is cancellable via ctx.
+func (d *Deployer) ComposeUp(ctx context.Context, dir, composeFile, overrideFile, projectName string, log func(string)) error {
 	args := []string{"compose", "-f", composeFile}
 	if overrideFile != "" {
 		args = append(args, "-f", overrideFile)
 	}
 	args = append(args, "-p", projectName, "up", "-d", "--build")
-	cmd := exec.Command("docker", args...)
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = dir
 	return streamCommand(cmd, log)
 }

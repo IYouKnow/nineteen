@@ -86,6 +86,7 @@ func main() {
 	mux.HandleFunc("/api/deployments", handlers.DeploymentsHandler)
 	mux.HandleFunc("/api/deployments/{id}", handlers.DeploymentHandler)
 	mux.HandleFunc("/api/deployments/{id}/logs", handlers.DeploymentLogsHandler)
+	mux.HandleFunc("/api/deployments/{id}/cancel", handlers.CancelDeploymentHandler)
 	mux.HandleFunc("/api/update", handlers.UpdateHandler)
 	mux.HandleFunc("/api/update/status", handlers.UpdateStatusHandler)
 	mux.HandleFunc("/api/update/logs", handlers.UpdateLogsHandler)

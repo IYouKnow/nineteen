@@ -51,9 +51,6 @@ export default function Sidebar({ mobileOpen, onClose }) {
               <Boxes className="h-4 w-4" />
             </div>
             <span className="font-semibold tracking-tight text-foreground">nineteen</span>
-            <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-              v1.9
-            </span>
           </div>
           <button
             onClick={onClose}

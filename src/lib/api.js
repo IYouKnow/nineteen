@@ -43,6 +43,7 @@ export const deployments = {
   recent: () => doFetch("/api/deployments"),
   get: (id) => doFetch(`/api/deployments/${id}`),
   logs: (id) => doFetch(`/api/deployments/${id}/logs`),
+  cancel: (id) => doFetch(`/api/deployments/${id}/cancel`, { method: "POST" }),
   create: (projectId, payload) =>
     doFetch(`/api/projects/${projectId}/deployments`, { method: "POST", body: JSON.stringify(payload) }),
 };

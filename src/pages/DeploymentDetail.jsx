@@ -1,6 +1,7 @@
 import * as api from "@/lib/api";
 
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
 import {
@@ -15,6 +16,8 @@ import {
   MapPin,
   Cpu,
   Globe,
+  Loader2,
+  X,
 } from "lucide-react";
 import StatusBadge from "@/components/dev/StatusBadge";
 import FrameworkIcon from "@/components/dev/FrameworkIcon";
@@ -40,6 +43,8 @@ function Meta({ icon: Icon, label, value, mono }) {
 
 export default function DeploymentDetail() {
   const { projectId, deploymentId } = useParams();
+  const qc = useQueryClient();
+  const [cancelling, setCancelling] = useState(false);
 
   const { data: deployment, isLoading } = useQuery({
     queryKey: ["deployment", deploymentId],
@@ -50,6 +55,29 @@ export default function DeploymentDetail() {
   const { data: project } = useQuery({
     queryKey: ["project", projectId],
     queryFn: () => api.projects.get(projectId),
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: () => api.deployments.cancel(deploymentId),
+    onMutate: () => {
+      setCancelling(true);
+      const prev = qc.getQueryData(["deployment", deploymentId]);
+      qc.setQueryData(["deployment", deploymentId], (old) =>
+        old ? { ...old, status: "canceled" } : old
+      );
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["deployment", deploymentId], ctx.prev);
+    },
+    onSettled: () => setCancelling(false),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["deployment", deploymentId] });
+      qc.invalidateQueries({ queryKey: ["deployments", projectId] });
+      qc.invalidateQueries({ queryKey: ["deployments-recent"] });
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+      qc.invalidateQueries({ queryKey: ["projects"] });
+    },
   });
 
   if (isLoading || !deployment) {
@@ -88,6 +116,18 @@ export default function DeploymentDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {deployment.status === "building" && (
+            <Button
+              variant="destructive"
+              size="sm"
+              className="gap-2"
+              onClick={() => cancelMutation.mutate()}
+              disabled={cancelling}
+            >
+              {cancelling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+              Cancel deploy
+            </Button>
+          )}
           {(project || deployment.url) && (
             <Button asChild variant="outline" size="sm" className="gap-2">
               <a href={project ? projectAddress(project) : deployment.url} target="_blank" rel="noreferrer">

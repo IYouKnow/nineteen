@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import { Rocket, Loader2, GitCommitHorizontal, Clock, Zap, GitBranch } from "lucide-react";
-import StatusDot from "@/components/dev/StatusDot";
+import StatusBadge from "@/components/dev/StatusBadge";
 import EmptyState from "@/components/dev/EmptyState";
 import { Button } from "@/components/ui/button";
 import { timeAgo, formatDuration, shortSha } from "@/lib/format";
@@ -81,7 +81,7 @@ export default function ProjectDeployments({ project, deployments = [], environm
             {deployments.map((d) => {
               const inner = (
                 <>
-                  <StatusDot status={d.status} kind="deployment" className="h-2.5 w-2.5" />
+                  <StatusBadge status={d.status} kind="deployment" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm text-foreground/90">{d.commit_message}</p>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-xs text-muted-foreground">
