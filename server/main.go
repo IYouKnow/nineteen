@@ -12,7 +12,11 @@ import (
 	"github.com/joho/godotenv"
 	"nineteen-server/db"
 	"nineteen-server/handlers"
+	"nineteen-server/services"
 )
+
+// version is injected at build time via -ldflags "-X main.version=...".
+var version = "dev"
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -30,7 +34,17 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 func main() {
+	// The detached self-update helper runs this same binary with an
+	// "update-helper" argument; it does the container swap and exits without
+	// starting the server or touching the DB.
+	if len(os.Args) > 1 && os.Args[1] == "update-helper" {
+		services.RunUpdateHelper()
+		os.Exit(0)
+	}
+
 	godotenv.Load("../.env")
+
+	handlers.UpdateSvc = services.NewUpdateService(version)
 
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
@@ -71,6 +85,11 @@ func main() {
 	mux.HandleFunc("/api/deployments", handlers.DeploymentsHandler)
 	mux.HandleFunc("/api/deployments/{id}", handlers.DeploymentHandler)
 	mux.HandleFunc("/api/deployments/{id}/logs", handlers.DeploymentLogsHandler)
+	mux.HandleFunc("/api/update", handlers.UpdateHandler)
+	mux.HandleFunc("/api/update/status", handlers.UpdateStatusHandler)
+	mux.HandleFunc("/api/update/logs", handlers.UpdateLogsHandler)
+	mux.HandleFunc("/api/update/logs/stream", handlers.UpdateLogsStreamHandler)
+	mux.HandleFunc("/api/update/rollback", handlers.UpdateRollbackHandler)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))

@@ -76,3 +76,16 @@ export const envVars = {
     doFetch(`/api/projects/${projectId}/env-vars/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
   remove: (projectId, id) => doFetch(`/api/projects/${projectId}/env-vars/${id}`, { method: "DELETE" }),
 };
+
+export const update = {
+  status: () => doFetch("/api/update"),
+  poll: () => doFetch("/api/update/status"),
+  start: (version) =>
+    doFetch("/api/update", { method: "POST", body: JSON.stringify(version ? { version } : {}) }),
+  rollback: () => doFetch("/api/update/rollback", { method: "POST" }),
+  logs: () => doFetch("/api/update/logs"),
+  logsStreamUrl: () => {
+    const token = localStorage.getItem("nineteen_token") || "";
+    return `${API_URL}/api/update/logs/stream?token=${encodeURIComponent(token)}`;
+  },
+};

@@ -13,6 +13,9 @@ services:
       STATIC_DIR: "/app/static"
       JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in the .env file}"
       INVITE_CODE: "${INVITE_CODE:?Set INVITE_CODE in the .env file}"
+      # GitHub repo that hosts the Nineteen source; used by the self-update
+      # feature to check for and pull new releases.
+      NINETEEN_REPO: "${NINETEEN_REPO:?Set NINETEEN_REPO in the .env file}"
     volumes:
       # The app deploys project containers on the *host* Docker daemon, so it
       # needs the daemon socket. Project containers run on the host network,

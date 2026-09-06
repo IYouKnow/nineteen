@@ -17,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { IntegrationCard } from "@/components/ui/integration-card";
 import { ConnectIntegrationDialog } from "@/components/ui/connect-integration-dialog";
 import { IntegrationSettingsDialog } from "@/components/ui/integration-settings-dialog";
+import { UpdateSection } from "@/components/update/UpdateSection";
 import {
   Globe, Palette, Bell, Key, Link2, Server,
   Plus, Trash2, CheckCircle2, Sun, Moon, Monitor,
@@ -713,7 +714,7 @@ function DeploymentDefaultsTab({ settings, onSave }) {
   );
 }
 
-const SETTINGS_TABS = ["general", "appearance", "integrations", "deployment"];
+const SETTINGS_TABS = ["general", "appearance", "integrations", "deployment", "updates"];
 
 function getActiveTab(pathname) {
   const last = pathname.split("/").filter(Boolean).pop();
@@ -757,6 +758,7 @@ export default function Settings() {
             <TabsTrigger value="api-keys" disabled>API Keys</TabsTrigger>
             <TabsTrigger value="integrations">Integrations</TabsTrigger>
             <TabsTrigger value="deployment">Deployment</TabsTrigger>
+            <TabsTrigger value="updates">Updates</TabsTrigger>
           </TabsList>
         </Tabs>
 
@@ -767,6 +769,7 @@ export default function Settings() {
             <Route path="appearance" element={<AppearanceTab settings={settings} onSave={updateSettings} />} />
             <Route path="integrations" element={<IntegrationsTab />} />
             <Route path="deployment" element={<DeploymentDefaultsTab settings={settings} onSave={updateSettings} />} />
+            <Route path="updates" element={<UpdateSection />} />
           </Routes>
         </div>
       </div>

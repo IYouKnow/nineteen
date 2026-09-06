@@ -16,7 +16,10 @@ WORKDIR /src
 COPY server/go.mod server/go.sum ./
 RUN go mod download
 COPY server/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/nineteen-server .
+# VERSION is injected at build time so the server can report its own version
+# (used by the self-update feature). Pass it via --build-arg VERSION=<tag>.
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.version=$VERSION" -o /out/nineteen-server .
 
 # ---------- Stage 3: runtime ----------
 FROM alpine:3.20
