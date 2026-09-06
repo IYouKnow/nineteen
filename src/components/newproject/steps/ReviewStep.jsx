@@ -1,6 +1,6 @@
 import { Check, GitBranch, Cpu, MapPin, Layers, Rocket, Globe, Server, Ship } from "lucide-react";
 import { DATABASES, SOURCES, TEMPLATES } from "@/lib/newProject";
-import { INSTANCE_TYPES, REGIONS, getFramework } from "@/lib/devStatus";
+import { INSTANCE_TYPES, REGIONS, getFramework, projectAddress } from "@/lib/devStatus";
 import SourceIcon from "@/components/newproject/SourceIcon";
 import TemplateIcon from "@/components/newproject/TemplateIcon";
 
@@ -98,7 +98,7 @@ export default function ReviewStep({ source, services, config, repository, build
           <Rocket className="h-4 w-4 text-primary" />
           <span className="text-muted-foreground">
             Your project will be deployed to{" "}
-            <span className="font-mono text-foreground">{(config.name || "project").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}.fra1.nineteen.app</span>
+            <span className="font-mono text-foreground">{projectAddress(config)}</span>
           </span>
         </div>
       </div>

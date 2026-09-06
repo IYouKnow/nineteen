@@ -103,3 +103,36 @@ export const REGIONS = [
   { id: "sin1", label: "Singapore", flag: "🇸🇬" },
   { id: "iad1", label: "Washington", flag: "🇺🇸" },
 ];
+
+// Base port used when auto-assigning a local dev port for a project.
+export const DEV_PORT_BASE = 3000;
+// Size of the auto-assign pool (DEV_PORT_BASE..DEV_PORT_BASE+RANGE-1).
+export const DEV_PORT_RANGE = 2000;
+
+// Resolves the concrete dev port for a project. Accepts either an object
+// ({ port, name }) or a raw port value. Uses the user-chosen port when set,
+// otherwise deterministically auto-assigns one so the same project always
+// maps to the same local port.
+export function resolveProjectPort(portOrProject, fallbackName = "") {
+  let port;
+  let name = fallbackName;
+  if (portOrProject && typeof portOrProject === "object") {
+    port = portOrProject.port;
+    name = portOrProject.name || fallbackName;
+  } else {
+    port = portOrProject;
+  }
+  const numeric = Number(port);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+
+  let hash = 0;
+  const seed = String(name || "project").toLowerCase();
+  for (let i = 0; i < seed.length; i += 1) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  return DEV_PORT_BASE + (hash % DEV_PORT_RANGE);
+}
+
+// The local URL a project is served at (host + resolved port).
+export function projectAddress(portOrProject, fallbackName = "") {
+  const port = resolveProjectPort(portOrProject, fallbackName);
+  return `${window.location.protocol}//${window.location.hostname}:${port}`;
+}

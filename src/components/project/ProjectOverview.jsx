@@ -17,7 +17,7 @@ import EmptyState from "@/components/dev/EmptyState";
 import ProjectResources from "@/components/project/ProjectResources";
 import { Button } from "@/components/ui/button";
 import { timeAgo, formatDate, formatDuration, shortSha } from "@/lib/format";
-import { getFramework, INSTANCE_TYPES, REGIONS } from "@/lib/devStatus";
+import { getFramework, INSTANCE_TYPES, REGIONS, projectAddress } from "@/lib/devStatus";
 
 import { getEnvType } from "@/lib/environments";
 
@@ -35,7 +35,7 @@ function InfoTile({ icon: Icon, label, value, mono }) {
 
 export default function ProjectOverview({ project, deployments = [], envVars = [], mounts = [], environment }) {
   const latest = deployments[0];
-  const liveUrl = latest?.url || project.domain;
+  const liveUrl = projectAddress(project);
   const envType = environment ? getEnvType(environment.type) : null;
   const fw = getFramework(project.framework);
   const instance = INSTANCE_TYPES.find((i) => i.id === project.instance_type) || INSTANCE_TYPES[0];

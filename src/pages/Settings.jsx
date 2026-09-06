@@ -629,6 +629,40 @@ function IntegrationsTab() {
         </div>
       )}
 
+      <SectionHeader icon={Globe} title="Domains" description="Connect custom domains to your projects" />
+      <Card>
+        <CardContent className="pt-6 space-y-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-foreground">Custom domains</p>
+              <p className="text-xs text-muted-foreground">Point your own domain names at deployed projects.</p>
+            </div>
+            <span className="inline-flex shrink-0 items-center rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              Coming soon
+            </span>
+          </div>
+
+          <Separator />
+
+          <div className="flex items-end gap-2">
+            <div className="flex-1 space-y-2">
+              <Label htmlFor="new-custom-domain">Domain</Label>
+              <Input id="new-custom-domain" placeholder="app.example.com" disabled />
+            </div>
+            <Button variant="outline" disabled className="gap-1.5">
+              <Plus className="h-3.5 w-3.5" />
+              Add domain
+            </Button>
+          </div>
+
+          <div className="rounded-lg border border-dashed border-border p-6 text-center">
+            <Globe className="mx-auto h-6 w-6 text-muted-foreground/60" />
+            <p className="mt-2 text-sm text-muted-foreground">No custom domains yet</p>
+            <p className="text-xs text-muted-foreground/70">Custom domain support is not available yet.</p>
+          </div>
+        </CardContent>
+      </Card>
+
       {showConnectDialog && selectedProvider && (
         <ConnectIntegrationDialog
           provider={selectedProvider}

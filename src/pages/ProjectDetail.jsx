@@ -42,6 +42,7 @@ import EnvironmentSelector from "@/components/project/EnvironmentSelector";
 import EnvArchitecture from "@/components/project/EnvArchitecture";
 import EnvDatabases from "@/components/project/EnvDatabases";
 import { randomSha } from "@/lib/format";
+import { projectAddress } from "@/lib/devStatus";
 import { cn } from "@/lib/utils";
 import {
   defaultEnvironments,
@@ -87,7 +88,7 @@ export default function ProjectDetail() {
   });
 
   const latestDeployment = deployments[0];
-  const liveUrl = latestDeployment?.url || project?.domain;
+  const liveUrl = project ? projectAddress(project) : (latestDeployment?.url || "");
   const isRunning = project?.status === "running";
 
   const { data: envVars = [] } = useQuery({

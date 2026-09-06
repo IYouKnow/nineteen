@@ -1,4 +1,5 @@
 import * as api from "@/lib/api";
+import { resolveProjectPort } from "@/lib/devStatus";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -182,7 +183,7 @@ export default function NewProject() {
         last_deployed_at: new Date().toISOString(),
         region: config.region,
         instance_type: config.instance,
-        port: config.port ? Number(config.port) : null,
+        port: resolveProjectPort(config),
         build_strategy: scannable ? config.dockerMode : "detect",
         dockerfile_path: scannable && config.dockerMode === "dockerfile" ? config.dockerfilePath : "",
         compose_path: scannable && config.dockerMode === "compose" ? config.composePath : "",

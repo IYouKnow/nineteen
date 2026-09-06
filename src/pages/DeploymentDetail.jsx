@@ -22,7 +22,7 @@ import BuildLog from "@/components/dev/BuildLog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { timeAgo, formatDuration, shortSha } from "@/lib/format";
-import { getFramework } from "@/lib/devStatus";
+import { getFramework, projectAddress } from "@/lib/devStatus";
 
 function Meta({ icon: Icon, label, value, mono }) {
   return (
@@ -88,9 +88,9 @@ export default function DeploymentDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {deployment.url && (
+          {(project || deployment.url) && (
             <Button asChild variant="outline" size="sm" className="gap-2">
-              <a href={deployment.url} target="_blank" rel="noreferrer">
+              <a href={project ? projectAddress(project) : deployment.url} target="_blank" rel="noreferrer">
                 <ExternalLink className="h-3.5 w-3.5" />
                 Open
               </a>
@@ -125,7 +125,7 @@ export default function DeploymentDetail() {
               <div className="mt-1 divide-y divide-border/60">
                 <Meta icon={Cpu} label="Instance" value={`${project.instance_type}`} mono />
                 <Meta icon={MapPin} label="Region" value={project.region} mono />
-                <Meta icon={Globe} label="Domain" value={project.domain} mono />
+                <Meta icon={Globe} label="Domain" value={projectAddress(project)} mono />
               </div>
               <Button asChild variant="outline" size="sm" className="mt-3 w-full gap-2">
                 <Link to={`/projects/${projectId}`}>
