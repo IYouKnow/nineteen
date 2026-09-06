@@ -546,21 +546,43 @@ func parseSemver(s string) ([]int, bool) {
 // ---- clone / build ----
 
 func (u *UpdateService) cloneRepo(tag string) (string, error) {
+	candidates := []string{}
+	if tag != "" {
+		candidates = append(candidates, tag)
+		if !strings.HasPrefix(tag, "v") {
+			candidates = append(candidates, "v"+tag)
+		}
+	} else {
+		candidates = append(candidates, "")
+	}
+	var lastErr error
+	for _, ref := range candidates {
+		dir, err := u.cloneRef(ref)
+		if err == nil {
+			return dir, nil
+		}
+		lastErr = err
+	}
+	return "", lastErr
+}
+
+func (u *UpdateService) cloneRef(ref string) (string, error) {
 	dir, err := os.MkdirTemp("", "nineteen-update-")
 	if err != nil {
 		return "", err
 	}
 	url := fmt.Sprintf("https://github.com/%s.git", u.Repo)
 	args := []string{"clone", "--depth", "1"}
-	if tag != "" {
-		args = append(args, "--branch", tag)
+	if ref != "" {
+		args = append(args, "--branch", ref)
 	}
 	args = append(args, url, dir)
 	cmd := exec.Command("git", args...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return dir, fmt.Errorf("%s: %s", err.Error(), strings.TrimSpace(string(out)))
+		os.RemoveAll(dir)
+		return "", fmt.Errorf("%s: %s", err.Error(), strings.TrimSpace(string(out)))
 	}
 	return dir, nil
 }
