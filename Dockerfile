@@ -27,8 +27,13 @@ RUN apk add --no-cache \
     ca-certificates \
     git \
     docker-cli \
-    docker-cli-compose \
-    docker-buildx
+    docker-cli-compose
+
+# Install the buildx CLI plugin (officially recommended Dockerfile method).
+# The binary is copied for the target architecture, so multi-arch builds work.
+COPY --from=docker/buildx-bin /buildx /usr/libexec/docker/cli-plugins/docker-buildx
+RUN chmod +x /usr/libexec/docker/cli-plugins/docker-buildx \
+    && docker buildx version
 
 WORKDIR /app
 COPY --from=build-go /out/nineteen-server ./nineteen-server
