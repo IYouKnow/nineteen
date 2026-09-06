@@ -203,7 +203,7 @@ export function UpdateSection() {
 
           {info.message && <p className="text-sm text-muted-foreground">{info.message}</p>}
 
-          {!inProgress && !terminal && info.update_available && (
+          {!inProgress && info.update_available && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-success/40 bg-success/5 p-3">
               <div className="flex items-center gap-2">
                 <Download className="h-4 w-4 text-success" />
