@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import * as api from "@/lib/api";
 import StatusBadge from "@/components/dev/StatusBadge";
-import { cn } from "@/lib/utils";
+import { cn, copyText } from "@/lib/utils";
 import {
   formatLogTime, levelMeta,
 } from "@/lib/runtimeLogs";
@@ -158,13 +158,15 @@ export default function ProjectLogs({ project, environment, isProd = true }) {
     });
   }, [logs, range, now, activeLevels, query]);
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
     const text = filtered
       .map((l) => `${formatLogTime(l.ts)} [${levelMeta(l.level).label}] ${l.instance} ${l.text}`)
       .join("\n");
-    navigator.clipboard.writeText(text || " ");
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    const ok = await copyText(text);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
   };
   const handleClear = () => { setLogs([]); setNewCount(0); };
 

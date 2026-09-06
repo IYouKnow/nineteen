@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { deployments } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, copyText } from "@/lib/utils";
 import { levelClass } from "@/lib/buildLogs";
 import { Copy, Check, Terminal, Loader2 } from "lucide-react";
 
@@ -39,10 +39,12 @@ export default function BuildLog({ deployment, className }) {
     text: l.message,
   }));
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(lines.map((l) => l.text).join("\n"));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+  const handleCopy = async () => {
+    const ok = await copyText(lines.map((l) => l.text).join("\n"));
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
   };
 
   return (

@@ -44,7 +44,7 @@ import DatabaseTables from "@/components/db/DatabaseTables";
 import { getDbType, DB_INSTANCE_SIZES, buildConnectionString } from "@/lib/databases";
 import { REGIONS } from "@/lib/devStatus";
 import { formatDate } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn, copyText } from "@/lib/utils";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -67,12 +67,10 @@ function InfoTile({ icon: Icon, label, value, mono }) {
 function CopyField({ label, value }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value);
+    const ok = await copyText(value);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard unavailable */
     }
   };
   return (

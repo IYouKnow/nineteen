@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -157,15 +158,44 @@ func (d *Deployer) ImagePort(image string) int {
 
 // Build runs `docker build` for the image using the given Dockerfile
 // (repo-relative) with the repository root as build context.
+//
+// The build prefers the BuildKit backend (DOCKER_BUILDKIT=1) and is also given
+// explicit platform args, so Dockerfiles that rely on BuildKit's automatic
+// ARGs (TARGETARCH, TARGETPLATFORM, …) still build on hosts whose Docker CLI
+// falls back to the legacy builder, where those args are left empty.
 func (d *Deployer) Build(image, dir, dockerfile string, log func(string)) error {
 	args := []string{"build", "-t", image}
 	if dockerfile != "" && dockerfile != "Dockerfile" {
 		args = append(args, "-f", dockerfile)
 	}
+	args = append(args, buildPlatformArgs()...)
 	args = append(args, ".")
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
 	return streamCommand(cmd, log)
+}
+
+// buildPlatformArgs returns the --build-arg pairs that supply the values
+// BuildKit would normally inject automatically (TARGETARCH/TARGETOS/
+// TARGETPLATFORM and the BUILD* equivalents) for the build's native platform.
+// The legacy builder does not populate these, so a Dockerfile that interpolates
+// one of them (e.g. a cloudflared download URL using ${TARGETARCH}) would
+// otherwise see an empty value and fail with a 404.
+//
+// Nineteen builds natively on the host it runs on (and that host is where the
+// Docker daemon executes builds), so runtime.GOARCH is the correct value and
+// matches what BuildKit would inject. Unused args are harmless.
+func buildPlatformArgs() []string {
+	arch := runtime.GOARCH
+	return []string{
+		"--build-arg", "TARGETARCH=" + arch,
+		"--build-arg", "TARGETOS=linux",
+		"--build-arg", "TARGETPLATFORM=linux/" + arch,
+		"--build-arg", "BUILDARCH=" + arch,
+		"--build-arg", "BUILDOS=linux",
+		"--build-arg", "BUILDPLATFORM=linux/" + arch,
+	}
 }
 
 // CleanupContainer force-removes a container by name (best-effort).

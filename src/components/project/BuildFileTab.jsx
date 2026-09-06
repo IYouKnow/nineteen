@@ -22,7 +22,7 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+import { cn, copyText } from "@/lib/utils";
 
 const KIND_LABELS = { dockerfile: "Dockerfile", compose: "Docker Compose" };
 
@@ -48,12 +48,12 @@ export default function BuildFileTab({ project }) {
 
   const copy = async () => {
     if (!draft) return;
-    try {
-      await navigator.clipboard.writeText(draft);
+    const ok = await copyText(draft);
+    if (ok) {
       setCopied(true);
       toast.success("Build file copied");
       setTimeout(() => setCopied(false), 1600);
-    } catch {
+    } else {
       toast.error("Could not copy to clipboard");
     }
   };
