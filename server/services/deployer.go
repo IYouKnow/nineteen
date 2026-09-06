@@ -159,21 +159,40 @@ func (d *Deployer) ImagePort(image string) int {
 // Build runs `docker build` for the image using the given Dockerfile
 // (repo-relative) with the repository root as build context.
 //
-// The build prefers the BuildKit backend (DOCKER_BUILDKIT=1) and is also given
-// explicit platform args, so Dockerfiles that rely on BuildKit's automatic
-// ARGs (TARGETARCH, TARGETPLATFORM, …) still build on hosts whose Docker CLI
-// falls back to the legacy builder, where those args are left empty.
+// It prefers the buildx/BuildKit builder when the CLI has it available —
+// faster, better caching, and it auto-populates the TARGETARCH/TARGETPLATFORM
+// ARGs. On hosts without buildx it falls back to the legacy builder, passing
+// explicit platform args so Dockerfiles that interpolate those ARGs (e.g. a
+// cloudflared download URL using ${TARGETARCH}) still resolve to a real value.
+// We do not force BuildKit (DOCKER_BUILDKIT=1) because that hard-errors on
+// hosts missing the buildx component.
 func (d *Deployer) Build(image, dir, dockerfile string, log func(string)) error {
-	args := []string{"build", "-t", image}
+	useBuildx := d.buildxAvailable()
+
+	var args []string
+	if useBuildx {
+		// --load ensures the image lands in the local daemon so `docker run`
+		// can start it (buildx doesn't load by default on every driver).
+		args = []string{"buildx", "build", "--load", "-t", image}
+	} else {
+		args = []string{"build", "-t", image}
+	}
 	if dockerfile != "" && dockerfile != "Dockerfile" {
 		args = append(args, "-f", dockerfile)
 	}
-	args = append(args, buildPlatformArgs()...)
+	if !useBuildx {
+		args = append(args, buildPlatformArgs()...)
+	}
 	args = append(args, ".")
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
 	return streamCommand(cmd, log)
+}
+
+// buildxAvailable reports whether the Docker CLI has the buildx component
+// (the driver for BuildKit). Hosts without it fall back to the legacy builder.
+func (d *Deployer) buildxAvailable() bool {
+	return exec.Command("docker", "buildx", "version").Run() == nil
 }
 
 // buildPlatformArgs returns the --build-arg pairs that supply the values

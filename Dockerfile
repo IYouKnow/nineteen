@@ -27,7 +27,8 @@ RUN apk add --no-cache \
     ca-certificates \
     git \
     docker-cli \
-    docker-cli-compose
+    docker-cli-compose \
+    docker-buildx
 
 WORKDIR /app
 COPY --from=build-go /out/nineteen-server ./nineteen-server
