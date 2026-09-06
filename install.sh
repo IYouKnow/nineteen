@@ -9,13 +9,13 @@ set -euo pipefail
 # Or clone the repo first and run:
 #   sudo bash install.sh
 #
-# It installs Docker (if missing), clones the Nineteen source, generates .env,
-# builds and starts the container, then prints the URL and access code.
+# It installs Docker (if missing), fetches the latest GitHub release, clones
+# that tag, generates .env, builds and starts the container, then prints the
+# URL and access code. If the repo has no releases it falls back to main.
 # Hosted project containers and /opt/nineteen/data are never touched.
 
 REPO="${NINETEEN_REPO:-IYouKnow/nineteen}"
 DEFAULT_REPO="$REPO"
-BRANCH="main"
 DEFAULT_DIR="/opt/nineteen"
 DEFAULT_PORT="8080"
 
@@ -38,6 +38,22 @@ prompt() {
 
 log "Nineteen installer"
 log "Repo: $REPO"
+
+# --- determine the latest GitHub release ---
+fetch_latest_release() {
+  curl -fsS "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
+    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1
+}
+LATEST_TAG="$(fetch_latest_release || true)"
+if [ -n "$LATEST_TAG" ]; then
+  VERSION="${LATEST_TAG#v}"
+  CLONE_REF="$LATEST_TAG"
+  log "Installing latest release: $LATEST_TAG"
+else
+  VERSION="dev"
+  CLONE_REF="main"
+  warn "No releases found for $REPO — installing $CLONE_REF (version dev)"
+fi
 
 # --- prerequisites ---
 for p in git curl; do
@@ -62,13 +78,16 @@ APP_DIR="$DEFAULT_DIR"
 if [ -f "docker-compose.yml" ] && [ -d ".git" ]; then
   APP_DIR="$(pwd)"
   log "Running from an existing checkout: $APP_DIR"
+  git -C "$APP_DIR" fetch --depth 1 origin "$CLONE_REF" >/dev/null 2>&1 || true
+  git -C "$APP_DIR" checkout "$CLONE_REF" >/dev/null 2>&1 || warn "could not switch to $CLONE_REF; using current checkout"
 elif [ -d "$APP_DIR/.git" ]; then
-  log "Existing install found at $APP_DIR — pulling latest..."
-  git -C "$APP_DIR" pull --ff-only >/dev/null 2>&1 || warn "git pull failed; continuing with existing checkout"
+  log "Existing install found at $APP_DIR — updating to $CLONE_REF ..."
+  git -C "$APP_DIR" fetch --depth 1 origin "$CLONE_REF" >/dev/null 2>&1 || true
+  git -C "$APP_DIR" checkout "$CLONE_REF" >/dev/null 2>&1 || warn "could not switch to $CLONE_REF; using existing checkout"
 else
-  log "Cloning $REPO to $APP_DIR ..."
+  log "Cloning $REPO ($CLONE_REF) to $APP_DIR ..."
   mkdir -p "$APP_DIR"
-  git clone --branch "$BRANCH" --depth 1 "https://github.com/$REPO.git" "$APP_DIR"
+  git clone --branch "$CLONE_REF" --depth 1 "https://github.com/$REPO.git" "$APP_DIR"
 fi
 cd "$APP_DIR"
 
@@ -95,17 +114,23 @@ mkdir -p "$APP_DIR/data"
 
 # --- build & run ---
 log "Building and starting the container (this can take a few minutes)..."
-docker compose build
+docker compose build --build-arg VERSION="$VERSION"
 docker compose up -d
 
 # --- wait for health ---
 log "Waiting for Nineteen to become healthy..."
+HEALTHY=0
 for _ in $(seq 1 40); do
   if curl -fsS "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1; then
+    HEALTHY=1
     break
   fi
   sleep 2
 done
+
+if [ "$HEALTHY" -ne 1 ]; then
+  warn "Nineteen did not respond on /api/health within the wait — check: docker compose logs -f"
+fi
 
 cat <<EOF
 
@@ -116,7 +141,7 @@ cat <<EOF
 
     Logs:       docker compose logs -f
     Restart:    docker compose restart
-    Update:     cd $APP_DIR && git pull && docker compose up -d --build
+    Update:     re-run this installer, or use the in-app Updates tab
 
     Open the URL and register the first admin using the invite code.
 EOF
