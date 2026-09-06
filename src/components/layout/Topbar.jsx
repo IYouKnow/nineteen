@@ -41,7 +41,7 @@ export default function Topbar({ onMenu }) {
       </button>
 
       <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground/60">
-        <span>nineteen@0.2.0</span>
+        <span>nineteen@0.3.0</span>
         <span className="hidden sm:inline text-muted-foreground/30">·</span>
         <span className="hidden sm:inline">self-hosted</span>
       </div>
