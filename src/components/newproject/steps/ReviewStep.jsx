@@ -1,6 +1,6 @@
-import { Check, GitBranch, Cpu, MapPin, Layers, Rocket, Globe, Server, Ship } from "lucide-react";
+import { Check, GitBranch, Layers, Rocket, Globe, Server, Ship } from "lucide-react";
 import { DATABASES, SOURCES, TEMPLATES } from "@/lib/newProject";
-import { INSTANCE_TYPES, REGIONS, getFramework, projectAddress } from "@/lib/devStatus";
+import { getFramework, projectAddress } from "@/lib/devStatus";
 import SourceIcon from "@/components/newproject/SourceIcon";
 import TemplateIcon from "@/components/newproject/TemplateIcon";
 
@@ -18,8 +18,6 @@ function Row({ icon, label, value }) {
 
 export default function ReviewStep({ source, services, config, repository, buildLabel }) {
   const fw = getFramework(config.framework);
-  const region = REGIONS.find((r) => r.id === config.region);
-  const instance = INSTANCE_TYPES.find((t) => t.id === config.instance);
   const selectedSource = SOURCES.find((s) => s.id === source.type);
   const template = source.type === "template" ? TEMPLATES.find((t) => t.id === source.template) : null;
 
@@ -88,8 +86,6 @@ export default function ReviewStep({ source, services, config, repository, build
             <Row icon={<GitBranch className="h-3.5 w-3.5" />} label="Branch" value={<span className="font-mono">{config.branch}</span>} />
             <Row icon={<Ship className="h-3.5 w-3.5" />} label="Build" value={<span className="font-mono text-xs">{buildLabel || "Dockerfile · auto-detected"}</span>} />
             <Row icon={<Layers className="h-3.5 w-3.5" />} label="Framework" value={fw.label} />
-            <Row icon={<MapPin className="h-3.5 w-3.5" />} label="Region" value={`${region?.flag} ${region?.label}`} />
-            <Row icon={<Cpu className="h-3.5 w-3.5" />} label="Instance" value={`${instance?.label} · ${instance?.cpu}`} />
             <Row icon={<Check className="h-3.5 w-3.5" />} label="Auto-deploy" value={config.autoDeploy ? "Enabled" : "Disabled"} />
           </div>
         </section>

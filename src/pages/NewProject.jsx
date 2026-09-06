@@ -38,8 +38,6 @@ export default function NewProject() {
     name: "",
     branch: "main",
     framework: "node",
-    region: "fra1",
-    instance: "nano",
     port: "",
     autoDeploy: true,
     dockerMode: "dockerfile",
@@ -48,6 +46,7 @@ export default function NewProject() {
   });
   const [creating, setCreating] = useState(false);
   const prefilledRef = useRef(false);
+  const autoNameRef = useRef("");
 
   // Repositories we can scan for build files (GitHub source, or a public
   // github.com URL).
@@ -115,16 +114,20 @@ export default function NewProject() {
     }
   }, [scan]);
 
-  // Prefill name & framework when a GitHub repo is selected.
+  // Prefill name & framework when a GitHub repo is selected. When the user
+  // switches repos we keep the name in sync (test -> hello), but never clobber
+  // a name the user has typed themselves.
   useEffect(() => {
-    if (source.repo && !config.name) {
-      setConfig((c) => ({
-        ...c,
-        name: source.repo.full_name.split("/")[1],
-        framework: source.repo.framework,
-        branch: source.repo.branch || "main",
-      }));
-    }
+    if (!source.repo) return;
+    const repoName = source.repo.full_name.split("/")[1];
+    const shouldSetName = !config.name || config.name === autoNameRef.current;
+    if (shouldSetName) autoNameRef.current = repoName;
+    setConfig((c) => ({
+      ...c,
+      name: shouldSetName ? repoName : c.name,
+      framework: source.repo.framework,
+      branch: source.repo.branch || "main",
+    }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source.repo]);
 
@@ -186,8 +189,6 @@ export default function NewProject() {
         domain: `${slug}.fra1.nineteen.app`,
         auto_deploy: config.autoDeploy,
         last_deployed_at: new Date().toISOString(),
-        region: config.region,
-        instance_type: config.instance,
         port: resolveProjectPort(config),
         build_strategy: scannable ? config.dockerMode : "detect",
         dockerfile_path: scannable && config.dockerMode === "dockerfile" ? config.dockerfilePath : "",

@@ -1,5 +1,5 @@
-import { GitBranch, Cpu, MapPin, Layers, Globe, Ship, Plug2 } from "lucide-react";
-import { FRAMEWORKS, INSTANCE_TYPES, REGIONS } from "@/lib/devStatus";
+import { GitBranch, Layers, Globe, Ship, Plug2 } from "lucide-react";
+import { FRAMEWORKS } from "@/lib/devStatus";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -64,24 +64,6 @@ export default function ConfigurationStep({ config, setConfig, sourceLabel, buil
           >
             {Object.entries(FRAMEWORKS).map(([id, f]) => (
               <option key={id} value={id}>{f.label}</option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <Label className="text-xs flex items-center gap-1"><MapPin className="h-3 w-3" /> Region</Label>
-          <select value={config.region} onChange={(e) => update({ region: e.target.value })} className={cn(selectCls)}>
-            {REGIONS.map((r) => (
-              <option key={r.id} value={r.id}>{r.flag} {r.label}</option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <Label className="text-xs flex items-center gap-1"><Cpu className="h-3 w-3" /> Instance size</Label>
-          <select value={config.instance} onChange={(e) => update({ instance: e.target.value })} className={cn(selectCls)}>
-            {INSTANCE_TYPES.map((t) => (
-              <option key={t.id} value={t.id}>{t.label} · {t.cpu} / {t.ram}</option>
             ))}
           </select>
         </div>
