@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { FolderGit2, Database } from "lucide-react";
 
-import db from "@/lib/db";
+import { dbEntities } from "@/lib/dbEntities";
 import * as api from "@/lib/api";
 import {
   CommandDialog,
@@ -26,7 +26,7 @@ export default function GlobalSearch({ open, onOpenChange }) {
 
   const { data: databases = [] } = useQuery({
     queryKey: ["databases"],
-    queryFn: () => db.entities.Database.list("-created_date", 100),
+    queryFn: () => dbEntities.Database.list("-created_date", 100),
     enabled: open,
   });
 

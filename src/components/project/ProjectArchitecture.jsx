@@ -8,6 +8,7 @@ import AddConnectionDialog from "@/components/architecture/AddConnectionDialog";
 import CreateAutomationDialog from "@/components/automation/CreateAutomationDialog";
 import AutomationDetailsDialog from "@/components/automation/AutomationDetailsDialog";
 import { inferRole } from "@/lib/architecture";
+import { dbEntities } from "@/lib/dbEntities";
 
 export default function ProjectArchitecture({ project, onOpenLogs }) {
   const [mockAdded, setMockAdded] = useState([]);
@@ -20,11 +21,11 @@ export default function ProjectArchitecture({ project, onOpenLogs }) {
 
   const { data: allConnections = [], isLoading } = useQuery({
     queryKey: ["db-connections-all"],
-    queryFn: () => db.entities.DatabaseConnection.list("-created_date", 200),
+    queryFn: () => dbEntities.DatabaseConnection.list("-created_date", 200),
   });
   const { data: databases = [] } = useQuery({
     queryKey: ["databases"],
-    queryFn: () => db.entities.Database.list("-created_date", 100),
+    queryFn: () => dbEntities.Database.list("-created_date", 100),
   });
 
   const sharingByDb = useMemo(() => {

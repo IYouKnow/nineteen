@@ -1,4 +1,5 @@
 import * as api from "@/lib/api";
+import { dbEntities } from "@/lib/dbEntities";
 
 import { useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
@@ -94,11 +95,11 @@ export default function DatabaseDetail() {
 
   const { data: db, isLoading } = useQuery({
     queryKey: ["database", databaseId],
-    queryFn: () => db.entities.Database.get(databaseId),
+    queryFn: () => dbEntities.Database.get(databaseId),
   });
   const { data: connections = [] } = useQuery({
     queryKey: ["db-connections", databaseId],
-    queryFn: () => db.entities.DatabaseConnection.filter({ database_id: databaseId }),
+    queryFn: () => dbEntities.DatabaseConnection.filter({ database_id: databaseId }),
   });
   const { data: projects = [] } = useQuery({
     queryKey: ["projects"],
@@ -110,10 +111,10 @@ export default function DatabaseDetail() {
     .map((c) => ({ conn: c, project: projectsById[c.project_id] }))
     .filter((x) => x.project);
 
-  const run = async (status) => {
-    setBusy(status);
+  const run = async (action) => {
+    setBusy(action);
     try {
-      await db.entities.Database.update(databaseId, { status });
+      await api.databases.action(databaseId, action);
       qc.invalidateQueries({ queryKey: ["database", databaseId] });
       qc.invalidateQueries({ queryKey: ["databases"] });
     } finally {
@@ -122,8 +123,8 @@ export default function DatabaseDetail() {
   };
 
   const remove = async () => {
-    if (connections.length) await db.entities.DatabaseConnection.deleteMany({ database_id: databaseId });
-    await db.entities.Database.delete(databaseId);
+    if (connections.length) await dbEntities.DatabaseConnection.deleteMany({ database_id: databaseId });
+    await dbEntities.Database.delete(databaseId);
     qc.invalidateQueries({ queryKey: ["databases"] });
     qc.invalidateQueries({ queryKey: ["db-connections-all"] });
     qc.invalidateQueries({ queryKey: ["project-databases"] });
@@ -133,7 +134,7 @@ export default function DatabaseDetail() {
   const disconnect = async (conn) => {
     setBusy(conn.id);
     try {
-      await db.entities.DatabaseConnection.delete(conn.id);
+      await dbEntities.DatabaseConnection.delete(conn.id, conn.database_id);
       qc.invalidateQueries({ queryKey: ["db-connections", databaseId] });
       qc.invalidateQueries({ queryKey: ["db-connections-all"] });
       qc.invalidateQueries({ queryKey: ["project-databases"] });
@@ -197,13 +198,13 @@ export default function DatabaseDetail() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44 border-border bg-popover">
-              <DropdownMenuItem onClick={() => run("running")} className="gap-2">
+              <DropdownMenuItem onClick={() => run("start")} className="gap-2">
                 <Play className="h-3.5 w-3.5" /> Start
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => run("running")} className="gap-2">
+              <DropdownMenuItem onClick={() => run("restart")} className="gap-2">
                 <RotateCw className="h-3.5 w-3.5" /> Restart
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => run("stopped")} className="gap-2">
+              <DropdownMenuItem onClick={() => run("stop")} className="gap-2">
                 <Square className="h-3.5 w-3.5" /> Stop
               </DropdownMenuItem>
               <DropdownMenuSeparator className="bg-border" />

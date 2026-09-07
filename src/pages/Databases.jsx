@@ -1,4 +1,4 @@
-import db from '@/lib/db';
+import { dbEntities } from "@/lib/dbEntities";
 import * as api from "@/lib/api";
 
 import { useMemo, useState, useEffect } from "react";
@@ -37,11 +37,11 @@ export default function Databases() {
 
   const { data: databases = [], isLoading } = useQuery({
     queryKey: ["databases"],
-    queryFn: () => db.entities.Database.list("-created_date", 100),
+    queryFn: () => dbEntities.Database.list("-created_date", 100),
   });
   const { data: connections = [] } = useQuery({
     queryKey: ["db-connections-all"],
-    queryFn: () => db.entities.DatabaseConnection.list("-created_date", 200),
+    queryFn: () => dbEntities.DatabaseConnection.list("-created_date", 200),
   });
   const { data: projects = [] } = useQuery({
     queryKey: ["projects"],

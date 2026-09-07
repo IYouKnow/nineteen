@@ -1,4 +1,4 @@
-import db from '@/lib/db';
+import { dbEntities } from "@/lib/dbEntities";
 
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -20,11 +20,11 @@ export default function ProjectDatabases({ project }) {
 
   const { data: connections = [], isLoading } = useQuery({
     queryKey: ["project-databases", project.id],
-    queryFn: () => db.entities.DatabaseConnection.filter({ project_id: project.id }),
+    queryFn: () => dbEntities.DatabaseConnection.filter({ project_id: project.id }),
   });
   const { data: databases = [] } = useQuery({
     queryKey: ["databases"],
-    queryFn: () => db.entities.Database.list("-created_date", 100),
+    queryFn: () => dbEntities.Database.list("-created_date", 100),
   });
 
   const dbs = connections
@@ -34,7 +34,7 @@ export default function ProjectDatabases({ project }) {
   const disconnect = async (conn) => {
     setBusy(conn.id);
     try {
-      await db.entities.DatabaseConnection.delete(conn.id);
+      await dbEntities.DatabaseConnection.delete(conn.id, conn.database_id);
       qc.invalidateQueries({ queryKey: ["project-databases", project.id] });
       qc.invalidateQueries({ queryKey: ["db-connections-all"] });
       qc.invalidateQueries({ queryKey: ["db-connections"] });

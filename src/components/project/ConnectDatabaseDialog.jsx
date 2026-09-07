@@ -1,4 +1,4 @@
-import db from '@/lib/db';
+import { dbEntities } from "@/lib/dbEntities";
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -29,7 +29,7 @@ export default function ConnectDatabaseDialog({ project, open, onOpenChange, con
 
   const { data: databases = [], isLoading } = useQuery({
     queryKey: ["databases"],
-    queryFn: () => db.entities.Database.list("-created_date", 100),
+    queryFn: () => dbEntities.Database.list("-created_date", 100),
     enabled: open,
   });
 
@@ -71,7 +71,7 @@ export default function ConnectDatabaseDialog({ project, open, onOpenChange, con
         onOpenChange(false);
         return;
       }
-      await db.entities.DatabaseConnection.bulkCreate(
+      await dbEntities.DatabaseConnection.bulkCreate(
         payload.map((it) => ({
           database_id: it.db.id,
           database_name: it.db.name,

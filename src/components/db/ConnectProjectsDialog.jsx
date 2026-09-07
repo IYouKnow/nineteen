@@ -1,4 +1,4 @@
-import db from '@/lib/db';
+import { dbEntities } from "@/lib/dbEntities";
 import * as api from "@/lib/api";
 
 import { useState } from "react";
@@ -37,7 +37,7 @@ export default function ConnectProjectsDialog({ database, open, onOpenChange, co
     setSaving(true);
     try {
       const chosen = projects.filter((p) => selected.includes(p.id));
-      await db.entities.DatabaseConnection.bulkCreate(
+      await dbEntities.DatabaseConnection.bulkCreate(
         chosen.map((p) => ({
           database_id: database.id,
           database_name: database.name,

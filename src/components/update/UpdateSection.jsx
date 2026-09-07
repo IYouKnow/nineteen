@@ -37,6 +37,7 @@ export function UpdateSection() {
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [showUpToDate, setShowUpToDate] = useState(false);
   const logRef = useRef(null);
   const streamRef = useRef(null);
   const pollRef = useRef(null);
@@ -75,6 +76,17 @@ export function UpdateSection() {
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [logs]);
+
+  // After a successful update, let the "Update complete" status settle for a
+  // moment, then switch to "Nineteen is up to date" (when there is no newer
+  // release to show).
+  useEffect(() => {
+    if (info?.state === "success") {
+      const t = setTimeout(() => setShowUpToDate(true), 4000);
+      return () => clearTimeout(t);
+    }
+    setShowUpToDate(false);
+  }, [info?.state]);
 
   useEffect(() => {
     return () => {
@@ -201,7 +213,13 @@ export function UpdateSection() {
 
           <Separator />
 
-          {info.message && <p className="text-sm text-muted-foreground">{info.message}</p>}
+          {info.message && (
+            <p className="text-sm text-muted-foreground">
+              {info.state === "success" && showUpToDate && !info.update_available
+                ? "You're running the latest version."
+                : info.message}
+            </p>
+          )}
 
           {!inProgress && info.update_available && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-success/40 bg-success/5 p-3">
@@ -239,7 +257,11 @@ export function UpdateSection() {
                 {info.state === "success" && <CheckCircle2 className="h-4 w-4 text-success" />}
                 {info.state === "rolled_back" && <RotateCcw className="h-4 w-4 text-warning" />}
                 {info.state === "failed" && <AlertCircle className="h-4 w-4 text-destructive" />}
-                <span className="text-foreground">{stateLabel(info.state)}</span>
+                <span className="text-foreground">
+                  {info.state === "success" && showUpToDate && !info.update_available
+                    ? "Nineteen is up to date"
+                    : stateLabel(info.state)}
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 {info.state === "success" && info.previous_image && (

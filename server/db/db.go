@@ -152,6 +152,40 @@ func runMigrations() {
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY(project_id, file_path)
 		)`,
+		`CREATE TABLE IF NOT EXISTS databases (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			slug TEXT NOT NULL,
+			type TEXT NOT NULL,
+			version TEXT DEFAULT '',
+			status TEXT DEFAULT 'provisioning',
+			region TEXT DEFAULT 'fra1',
+			instance_size TEXT DEFAULT 'small',
+			host TEXT DEFAULT '',
+			port INTEGER,
+			host_port INTEGER,
+			database_name TEXT DEFAULT 'app',
+			username TEXT DEFAULT 'app',
+			password_encrypted TEXT DEFAULT '',
+			description TEXT DEFAULT '',
+			created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_date DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_databases_user ON databases(user_id)`,
+		`CREATE TABLE IF NOT EXISTS database_connections (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			database_id INTEGER NOT NULL REFERENCES databases(id) ON DELETE CASCADE,
+			project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			scope TEXT DEFAULT 'all',
+			selected_tables TEXT DEFAULT '',
+			role TEXT DEFAULT 'primary',
+			created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(database_id, project_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_db_connections_database ON database_connections(database_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_db_connections_project ON database_connections(project_id)`,
 	}
 
 	for _, m := range migrations {

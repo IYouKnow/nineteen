@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import Stepper from "@/components/newproject/Stepper";
 import DbTypeIcon from "@/components/db/DbTypeIcon";
 import { DB_TYPE_LIST, DB_INSTANCE_SIZES, getDbType } from "@/lib/databases";
+import { dbEntities } from "@/lib/dbEntities";
 import { REGIONS } from "@/lib/devStatus";
 
 const STEPS = [
@@ -51,7 +52,7 @@ export default function NewDatabase() {
     setCreating(true);
     try {
       const t = getDbType(type);
-      const db = await db.entities.Database.create({
+      const created = await dbEntities.Database.create({
         name: config.name.trim(),
         type,
         status: "provisioning",
@@ -66,7 +67,7 @@ export default function NewDatabase() {
         description: config.description,
       });
       qc.invalidateQueries({ queryKey: ["databases"] });
-      navigate(`/databases/${db.id}`);
+      navigate(`/databases/${created.id}`);
     } catch (e) {
       console.error(e);
       setCreating(false);
