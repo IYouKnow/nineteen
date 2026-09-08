@@ -63,14 +63,43 @@ export const DB_STATUS = {
   stopped: { label: "Stopped", tone: "muted" },
 };
 
+export const BUCKET_STATUS = {
+  ready: { label: "Ready", tone: "success" },
+  provisioning: { label: "Provisioning", tone: "info", pulse: true },
+  error: { label: "Error", tone: "destructive" },
+};
+
+export const VOLUME_STATUS = {
+  available: { label: "Available", tone: "success" },
+  attached: { label: "Attached", tone: "info" },
+  provisioning: { label: "Provisioning", tone: "info", pulse: true },
+  error: { label: "Error", tone: "destructive" },
+};
+
+export const MOUNT_STATUS = {
+  attached: { label: "Attached", tone: "success" },
+  detached: { label: "Detached", tone: "muted" },
+  provisioning: { label: "Provisioning", tone: "info", pulse: true },
+  error: { label: "Error", tone: "destructive" },
+};
+
 export function getStatus(status, kind = "project") {
   const map =
     kind === "deployment"
       ? DEPLOYMENT_STATUS
       : kind === "database"
       ? DB_STATUS
+      : kind === "bucket"
+      ? BUCKET_STATUS
+      : kind === "volume"
+      ? VOLUME_STATUS
+      : kind === "mount"
+      ? MOUNT_STATUS
       : PROJECT_STATUS;
   if (kind === "database") return map[status] || DB_STATUS.running;
+  if (kind === "bucket") return map[status] || BUCKET_STATUS.ready;
+  if (kind === "volume") return map[status] || VOLUME_STATUS.available;
+  if (kind === "mount") return map[status] || MOUNT_STATUS.attached;
   return map[status] || PROJECT_STATUS.idle;
 }
 

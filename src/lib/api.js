@@ -97,6 +97,58 @@ export const dbConnections = {
     doFetch(`/api/databases/${databaseId}/connections`, { method: "DELETE" }),
 };
 
+// Storage API client. NOTE: the backend routes below are not implemented yet;
+// the storageEntities adapter falls back to an in-memory store so the frontend
+// works end-to-end. Wire these up when the Go handlers land.
+export const storage = {
+  listBuckets: (order = "-created_date", limit = 100) => {
+    const params = new URLSearchParams();
+    if (order) params.set("order", order);
+    if (limit) params.set("limit", String(limit));
+    return doFetch(`/api/storage/buckets?${params.toString()}`);
+  },
+  getBucket: (id) => doFetch(`/api/storage/buckets/${id}`),
+  createBucket: (payload) =>
+    doFetch("/api/storage/buckets", { method: "POST", body: JSON.stringify(payload) }),
+  updateBucket: (id, patch) =>
+    doFetch(`/api/storage/buckets/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  removeBucket: (id) => doFetch(`/api/storage/buckets/${id}`, { method: "DELETE" }),
+  listVolumes: (order = "-created_date", limit = 100) => {
+    const params = new URLSearchParams();
+    if (order) params.set("order", order);
+    if (limit) params.set("limit", String(limit));
+    return doFetch(`/api/storage/volumes?${params.toString()}`);
+  },
+  getVolume: (id) => doFetch(`/api/storage/volumes/${id}`),
+  createVolume: (payload) =>
+    doFetch("/api/storage/volumes", { method: "POST", body: JSON.stringify(payload) }),
+  updateVolume: (id, patch) =>
+    doFetch(`/api/storage/volumes/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  removeVolume: (id) => doFetch(`/api/storage/volumes/${id}`, { method: "DELETE" }),
+};
+
+export const storageConnections = {
+  list: (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.storage_id) params.set("storage_id", String(filters.storage_id));
+    if (filters.storage_type) params.set("storage_type", filters.storage_type);
+    if (filters.project_id) params.set("project_id", String(filters.project_id));
+    const qs = params.toString();
+    return doFetch(`/api/storage-connections${qs ? `?${qs}` : ""}`);
+  },
+  bulkCreate: (storageId, storageType, items) =>
+    doFetch(`/api/storage/${storageType}s/${storageId}/connections`, {
+      method: "POST",
+      body: JSON.stringify(items),
+    }),
+  remove: (storageId, storageType, connId) =>
+    doFetch(`/api/storage/${storageType}s/${storageId}/connections/${connId}`, {
+      method: "DELETE",
+    }),
+  removeForStorage: (storageId, storageType) =>
+    doFetch(`/api/storage/${storageType}s/${storageId}/connections`, { method: "DELETE" }),
+};
+
 export const runtimeLogs = {
   list: (projectId, { after, limit } = {}) => {
     const params = new URLSearchParams();

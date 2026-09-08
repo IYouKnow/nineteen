@@ -17,6 +17,11 @@ import DeploymentDetail from "@/pages/DeploymentDetail";
 import Databases from "@/pages/Databases";
 import NewDatabase from "@/pages/NewDatabase";
 import DatabaseDetail from "@/pages/DatabaseDetail";
+import Storage from "@/pages/Storage";
+import NewBucket from "@/pages/NewBucket";
+import NewVolume from "@/pages/NewVolume";
+import BucketDetail from "@/pages/BucketDetail";
+import VolumeDetail from "@/pages/VolumeDetail";
 import Profile from "@/pages/Profile";
 import Settings from "@/pages/Settings";
 
@@ -45,6 +50,11 @@ function AppRoutes() {
         <Route path="/databases" element={<Databases />} />
         <Route path="/databases/new" element={<NewDatabase />} />
         <Route path="/databases/:databaseId" element={<DatabaseDetail />} />
+        <Route path="/storage" element={<Storage />} />
+        <Route path="/storage/buckets/new" element={<NewBucket />} />
+        <Route path="/storage/volumes/new" element={<NewVolume />} />
+        <Route path="/storage/buckets/:bucketId" element={<BucketDetail />} />
+        <Route path="/storage/volumes/:volumeId" element={<VolumeDetail />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/settings/*" element={<Settings />} />
       </Route>

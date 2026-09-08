@@ -1,9 +1,10 @@
-import { Check, Sparkles, Database } from "lucide-react";
+import { Check, Sparkles, Database, HardDrive } from "lucide-react";
 import { DATABASES } from "@/lib/newProject";
 import ServiceIcon from "@/components/newproject/ServiceIcon";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
-export default function InfrastructureStep({ services, setServices }) {
+export default function InfrastructureStep({ services, setServices, persistentStorage, setPersistentStorage }) {
   const toggle = (id) =>
     setServices((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
 
@@ -76,6 +77,28 @@ export default function InfrastructureStep({ services, setServices }) {
           </span>
         </div>
       )}
+
+      <div className="mt-5 flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/30">
+            <HardDrive className="h-4 w-4 text-muted-foreground" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-medium text-foreground">Persistent storage</p>
+              {persistentStorage && (
+                <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                  /data → /app/data
+                </span>
+              )}
+            </div>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Mount a folder that survives redeploys — ideal for a SQLite database or uploads.
+            </p>
+          </div>
+        </div>
+        <Switch checked={persistentStorage} onCheckedChange={setPersistentStorage} />
+      </div>
     </div>
   );
 }

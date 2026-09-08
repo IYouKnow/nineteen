@@ -5,7 +5,6 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { useNavigate } from "react-router-dom";
 import EnvVarEditor from "./EnvVarEditor";
-import MountEditor from "./MountEditor";
 import RuntimeControls from "./RuntimeControls";
 import ConfirmDialog from "@/components/dev/ConfirmDialog";
 import { Button } from "@/components/ui/button";
@@ -42,10 +41,6 @@ export default function ProjectSettings({ project, envVars = [], mounts = [], en
           onUpdate={onVarUpdate}
           onDelete={onVarDelete}
         />
-      </div>
-
-      <div className="border-t border-border/60 pt-6">
-        <MountEditor projectId={project.id} mounts={mounts} />
       </div>
 
       <div className="border-t border-border/60 pt-6">

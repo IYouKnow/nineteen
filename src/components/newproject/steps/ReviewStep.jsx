@@ -1,4 +1,4 @@
-import { Check, GitBranch, Layers, Rocket, Globe, Server, Ship } from "lucide-react";
+import { Check, GitBranch, Layers, Rocket, Globe, Server, Ship, HardDrive } from "lucide-react";
 import { DATABASES, SOURCES, TEMPLATES } from "@/lib/newProject";
 import { getFramework, projectAddress } from "@/lib/devStatus";
 import SourceIcon from "@/components/newproject/SourceIcon";
@@ -16,7 +16,7 @@ function Row({ icon, label, value }) {
   );
 }
 
-export default function ReviewStep({ source, services, config, repository, buildLabel }) {
+export default function ReviewStep({ source, services, config, repository, buildLabel, persistentStorage }) {
   const fw = getFramework(config.framework);
   const selectedSource = SOURCES.find((s) => s.id === source.type);
   const template = source.type === "template" ? TEMPLATES.find((t) => t.id === source.template) : null;
@@ -58,7 +58,7 @@ export default function ReviewStep({ source, services, config, repository, build
 
         <section>
           <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Infrastructure</h3>
-          <div className="rounded-lg border border-border bg-card p-4">
+          <div className="space-y-3 rounded-lg border border-border bg-card p-4">
             {services.length === 0 ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Server className="h-4 w-4" /> No additional services
@@ -76,6 +76,15 @@ export default function ReviewStep({ source, services, config, repository, build
                 ))}
               </div>
             )}
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <HardDrive className="h-4 w-4" />
+              Persistent storage{" "}
+              {persistentStorage ? (
+                <span className="font-medium text-foreground">enabled</span>
+              ) : (
+                <span className="font-medium text-foreground">disabled</span>
+              )}
+            </div>
           </div>
         </section>
 

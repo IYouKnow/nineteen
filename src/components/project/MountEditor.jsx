@@ -3,7 +3,7 @@ import db from '@/lib/db';
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { Plus, Trash2, Pencil, HardDrive } from "lucide-react";
+import { Plus, Trash2, Pencil, HardDrive, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,9 +16,12 @@ import {
 } from "@/components/ui/dialog";
 import EmptyState from "@/components/dev/EmptyState";
 import ConfirmDialog from "@/components/dev/ConfirmDialog";
+import { formatDate } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 export default function MountEditor({ projectId, mounts = [] }) {
   const qc = useQueryClient();
+  const [manage, setManage] = useState(false);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [name, setName] = useState("");
@@ -71,24 +74,31 @@ export default function MountEditor({ projectId, mounts = [] }) {
         <div>
           <h3 className="text-sm font-medium">Mounts</h3>
           <p className="text-xs text-muted-foreground">
-            Persistent volumes and bind mounts attached to the runtime.
+            The persistent folder attached to this project so data survives redeploys.
           </p>
         </div>
-        <Button size="sm" variant="outline" onClick={openAdd} className="gap-2">
-          <Plus className="h-3.5 w-3.5" />
-          Add
-        </Button>
+        <div className="flex items-center gap-2">
+          {manage && (
+            <Button size="sm" variant="outline" onClick={openAdd} className="gap-2">
+              <Plus className="h-3.5 w-3.5" />
+              Add
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={() => setManage((m) => !m)}>
+            {manage ? "Done" : "Manage"}
+          </Button>
+        </div>
       </div>
 
-      <div className="mt-3">
-        {mounts.length === 0 ? (
-          <EmptyState
-            icon={HardDrive}
-            title="No mounts configured"
-            description="Attach a persistent volume or bind mount to preserve data across deploys."
-            className="py-10"
-          />
-        ) : (
+      {mounts.length === 0 ? (
+        <EmptyState
+          icon={HardDrive}
+          title="No mounts configured"
+          description="Attach a persistent folder to preserve data across deploys."
+          className="py-10"
+        />
+      ) : manage ? (
+        <div className="mt-3">
           <div className="overflow-hidden rounded-lg border border-border">
             <div className="divide-y divide-border/60">
               {mounts.map((m) => (
@@ -128,8 +138,42 @@ export default function MountEditor({ projectId, mounts = [] }) {
               ))}
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {mounts.map((m) => (
+            <div
+              key={m.id}
+              className="rounded-lg border border-border bg-card p-4 transition-colors hover:border-foreground/20"
+            >
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted/30">
+                  <HardDrive className="h-4 w-4 text-muted-foreground" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-foreground">{m.name}</p>
+                  <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
+                    {m.source || "—"}
+                    <ArrowRight className="mx-1 inline h-3 w-3 text-muted-foreground/40" />
+                    {m.destination || "—"}
+                  </p>
+                </div>
+                <span
+                  className={cn(
+                    "shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground",
+                    "bg-muted/60"
+                  )}
+                >
+                  {m.type}
+                </span>
+              </div>
+              <p className="mt-3 text-[11px] text-muted-foreground/70">
+                Created {formatDate(m.created_date, "MMM d, yyyy")}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="border-border bg-popover">
