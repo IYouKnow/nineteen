@@ -231,10 +231,10 @@ func (d *Deployer) ContainerState(name string) string {
 // untouched. When the daemon is unreachable or a container cannot be confirmed
 // we report the conservative "stopped" without persisting, so the DB isn't
 // corrupted by a transient Docker outage.
-func (d *Deployer) ReconcileStatus(slug, buildStrategy, current string) (string, bool) {
+func (d *Deployer) ReconcileStatus(projectID int64, slug, buildStrategy, current string) (string, bool) {
 	switch current {
 	case "running":
-		name := ResolveContainer(slug, buildStrategy)
+		name := ResolveContainer(projectID, slug, buildStrategy)
 		if name == "" {
 			return "stopped", false
 		}
@@ -248,7 +248,7 @@ func (d *Deployer) ReconcileStatus(slug, buildStrategy, current string) (string,
 			return "stopped", true
 		}
 	case "stopped":
-		name := ResolveContainer(slug, buildStrategy)
+		name := ResolveContainer(projectID, slug, buildStrategy)
 		if name == "" {
 			return "stopped", false
 		}
@@ -288,8 +288,8 @@ type ContainerStats struct {
 // Stats reads one-shot usage for a project's running container, resolving the
 // name the same way runtime logs do. An empty result (Running=false) means the
 // project has no live container yet, not an error.
-func (d *Deployer) Stats(slug, buildStrategy string) (ContainerStats, error) {
-	name := ResolveContainer(slug, buildStrategy)
+func (d *Deployer) Stats(projectID int64, slug, buildStrategy string) (ContainerStats, error) {
+	name := ResolveContainer(projectID, slug, buildStrategy)
 	if name == "" {
 		return ContainerStats{}, nil
 	}
@@ -601,6 +601,28 @@ func (d *Deployer) FreePort() (int, error) {
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+// HostPortAvailable reports whether a host port is free to publish: no running
+// container already publishes it and no other process holds it on localhost.
+// This lets a deploy avoid a "port is already allocated" failure by reassigning
+// a free port instead.
+func (d *Deployer) HostPortAvailable(port int) bool {
+	if port <= 0 {
+		return false
+	}
+	if out, err := exec.Command("docker", "ps", "--filter",
+		fmt.Sprintf("publish=%d", port), "--format", "{{.Names}}").Output(); err == nil {
+		if strings.TrimSpace(string(out)) != "" {
+			return false
+		}
+	}
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	l.Close()
+	return true
 }
 
 func streamCommand(cmd *exec.Cmd, log func(string)) error {

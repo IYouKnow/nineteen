@@ -86,7 +86,7 @@ func ProjectsHandler(w http.ResponseWriter, r *http.Request) {
 // stopped or gone (e.g. Docker closed). Corrections that can be confirmed are
 // written back to the DB; ambiguous ones (daemon down) only affect this read.
 func reconcileProjectStatus(p *models.Project) {
-	newStatus, persist := services.NewDeployer().ReconcileStatus(p.Slug, p.BuildStrategy, p.Status)
+	newStatus, persist := services.NewDeployer().ReconcileStatus(p.ID, p.Slug, p.BuildStrategy, p.Status)
 	if newStatus == p.Status {
 		return
 	}
@@ -239,6 +239,12 @@ func ProjectHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		respondJSON(w, http.StatusOK, p)
 	case http.MethodDelete:
+		project, err := getProject(claims.UserID, id)
+		if err != nil {
+			respondError(w, http.StatusNotFound, "Project not found")
+			return
+		}
+		removeProjectContainers(project)
 		if _, err := db.DB.Exec("DELETE FROM projects WHERE id = ? AND user_id = ?", id, claims.UserID); err != nil {
 			respondError(w, http.StatusInternalServerError, "Failed to delete project")
 			return
@@ -247,6 +253,17 @@ func ProjectHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
+}
+
+// removeProjectContainers tears down every container a project created: its
+// Dockerfile container (current id-based name and the legacy slug-only name)
+// and any Compose stack. Best-effort — a Docker outage must not block deleting
+// the project. Volumes are preserved.
+func removeProjectContainers(project models.Project) {
+	d := services.NewDeployer()
+	d.CleanupContainer(services.ProjectContainerName(project.ID, project.Slug))
+	d.CleanupContainer("nineteen-" + project.Slug)
+	d.CleanupCompose(services.ProjectComposeName(project.ID, project.Slug), func(string) {})
 }
 
 // buildFileResponse is the shape returned by the build-file viewer.
@@ -477,7 +494,7 @@ func ProjectResourcesHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return
 	}
-	stats, err := services.NewDeployer().Stats(project.Slug, project.BuildStrategy)
+	stats, err := services.NewDeployer().Stats(project.ID, project.Slug, project.BuildStrategy)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to read container stats")
 		return
@@ -530,7 +547,7 @@ func ProjectResourcesStreamHandler(w http.ResponseWriter, r *http.Request) {
 	// per-second CLI spawn latency — true point-in-time usage. If the container
 	// exits or is redeployed (new name), re-resolve and re-attach.
 	for {
-		name := services.ResolveContainer(project.Slug, project.BuildStrategy)
+		name := services.ResolveContainer(project.ID, project.Slug, project.BuildStrategy)
 		if name == "" || d.ContainerState(name) != "running" {
 			return // no live container — stream ends, client reconnects on redeploy
 		}
@@ -672,7 +689,7 @@ func ProjectActionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Action = strings.TrimSpace(req.Action)
 
-	container := services.ResolveContainer(project.Slug, project.BuildStrategy)
+	container := services.ResolveContainer(project.ID, project.Slug, project.BuildStrategy)
 	if container == "" {
 		respondError(w, http.StatusBadRequest, "No container found for this project — deploy first")
 		return
@@ -1042,8 +1059,8 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 	}
 
 	buildRef := randomHex(8)
-	image := fmt.Sprintf("nineteen-%s:%s", project.Slug, buildRef)
-	containerName := fmt.Sprintf("nineteen-%s", project.Slug)
+	image := fmt.Sprintf("nineteen-%d-%s:%s", project.ID, project.Slug, buildRef)
+	containerName := services.ProjectContainerName(project.ID, project.Slug)
 	log("info", "Building image "+image)
 	if err := d.Build(ctx, image, dir, dockerfile, func(line string) { log("info", line) }); err != nil {
 		if ctx.Err() != nil {
@@ -1069,11 +1086,25 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 		log("warn", "No EXPOSE found in the Dockerfile or the image — assuming port 3000. Add EXPOSE <port> to your Dockerfile if this is wrong.")
 	}
 
+	// Remove this project's previous containers before probing the configured
+	// port, so a redeploy doesn't mistake its own running container for a
+	// conflicting one.
+	d.CleanupContainer(containerName)
+	// Remove the legacy slug-only container left behind by older versions so it
+	// doesn't linger after the id-based rename.
+	d.CleanupContainer("nineteen-" + project.Slug)
+	d.CleanupCompose(services.ProjectComposeName(project.ID, project.Slug), func(line string) { log("info", line) })
+
 	hostPort := 0
 	if project.Port != nil && *project.Port > 0 {
-		hostPort = *project.Port
-		log("info", fmt.Sprintf("Using configured port %d", hostPort))
-	} else {
+		if d.HostPortAvailable(*project.Port) {
+			hostPort = *project.Port
+			log("info", fmt.Sprintf("Using configured port %d", hostPort))
+		} else {
+			log("warn", fmt.Sprintf("Configured port %d is already in use — assigning a free port instead", *project.Port))
+		}
+	}
+	if hostPort == 0 {
 		hp, err := d.FreePort()
 		if err != nil {
 			log("error", "Failed to reserve a port: "+err.Error())
@@ -1081,9 +1112,12 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 			return
 		}
 		hostPort = hp
+		if project.Port != nil && *project.Port > 0 {
+			// Persist the reassigned port so the UI shows the real URL.
+			db.DB.Exec("UPDATE projects SET port = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?", hostPort, project.ID)
+			log("info", fmt.Sprintf("Assigned free port %d", hostPort))
+		}
 	}
-	d.CleanupContainer(containerName)
-	d.CleanupCompose(composeProjectName(project.Slug), func(line string) { log("info", line) })
 	log("info", fmt.Sprintf("Starting container on 127.0.0.1:%d", hostPort))
 	if _, err := d.Run(ctx, image, containerName, hostPort, containerPort, envPath, func(line string) { log("info", line) }); err != nil {
 		if ctx.Err() != nil {
@@ -1140,8 +1174,9 @@ func composeDeploy(ctx context.Context, log func(string, string), d *services.De
 		}
 	}
 
-	name := composeProjectName(project.Slug)
-	d.CleanupContainer(fmt.Sprintf("nineteen-%s", project.Slug))
+	name := services.ProjectComposeName(project.ID, project.Slug)
+	d.CleanupContainer(services.ProjectContainerName(project.ID, project.Slug))
+	d.CleanupContainer("nineteen-" + project.Slug)
 	d.CleanupCompose(name, func(line string) { log("info", line) })
 
 	if err := d.ComposeUp(ctx, dir, composeFile, overridePath, name, func(line string) { log("info", line) }); err != nil {
@@ -1181,17 +1216,9 @@ func composeDeploy(ctx context.Context, log func(string, string), d *services.De
 	db.DB.Exec("UPDATE projects SET status = 'running', last_deployed_at = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
 		time.Now().UTC().Format(time.RFC3339), project.ID)
 	log("success", "Deployment ready at "+url)
-	if cname := services.ResolveContainer(project.Slug, project.BuildStrategy); cname != "" {
+	if cname := services.ResolveContainer(project.ID, project.Slug, project.BuildStrategy); cname != "" {
 		services.EnsureTailed(project.ID, deployID, cname)
 	}
-}
-
-func composeProjectName(slug string) string {
-	name := "nineteen-" + slug
-	if len(name) > 60 {
-		name = name[:60]
-	}
-	return name
 }
 
 func noBuildFileMessage(composeCount int, composeFiles []string) string {
@@ -1229,7 +1256,7 @@ func finishDeploymentCancelled(deployID int64, project models.Project) {
 		statusCanceled, deployID)
 	go func() {
 		status := "idle"
-		if name := services.ResolveContainer(project.Slug, project.BuildStrategy); name != "" &&
+		if name := services.ResolveContainer(project.ID, project.Slug, project.BuildStrategy); name != "" &&
 			services.NewDeployer().ContainerState(name) == "running" {
 			status = "running"
 		}

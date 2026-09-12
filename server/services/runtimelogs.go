@@ -3,6 +3,7 @@ package services
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"os/exec"
 	"strings"
@@ -40,11 +41,29 @@ var runtimeMgr = &RuntimeManager{
 	subs:    map[int64]map[chan RuntimeLogEvent]struct{}{},
 }
 
+// ProjectContainerName returns the Docker container name for a project's
+// Dockerfile deployment. The project id is included so two projects that share
+// a slug (or the same repository) can never resolve to the same container.
+func ProjectContainerName(projectID int64, slug string) string {
+	return fmt.Sprintf("nineteen-%d-%s", projectID, slug)
+}
+
+// ProjectComposeName returns the Docker Compose project name for a project.
+// The project id makes it unique; the name is truncated to Docker's 60-char
+// limit for compose project names.
+func ProjectComposeName(projectID int64, slug string) string {
+	name := ProjectContainerName(projectID, slug)
+	if len(name) > 60 {
+		name = name[:60]
+	}
+	return name
+}
+
 // ResolveContainer returns the container name to tail for a project. The
-// Dockerfile path always uses nineteen-<slug>. Compose stacks use generated
-// names, so we best-match the first running container with that prefix.
-func ResolveContainer(slug, buildStrategy string) string {
-	name := "nineteen-" + slug
+// Dockerfile path always uses nineteen-<id>-<slug>. Compose stacks use
+// generated names, so we best-match the first running container with that prefix.
+func ResolveContainer(projectID int64, slug, buildStrategy string) string {
+	name := ProjectContainerName(projectID, slug)
 	if buildStrategy != "compose" {
 		return name
 	}

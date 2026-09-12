@@ -118,7 +118,7 @@ func ProjectRuntimeLogsStreamHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	container := services.ResolveContainer(project.Slug, project.BuildStrategy)
+	container := services.ResolveContainer(project.ID, project.Slug, project.BuildStrategy)
 	if container == "" {
 		respondError(w, http.StatusBadRequest, "No running container for this project")
 		return
