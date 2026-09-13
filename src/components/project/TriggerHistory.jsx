@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { GitCommitHorizontal, Tag, Rocket, Hand, History, Webhook, CheckCircle2, MinusCircle } from "lucide-react";
 import { timeAgo, shortSha } from "@/lib/format";
+import { strategyMeta } from "@/lib/strategies";
 
 const SOURCES = {
   commit: { icon: GitCommitHorizontal, label: "Commit", badge: "bg-info/10 text-info border-info/25" },
@@ -12,7 +13,8 @@ const SOURCES = {
   ping: { icon: Webhook, label: "Ping", badge: "bg-muted/50 text-muted-foreground border-border" },
 };
 
-export default function TriggerHistory({ events = [] }) {
+export default function TriggerHistory({ events = [], triggers = [] }) {
+  const byId = Object.fromEntries(triggers.map((t) => [t.id, t]));
   return (
     <div>
       <div className="mb-2 flex items-center gap-2">
@@ -35,6 +37,8 @@ export default function TriggerHistory({ events = [] }) {
               const src = SOURCES[row.event_type] || SOURCES.ping;
               const Icon = src.icon;
               const ref = row.ref || shortSha(row.sha) || "—";
+              const trig = row.trigger_id != null ? byId[row.trigger_id] : null;
+              const trigTitle = trig ? strategyMeta(trig.strategy).title : null;
               return (
                 <div key={row.id} className="flex items-center gap-3 px-4 py-3">
                   <span
@@ -48,6 +52,7 @@ export default function TriggerHistory({ events = [] }) {
                   </span>
                   <code className="min-w-0 shrink-0 truncate font-mono text-sm text-foreground/90">{ref}</code>
                   <span className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:block">
+                    {trigTitle ? `${trigTitle} · ` : ""}
                     {row.reason}
                   </span>
                   <span className="ml-auto shrink-0 text-xs text-muted-foreground/70">{timeAgo(row.created_at)}</span>

@@ -61,9 +61,18 @@ export const projects = {
   buildFileSave: (id, payload) =>
     doFetch(`/api/projects/${id}/buildfile`, { method: "PUT", body: JSON.stringify(payload) }),
   buildFileReset: (id) => doFetch(`/api/projects/${id}/buildfile`, { method: "DELETE" }),
-  trigger: (id) => doFetch(`/api/projects/${id}/trigger`),
-  saveTrigger: (id, payload) =>
-    doFetch(`/api/projects/${id}/trigger`, { method: "PUT", body: JSON.stringify(payload) }),
+  triggers: {
+    list: (id) => doFetch(`/api/projects/${id}/triggers`),
+    create: (id, payload) =>
+      doFetch(`/api/projects/${id}/triggers`, { method: "POST", body: JSON.stringify(payload) }),
+    update: (id, triggerId, payload) =>
+      doFetch(`/api/projects/${id}/triggers/${triggerId}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      }),
+    remove: (id, triggerId) =>
+      doFetch(`/api/projects/${id}/triggers/${triggerId}`, { method: "DELETE" }),
+  },
   events: (id) => doFetch(`/api/projects/${id}/events`),
   resourcesStreamUrl: (id) => {
     const token = localStorage.getItem("nineteen_token") || "";

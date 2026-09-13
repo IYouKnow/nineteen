@@ -198,13 +198,19 @@ func runMigrations() {
 		`CREATE INDEX IF NOT EXISTS idx_project_volumes_project ON project_volumes(project_id)`,
 		`CREATE TABLE IF NOT EXISTS project_triggers (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_id INTEGER NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
-			strategy TEXT DEFAULT 'manual',
+			project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			strategy TEXT DEFAULT 'commit',
 			branch TEXT DEFAULT 'main',
 			tag_mode TEXT DEFAULT 'pattern',
 			tag_pattern TEXT DEFAULT 'v*',
 			pre_release BOOLEAN DEFAULT FALSE,
 			enabled BOOLEAN DEFAULT TRUE,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_project_triggers_project ON project_triggers(project_id)`,
+		`CREATE TABLE IF NOT EXISTS project_webhooks (
+			project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
 			webhook_id INTEGER,
 			webhook_secret TEXT DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -220,6 +226,7 @@ func runMigrations() {
 			reason TEXT DEFAULT '',
 			source TEXT DEFAULT '',
 			deployment_id INTEGER,
+			trigger_id INTEGER,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_deploy_events_project ON deploy_events(project_id, id)`,
@@ -243,6 +250,7 @@ func runMigrations() {
 		{"projects", "dockerfile_path", `ALTER TABLE projects ADD COLUMN dockerfile_path TEXT DEFAULT ''`},
 		{"projects", "compose_path", `ALTER TABLE projects ADD COLUMN compose_path TEXT DEFAULT ''`},
 		{"projects", "port", `ALTER TABLE projects ADD COLUMN port INTEGER`},
+		{"deploy_events", "trigger_id", `ALTER TABLE deploy_events ADD COLUMN trigger_id INTEGER`},
 	}
 
 	for _, c := range columns {
@@ -268,15 +276,57 @@ func runMigrations() {
 		log.Fatalf("Migration failed: %v", err)
 	}
 
-	// Every project gets a trigger row so the Strategy tab always has config to
-	// read. Projects created before this table default to manual, except those
-	// that had auto_deploy enabled (treated as "every commit").
+	// Older installs stored a single strategy per project in project_triggers,
+	// including a per-project webhook. Rebuild that table for multiple rules and
+	// move the webhook to the project-level project_webhooks table. A project
+	// with no trigger rows now means "manual deployments only".
+	migrateProjectTriggers()
+}
+
+// migrateProjectTriggers upgrades the original one-trigger-per-project schema to
+// the multi-rule schema. The presence of the legacy webhook_id column marks an
+// un-migrated table, so this is safe to run on every boot.
+func migrateProjectTriggers() {
+	exists, err := columnExists("project_triggers", "webhook_id")
+	if err != nil {
+		log.Fatalf("Migration failed: %v", err)
+	}
+	if !exists {
+		return
+	}
+
 	if _, err := DB.Exec(
-		`INSERT INTO project_triggers (project_id, strategy)
-		 SELECT id, CASE WHEN auto_deploy THEN 'commit' ELSE 'manual' END FROM projects
-		 WHERE id NOT IN (SELECT project_id FROM project_triggers)`,
+		`INSERT OR REPLACE INTO project_webhooks (project_id, webhook_id, webhook_secret)
+		 SELECT project_id, webhook_id, webhook_secret FROM project_triggers
+		 WHERE webhook_id IS NOT NULL AND webhook_id > 0`,
 	); err != nil {
 		log.Fatalf("Migration failed: %v", err)
+	}
+
+	steps := []string{
+		`CREATE TABLE project_triggers_new (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			strategy TEXT DEFAULT 'commit',
+			branch TEXT DEFAULT 'main',
+			tag_mode TEXT DEFAULT 'pattern',
+			tag_pattern TEXT DEFAULT 'v*',
+			pre_release BOOLEAN DEFAULT FALSE,
+			enabled BOOLEAN DEFAULT TRUE,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`INSERT INTO project_triggers_new (id, project_id, strategy, branch, tag_mode, tag_pattern, pre_release, enabled, created_at, updated_at)
+		 SELECT id, project_id, strategy, branch, tag_mode, tag_pattern, pre_release, enabled, created_at, updated_at
+		 FROM project_triggers WHERE strategy != 'manual'`,
+		`DROP TABLE project_triggers`,
+		`ALTER TABLE project_triggers_new RENAME TO project_triggers`,
+		`CREATE INDEX IF NOT EXISTS idx_project_triggers_project ON project_triggers(project_id)`,
+	}
+	for _, s := range steps {
+		if _, err := DB.Exec(s); err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
 	}
 }
 

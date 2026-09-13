@@ -208,7 +208,14 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 		"INSERT INTO project_volumes (project_id, name, host_path, container_path) VALUES (?, ?, ?, ?)",
 		id, "data", "data", services.ProjectDataMount,
 	)
-	_, _ = db.DB.Exec("INSERT INTO project_triggers (project_id, strategy) VALUES (?, 'manual')", id)
+	// auto_deploy maps to a default "every commit" strategy. Projects without it
+	// start with no triggers, meaning deployments are manual only.
+	if req.AutoDeploy {
+		_, _ = db.DB.Exec(
+			"INSERT INTO project_triggers (project_id, strategy, branch) VALUES (?, 'commit', ?)",
+			id, req.Branch,
+		)
+	}
 	p, err := getProject(claims.UserID, id)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to load project")

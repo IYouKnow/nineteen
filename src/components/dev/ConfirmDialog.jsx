@@ -18,10 +18,12 @@ export default function ConfirmDialog({
   confirmLabel = "Confirm",
   onConfirm,
   destructive = true,
+  open,
+  onOpenChange,
 }) {
   return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger>
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      {trigger ? <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger> : null}
       <AlertDialogContent className="border-border bg-popover">
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>

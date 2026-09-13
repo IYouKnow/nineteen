@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 
 	"nineteen-server/db"
@@ -17,92 +18,94 @@ import (
 	"nineteen-server/services"
 )
 
-// validTriggerStrategies are the deployment strategies the Strategy tab offers.
+// validTriggerStrategies are the automatic deployment strategies a project rule
+// may use. "manual" is intentionally absent: no rules means manual deployments.
 var validTriggerStrategies = map[string]bool{
-	"manual":  true,
 	"commit":  true,
 	"branch":  true,
 	"tag":     true,
 	"release": true,
 }
 
-// triggerResponse augments the stored trigger with the derived webhook info the
-// UI needs: the URL GitHub should call, whether it is registered, and any error
-// from the last registration attempt.
-type triggerResponse struct {
-	models.ProjectTrigger
-	WebhookURL    string `json:"webhook_url"`
-	PublicBaseURL string `json:"public_base_url"`
-	Registered    bool   `json:"registered"`
-	WebhookError  string `json:"webhook_error"`
+// triggerListResponse is the Strategy tab's payload: every rule plus the
+// project-level webhook state shared by all of them.
+type triggerListResponse struct {
+	Triggers      []models.ProjectTrigger `json:"triggers"`
+	PublicBaseURL string                  `json:"public_base_url"`
+	WebhookURL    string                  `json:"webhook_url"`
+	Registered    bool                    `json:"registered"`
+	WebhookError  string                  `json:"webhook_error"`
 }
 
-func loadTrigger(projectID int64) (models.ProjectTrigger, error) {
+type triggerPayload struct {
+	Strategy   string `json:"strategy"`
+	Branch     string `json:"branch"`
+	TagMode    string `json:"tag_mode"`
+	TagPattern string `json:"tag_pattern"`
+	PreRelease bool   `json:"pre_release"`
+	Enabled    *bool  `json:"enabled"`
+}
+
+// ---- storage ----
+
+func loadTriggers(projectID int64) ([]models.ProjectTrigger, error) {
+	rows, err := db.DB.Query(
+		`SELECT id, project_id, strategy, branch, tag_mode, tag_pattern, pre_release,
+			enabled, created_at, updated_at
+		 FROM project_triggers WHERE project_id = ? ORDER BY id ASC`, projectID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	triggers := []models.ProjectTrigger{}
+	for rows.Next() {
+		var t models.ProjectTrigger
+		if err := rows.Scan(&t.ID, &t.ProjectID, &t.Strategy, &t.Branch, &t.TagMode,
+			&t.TagPattern, &t.PreRelease, &t.Enabled, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		triggers = append(triggers, t)
+	}
+	return triggers, rows.Err()
+}
+
+func loadTriggerByID(projectID, triggerID int64) (models.ProjectTrigger, error) {
 	var t models.ProjectTrigger
-	var webhookID *int64
 	err := db.DB.QueryRow(
 		`SELECT id, project_id, strategy, branch, tag_mode, tag_pattern, pre_release,
-			enabled, webhook_id, webhook_secret, created_at, updated_at
-		 FROM project_triggers WHERE project_id = ?`, projectID,
-	).Scan(
-		&t.ID, &t.ProjectID, &t.Strategy, &t.Branch, &t.TagMode, &t.TagPattern,
-		&t.PreRelease, &t.Enabled, &webhookID, &t.WebhookSecret, &t.CreatedAt, &t.UpdatedAt,
-	)
-	t.WebhookID = webhookID
+			enabled, created_at, updated_at
+		 FROM project_triggers WHERE id = ? AND project_id = ?`, triggerID, projectID,
+	).Scan(&t.ID, &t.ProjectID, &t.Strategy, &t.Branch, &t.TagMode, &t.TagPattern,
+		&t.PreRelease, &t.Enabled, &t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }
 
-// ensureTriggerRow returns a project's trigger, creating the default row if it
-// is missing (projects created before the table existed, or races).
-func ensureTriggerRow(projectID int64) models.ProjectTrigger {
-	if t, err := loadTrigger(projectID); err == nil {
-		return t
+func loadProjectWebhook(projectID int64) (models.ProjectWebhook, error) {
+	var w models.ProjectWebhook
+	var id *int64
+	err := db.DB.QueryRow(
+		"SELECT project_id, webhook_id, webhook_secret FROM project_webhooks WHERE project_id = ?", projectID,
+	).Scan(&w.ProjectID, &id, &w.WebhookSecret)
+	w.WebhookID = id
+	return w, err
+}
+
+// ensureProjectWebhookRow returns a project's webhook row, creating it if absent.
+func ensureProjectWebhookRow(projectID int64) models.ProjectWebhook {
+	if w, err := loadProjectWebhook(projectID); err == nil {
+		return w
 	}
-	_, _ = db.DB.Exec("INSERT OR IGNORE INTO project_triggers (project_id, strategy) VALUES (?, 'manual')", projectID)
-	t, _ := loadTrigger(projectID)
-	return t
+	_, _ = db.DB.Exec("INSERT OR IGNORE INTO project_webhooks (project_id) VALUES (?)", projectID)
+	w, _ := loadProjectWebhook(projectID)
+	return w
 }
 
-// publicBaseURL reads the user's configured public base URL, if any.
-func publicBaseURL(userID int64) string {
-	var v string
-	if err := db.DB.QueryRow(
-		"SELECT value FROM settings WHERE user_id = ? AND key = 'public_base_url'", userID,
-	).Scan(&v); err != nil {
-		return ""
-	}
-	return strings.TrimRight(strings.TrimSpace(v), "/")
-}
+// ---- HTTP handlers ----
 
-func webhookURL(base string, projectID int64) string {
-	return fmt.Sprintf("%s/api/webhooks/github/%d", strings.TrimRight(base, "/"), projectID)
-}
-
-func buildTriggerResponse(t models.ProjectTrigger, project models.Project, base string) triggerResponse {
-	resp := triggerResponse{ProjectTrigger: t, PublicBaseURL: base}
-	if base != "" {
-		resp.WebhookURL = webhookURL(base, project.ID)
-	}
-	resp.Registered = t.WebhookID != nil && *t.WebhookID > 0 && t.Strategy != "manual" && t.Enabled
-	return resp
-}
-
-// webhookEvents maps a strategy to the GitHub events its hook subscribes to.
-func webhookEvents(strategy string) []string {
-	switch strategy {
-	case "tag":
-		return []string{"push", "create"}
-	case "release":
-		return []string{"release"}
-	default:
-		return []string{"push"}
-	}
-}
-
-// ProjectTriggerHandler reads and updates a project's deployment strategy.
-// Saving a non-manual strategy registers (or refreshes) the GitHub webhook;
-// switching to manual removes it.
-func ProjectTriggerHandler(w http.ResponseWriter, r *http.Request) {
+// ProjectTriggersHandler lists and creates a project's deployment strategies.
+func ProjectTriggersHandler(w http.ResponseWriter, r *http.Request) {
 	claims, err := extractUser(r)
 	if err != nil {
 		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
@@ -121,34 +124,107 @@ func ProjectTriggerHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		t := ensureTriggerRow(project.ID)
 		base := publicBaseURL(claims.UserID)
-		respondJSON(w, http.StatusOK, buildTriggerResponse(t, project, base))
-	case http.MethodPut:
-		updateTriggerHandler(w, r, claims.UserID, project)
+		respondJSON(w, http.StatusOK, buildTriggerListResponse(project.ID, base))
+	case http.MethodPost:
+		createTriggerHandler(w, r, claims.UserID, project)
 	default:
 		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
 }
 
-func updateTriggerHandler(w http.ResponseWriter, r *http.Request, userID int64, project models.Project) {
-	var req struct {
-		Strategy   string `json:"strategy"`
-		Branch     string `json:"branch"`
-		TagMode    string `json:"tag_mode"`
-		TagPattern string `json:"tag_pattern"`
-		PreRelease bool   `json:"pre_release"`
-		Enabled    *bool  `json:"enabled"`
+// ProjectTriggerItemHandler updates and deletes a single deployment strategy.
+func ProjectTriggerItemHandler(w http.ResponseWriter, r *http.Request) {
+	claims, err := extractUser(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid request body")
+	id, ok := pathID(r)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "Invalid project ID")
+		return
+	}
+	project, err := getProject(claims.UserID, id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+	triggerID, ok := pathInt(r, "triggerId")
+	if !ok {
+		respondError(w, http.StatusBadRequest, "Invalid trigger ID")
+		return
+	}
+	t, err := loadTriggerByID(project.ID, triggerID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Strategy not found")
 		return
 	}
 
+	switch r.Method {
+	case http.MethodPut:
+		updateTriggerItemHandler(w, r, claims.UserID, project, t)
+	case http.MethodDelete:
+		deleteTriggerHandler(w, claims.UserID, project, t)
+	default:
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func createTriggerHandler(w http.ResponseWriter, r *http.Request, userID int64, project models.Project) {
+	req, ok := decodeTriggerPayload(w, r, project)
+	if !ok {
+		return
+	}
+	if _, err := db.DB.Exec(
+		`INSERT INTO project_triggers (project_id, strategy, branch, tag_mode, tag_pattern, pre_release, enabled)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		project.ID, req.Strategy, req.Branch, req.TagMode, req.TagPattern, boolToInt(req.PreRelease), boolToInt(enabledValue(req)),
+	); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to create strategy")
+		return
+	}
+	respondTriggerList(w, http.StatusCreated, userID, project)
+}
+
+func updateTriggerItemHandler(w http.ResponseWriter, r *http.Request, userID int64, project models.Project, t models.ProjectTrigger) {
+	req, ok := decodeTriggerPayload(w, r, project)
+	if !ok {
+		return
+	}
+	if _, err := db.DB.Exec(
+		`UPDATE project_triggers SET strategy = ?, branch = ?, tag_mode = ?, tag_pattern = ?,
+			pre_release = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND project_id = ?`,
+		req.Strategy, req.Branch, req.TagMode, req.TagPattern, boolToInt(req.PreRelease),
+		boolToInt(enabledValue(req)), t.ID, project.ID,
+	); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to update strategy")
+		return
+	}
+	respondTriggerList(w, http.StatusOK, userID, project)
+}
+
+func deleteTriggerHandler(w http.ResponseWriter, userID int64, project models.Project, t models.ProjectTrigger) {
+	if _, err := db.DB.Exec("DELETE FROM project_triggers WHERE id = ? AND project_id = ?", t.ID, project.ID); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to delete strategy")
+		return
+	}
+	respondTriggerList(w, http.StatusOK, userID, project)
+}
+
+// decodeTriggerPayload parses and normalizes a create/update body, writing an
+// error response and returning ok=false on failure.
+func decodeTriggerPayload(w http.ResponseWriter, r *http.Request, project models.Project) (triggerPayload, bool) {
+	var req triggerPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return req, false
+	}
 	req.Strategy = strings.TrimSpace(req.Strategy)
 	if !validTriggerStrategies[req.Strategy] {
-		respondError(w, http.StatusBadRequest, "strategy must be one of: manual, commit, branch, tag, release")
-		return
+		respondError(w, http.StatusBadRequest, "strategy must be one of: commit, branch, tag, release")
+		return req, false
 	}
 	if req.Branch == "" {
 		req.Branch = project.Branch
@@ -162,52 +238,93 @@ func updateTriggerHandler(w http.ResponseWriter, r *http.Request, userID int64, 
 	if req.TagPattern == "" {
 		req.TagPattern = "v*"
 	}
-	enabled := true
-	if req.Enabled != nil {
-		enabled = *req.Enabled
-	}
-
-	if _, err := db.DB.Exec(
-		`INSERT INTO project_triggers (project_id, strategy, branch, tag_mode, tag_pattern, pre_release, enabled)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(project_id) DO UPDATE SET
-			strategy = excluded.strategy, branch = excluded.branch, tag_mode = excluded.tag_mode,
-			tag_pattern = excluded.tag_pattern, pre_release = excluded.pre_release,
-			enabled = excluded.enabled, updated_at = CURRENT_TIMESTAMP`,
-		project.ID, req.Strategy, req.Branch, req.TagMode, req.TagPattern, boolToInt(req.PreRelease), boolToInt(enabled),
-	); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to save trigger configuration")
-		return
-	}
-
-	// Keep the legacy auto_deploy flag in sync so other views stay correct.
-	autoDeploy := req.Strategy != "manual" && enabled
-	db.DB.Exec("UPDATE projects SET auto_deploy = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", boolToInt(autoDeploy), project.ID)
-
-	t := ensureTriggerRow(project.ID)
-	base := publicBaseURL(userID)
-	webhookErr := ""
-
-	switch {
-	case req.Strategy == "manual" || !enabled:
-		removeWebhook(userID, &t, project)
-	case base == "":
-		webhookErr = "Set a public base URL in Settings → Integrations so GitHub can reach this server."
-	default:
-		if err := ensureWebhook(userID, &t, project, base); err != nil {
-			webhookErr = err.Error()
-		}
-	}
-
-	t = ensureTriggerRow(project.ID)
-	resp := buildTriggerResponse(t, project, base)
-	resp.WebhookError = webhookErr
-	respondJSON(w, http.StatusOK, resp)
+	return req, true
 }
 
-// ensureWebhook creates or updates the repository webhook so it points at this
-// project's inbound endpoint with the current secret and event set.
-func ensureWebhook(userID int64, t *models.ProjectTrigger, project models.Project, base string) error {
+func enabledValue(req triggerPayload) bool {
+	if req.Enabled == nil {
+		return true
+	}
+	return *req.Enabled
+}
+
+func respondTriggerList(w http.ResponseWriter, status int, userID int64, project models.Project) {
+	base := publicBaseURL(userID)
+	webhookErr := syncProjectWebhook(userID, project, base)
+	resp := buildTriggerListResponse(project.ID, base)
+	resp.WebhookError = webhookErr
+	respondJSON(w, status, resp)
+}
+
+func buildTriggerListResponse(projectID int64, base string) triggerListResponse {
+	triggers, err := loadTriggers(projectID)
+	if err != nil || triggers == nil {
+		triggers = []models.ProjectTrigger{}
+	}
+	wh := ensureProjectWebhookRow(projectID)
+	resp := triggerListResponse{Triggers: triggers, PublicBaseURL: base}
+	if base != "" {
+		resp.WebhookURL = webhookURL(base, projectID)
+	}
+	resp.Registered = wh.WebhookID != nil && *wh.WebhookID > 0
+	return resp
+}
+
+// ---- webhook management ----
+
+// syncProjectWebhook reconciles the single repository webhook with the project's
+// current set of enabled rules, updates the legacy auto_deploy flag, and returns
+// a non-fatal warning message (empty when everything is fine).
+func syncProjectWebhook(userID int64, project models.Project, base string) string {
+	triggers, _ := loadTriggers(project.ID)
+	events := webhookEventsForTriggers(triggers)
+
+	autoDeploy := len(events) > 0
+	db.DB.Exec("UPDATE projects SET auto_deploy = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", boolToInt(autoDeploy), project.ID)
+
+	if !autoDeploy {
+		removeProjectWebhook(userID, project)
+		return ""
+	}
+	if base == "" {
+		return "Set a public base URL in Settings → Integrations so GitHub can reach this server."
+	}
+	if err := ensureProjectWebhook(userID, project, base, events); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// webhookEventsForTriggers returns the GitHub events needed to serve the enabled
+// rules, in a stable order.
+func webhookEventsForTriggers(triggers []models.ProjectTrigger) []string {
+	set := map[string]bool{}
+	for _, t := range triggers {
+		if !t.Enabled {
+			continue
+		}
+		switch t.Strategy {
+		case "commit", "branch":
+			set["push"] = true
+		case "tag":
+			set["push"] = true
+			set["create"] = true
+		case "release":
+			set["release"] = true
+		}
+	}
+	out := []string{}
+	for _, e := range []string{"push", "create", "release"} {
+		if set[e] {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// ensureProjectWebhook creates or updates the repository webhook so it points at
+// this project's inbound endpoint with the current secret and event set.
+func ensureProjectWebhook(userID int64, project models.Project, base string, events []string) error {
 	if project.Repository == "" {
 		return fmt.Errorf("Link a repository before enabling automatic deployments")
 	}
@@ -217,16 +334,16 @@ func ensureWebhook(userID int64, t *models.ProjectTrigger, project models.Projec
 	}
 
 	hookURL := webhookURL(base, project.ID)
-	secret := t.WebhookSecret
+	wh := ensureProjectWebhookRow(project.ID)
+	secret := wh.WebhookSecret
 	if secret == "" {
 		secret = randomSecret()
 	}
-	events := webhookEvents(t.Strategy)
 	client := services.NewGitHubClient(token)
 
-	if t.WebhookID != nil && *t.WebhookID > 0 {
-		if err := client.UpdateWebhook(project.Repository, *t.WebhookID, hookURL, secret, events); err == nil {
-			db.DB.Exec("UPDATE project_triggers SET webhook_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", secret, t.ID)
+	if wh.WebhookID != nil && *wh.WebhookID > 0 {
+		if err := client.UpdateWebhook(project.Repository, *wh.WebhookID, hookURL, secret, events); err == nil {
+			db.DB.Exec("UPDATE project_webhooks SET webhook_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE project_id = ?", secret, project.ID)
 			return nil
 		}
 		// The stored hook may have been deleted on GitHub — recreate it below.
@@ -236,21 +353,37 @@ func ensureWebhook(userID int64, t *models.ProjectTrigger, project models.Projec
 	if err != nil {
 		return err
 	}
-	db.DB.Exec("UPDATE project_triggers SET webhook_id = ?, webhook_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", id, secret, t.ID)
+	db.DB.Exec("UPDATE project_webhooks SET webhook_id = ?, webhook_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE project_id = ?", id, secret, project.ID)
 	return nil
 }
 
-// removeWebhook deletes the repository webhook and clears the stored id/secret.
-// Best-effort: a GitHub outage must not block switching a project to manual.
-func removeWebhook(userID int64, t *models.ProjectTrigger, project models.Project) {
-	if t.WebhookID == nil || *t.WebhookID == 0 {
+// removeProjectWebhook deletes the repository webhook and clears the stored
+// id/secret. Best-effort: a GitHub outage must not block disabling triggers.
+func removeProjectWebhook(userID int64, project models.Project) {
+	wh, err := loadProjectWebhook(project.ID)
+	if err != nil || wh.WebhookID == nil || *wh.WebhookID == 0 {
 		return
 	}
 	if token, err := githubToken(userID); err == nil {
 		client := services.NewGitHubClient(token)
-		_ = client.DeleteWebhook(project.Repository, *t.WebhookID)
+		_ = client.DeleteWebhook(project.Repository, *wh.WebhookID)
 	}
-	db.DB.Exec("UPDATE project_triggers SET webhook_id = NULL, webhook_secret = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?", t.ID)
+	db.DB.Exec("UPDATE project_webhooks SET webhook_id = NULL, webhook_secret = '', updated_at = CURRENT_TIMESTAMP WHERE project_id = ?", project.ID)
+}
+
+// publicBaseURL reads the user's configured public base URL, if any.
+func publicBaseURL(userID int64) string {
+	var v string
+	if err := db.DB.QueryRow(
+		"SELECT value FROM settings WHERE user_id = ? AND key = 'public_base_url'", userID,
+	).Scan(&v); err != nil {
+		return ""
+	}
+	return strings.TrimRight(strings.TrimSpace(v), "/")
+}
+
+func webhookURL(base string, projectID int64) string {
+	return fmt.Sprintf("%s/api/webhooks/github/%d", strings.TrimRight(base, "/"), projectID)
 }
 
 // ---- inbound GitHub webhook ----
@@ -316,8 +449,8 @@ func GitHubWebhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	t, err := loadTrigger(projectID)
-	if err != nil || t.WebhookSecret == "" {
+	wh, err := loadProjectWebhook(projectID)
+	if err != nil || wh.WebhookSecret == "" {
 		respondError(w, http.StatusNotFound, "Webhook is not configured for this project")
 		return
 	}
@@ -327,45 +460,65 @@ func GitHubWebhookHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Failed to read payload")
 		return
 	}
-	if !verifyWebhookSignature(t.WebhookSecret, body, r.Header.Get("X-Hub-Signature-256")) {
+	if !verifyWebhookSignature(wh.WebhookSecret, body, r.Header.Get("X-Hub-Signature-256")) {
 		respondError(w, http.StatusUnauthorized, "Invalid webhook signature")
 		return
 	}
 
 	event := r.Header.Get("X-GitHub-Event")
 	if event == "ping" {
-		logDeployEvent(projectID, "ping", "", "", true, "Webhook connected", "webhook", nil)
+		logDeployEvent(projectID, "ping", "", "", true, "Webhook connected", "webhook", nil, nil)
 		respondJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "message": "pong"})
 		return
 	}
 
-	if !t.Enabled || t.Strategy == "manual" {
-		logDeployEvent(projectID, event, "", "", false, "Automatic deployments are disabled for this project", "webhook", nil)
+	triggers, _ := loadTriggers(projectID)
+	enabled := []models.ProjectTrigger{}
+	for _, t := range triggers {
+		if t.Enabled {
+			enabled = append(enabled, t)
+		}
+	}
+	if len(enabled) == 0 {
+		logDeployEvent(projectID, event, "", "", false, "No automatic strategies are enabled for this project", "webhook", nil, nil)
 		respondJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "matched": false})
 		return
 	}
 
-	m := matchWebhookEvent(t, event, body)
-	if !m.Matched {
-		logDeployEvent(projectID, event, m.Ref, m.SHA, false, m.Reason, "webhook", nil)
-		respondJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "matched": false, "reason": m.Reason})
+	// Test the event against every enabled rule and deploy on the first match.
+	var match webhookMatch
+	var matchedTrigger *models.ProjectTrigger
+	for i := range enabled {
+		m := matchWebhookEvent(enabled[i], event, body)
+		if m.Matched {
+			match = m
+			matchedTrigger = &enabled[i]
+			break
+		}
+		if match.Reason == "" {
+			match = m
+		}
+	}
+	if matchedTrigger == nil {
+		logDeployEvent(projectID, event, match.Ref, match.SHA, false, match.Reason, "webhook", nil, nil)
+		respondJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "matched": false, "reason": match.Reason})
 		return
 	}
 
 	project, err := getProjectByID(projectID)
 	if err != nil {
-		logDeployEvent(projectID, event, m.Ref, m.SHA, false, "Project not found", "webhook", nil)
+		logDeployEvent(projectID, event, match.Ref, match.SHA, false, "Project not found", "webhook", nil, nil)
 		respondError(w, http.StatusNotFound, "Project not found")
 		return
 	}
 
-	deployment, err := startDeployment(project.UserID, project, m.Trigger, m.Branch, m.Message, m.Author)
+	deployment, err := startDeployment(project.UserID, project, match.Trigger, match.Branch, match.Message, match.Author)
 	if err != nil {
-		logDeployEvent(projectID, event, m.Ref, m.SHA, false, "Failed to start deployment: "+err.Error(), "webhook", nil)
+		logDeployEvent(projectID, event, match.Ref, match.SHA, false, "Failed to start deployment: "+err.Error(), "webhook", nil, nil)
 		respondError(w, http.StatusInternalServerError, "Failed to start deployment")
 		return
 	}
-	logDeployEvent(projectID, event, m.Ref, m.SHA, true, m.Reason, "webhook", &deployment.ID)
+	logDeployEvent(projectID, event, match.Ref, match.SHA, true, match.Reason, "webhook", &matchedTrigger.ID, &deployment.ID)
 	respondJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "matched": true, "deployment_id": deployment.ID})
 }
 
@@ -484,11 +637,11 @@ func firstLine(s string) string {
 	return s
 }
 
-func logDeployEvent(projectID int64, eventType, ref, sha string, matched bool, reason, source string, deploymentID *int64) {
+func logDeployEvent(projectID int64, eventType, ref, sha string, matched bool, reason, source string, triggerID, deploymentID *int64) {
 	_, _ = db.DB.Exec(
-		`INSERT INTO deploy_events (project_id, event_type, ref, sha, matched, reason, source, deployment_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		projectID, eventType, ref, sha, boolToInt(matched), reason, source, deploymentID,
+		`INSERT INTO deploy_events (project_id, event_type, ref, sha, matched, reason, source, trigger_id, deployment_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		projectID, eventType, ref, sha, boolToInt(matched), reason, source, triggerID, deploymentID,
 	)
 }
 
@@ -523,7 +676,7 @@ func ProjectEventsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := db.DB.Query(
-		`SELECT id, project_id, event_type, ref, sha, matched, reason, source, deployment_id, created_at
+		`SELECT id, project_id, event_type, ref, sha, matched, reason, source, trigger_id, deployment_id, created_at
 		 FROM deploy_events WHERE project_id = ? ORDER BY id DESC LIMIT 100`, id,
 	)
 	if err != nil {
@@ -535,10 +688,23 @@ func ProjectEventsHandler(w http.ResponseWriter, r *http.Request) {
 	events := []models.DeployEvent{}
 	for rows.Next() {
 		var e models.DeployEvent
-		if err := rows.Scan(&e.ID, &e.ProjectID, &e.EventType, &e.Ref, &e.SHA, &e.Matched, &e.Reason, &e.Source, &e.DeploymentID, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.ProjectID, &e.EventType, &e.Ref, &e.SHA, &e.Matched, &e.Reason, &e.Source, &e.TriggerID, &e.DeploymentID, &e.CreatedAt); err != nil {
 			continue
 		}
 		events = append(events, e)
 	}
 	respondJSON(w, http.StatusOK, events)
+}
+
+// pathInt reads an integer path parameter by name.
+func pathInt(r *http.Request, name string) (int64, bool) {
+	s := r.PathValue(name)
+	if s == "" {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
 }
