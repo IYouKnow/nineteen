@@ -208,6 +208,7 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 		"INSERT INTO project_volumes (project_id, name, host_path, container_path) VALUES (?, ?, ?, ?)",
 		id, "data", "data", services.ProjectDataMount,
 	)
+	_, _ = db.DB.Exec("INSERT INTO project_triggers (project_id, strategy) VALUES (?, 'manual')", id)
 	p, err := getProject(claims.UserID, id)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to load project")
@@ -584,6 +585,21 @@ func getProject(userID, id int64) (models.Project, error) {
 	return p, err
 }
 
+// getProjectByID loads a project without scoping it to a user. Only used by
+// trusted internal flows (the HMAC-verified GitHub webhook) that have already
+// resolved the project's owner.
+func getProjectByID(id int64) (models.Project, error) {
+	var p models.Project
+	err := db.DB.QueryRow(projectSelect+" WHERE id = ?", id).Scan(
+		&p.ID, &p.UserID, &p.Name, &p.Slug, &p.Status, &p.Framework,
+		&p.Repository, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
+		&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
+		&p.Port,
+		&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
+	)
+	return p, err
+}
+
 var updatableProjectColumns = map[string]bool{
 	"status": true, "framework": true, "repository": true, "branch": true,
 	"domain": true, "description": true, "auto_deploy": true, "region": true,
@@ -758,29 +774,43 @@ func createDeploymentHandler(w http.ResponseWriter, r *http.Request, userID, pro
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	if req.Branch == "" {
-		req.Branch = project.Branch
+	d, err := startDeployment(userID, project, req.Trigger, req.Branch, req.CommitMessage, req.Author)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to create deployment")
+		return
 	}
-	if req.Author == "" {
-		req.Author = "you"
+	respondJSON(w, http.StatusCreated, d)
+}
+
+// startDeployment creates a deployment record, marks the project as building and
+// kicks off the build worker in the background. It is shared by the HTTP deploy
+// endpoint, the GitHub webhook handler and any future trigger source.
+func startDeployment(userID int64, project models.Project, trigger, branch, commitMessage, author string) (models.Deployment, error) {
+	if branch == "" {
+		branch = project.Branch
 	}
-	if req.Trigger == "" {
-		req.Trigger = "manual"
+	if branch == "" {
+		branch = "main"
 	}
-	if req.CommitMessage == "" {
-		req.CommitMessage = "Manual deployment"
+	if author == "" {
+		author = "you"
+	}
+	if trigger == "" {
+		trigger = "manual"
+	}
+	if commitMessage == "" {
+		commitMessage = "Manual deployment"
 	}
 
 	sha := randomHex(40)
 	result, err := db.DB.Exec(
 		`INSERT INTO deployments (user_id, project_id, project_name, status, commit_sha, commit_message,
 			branch, author, trigger, framework) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		userID, projectID, project.Name, statusBuilding, sha, req.CommitMessage,
-		req.Branch, req.Author, req.Trigger, project.Framework,
+		userID, project.ID, project.Name, statusBuilding, sha, commitMessage,
+		branch, author, trigger, project.Framework,
 	)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to create deployment")
-		return
+		return models.Deployment{}, err
 	}
 
 	deployID, _ := result.LastInsertId()
@@ -791,12 +821,7 @@ func createDeploymentHandler(w http.ResponseWriter, r *http.Request, userID, pro
 
 	go buildAndDeploy(deployID, project)
 
-	d, err := getDeployment(userID, deployID)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to load deployment")
-		return
-	}
-	respondJSON(w, http.StatusCreated, d)
+	return getDeployment(userID, deployID)
 }
 
 func DeploymentsHandler(w http.ResponseWriter, r *http.Request) {

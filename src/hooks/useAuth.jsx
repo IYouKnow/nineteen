@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect } from "react";
+import { queryClientInstance } from "@/lib/query-client";
 
 const AuthContext = createContext(null);
 
@@ -51,6 +52,7 @@ export function AuthProvider({ children }) {
       .catch(() => {
         localStorage.removeItem(AUTH_TOKEN_KEY);
         localStorage.removeItem(AUTH_USER_KEY);
+        queryClientInstance.clear();
         setToken(null);
         setUser(null);
       })
@@ -72,6 +74,7 @@ export function AuthProvider({ children }) {
 
     localStorage.setItem(AUTH_TOKEN_KEY, data.token);
     localStorage.setItem(AUTH_USER_KEY, JSON.stringify(data.user));
+    queryClientInstance.clear();
     setToken(data.token);
     setUser(data.user);
     return { success: true };
@@ -98,6 +101,7 @@ export function AuthProvider({ children }) {
 
     localStorage.setItem(AUTH_TOKEN_KEY, data.token);
     localStorage.setItem(AUTH_USER_KEY, JSON.stringify(data.user));
+    queryClientInstance.clear();
     setToken(data.token);
     setUser(data.user);
     return { success: true };
@@ -106,6 +110,7 @@ export function AuthProvider({ children }) {
   const logout = useCallback(() => {
     localStorage.removeItem(AUTH_TOKEN_KEY);
     localStorage.removeItem(AUTH_USER_KEY);
+    queryClientInstance.clear();
     setToken(null);
     setUser(null);
   }, []);

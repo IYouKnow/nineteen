@@ -10,6 +10,8 @@ export default defineConfig({
   },
   plugins: [react()],
   server: {
+    host: true,
+    allowedHosts: ['nineteen2.nortem.net'],
     proxy: {
       '/api': 'http://localhost:8080',
     },

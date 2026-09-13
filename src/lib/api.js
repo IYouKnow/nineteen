@@ -5,11 +5,25 @@ function authHeaders() {
   return { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
 }
 
+// A 401 means the stored token is missing/expired/invalid. Drop it and send
+// the user back to the login screen instead of silently rendering empty pages.
+function handleUnauthorized() {
+  localStorage.removeItem("nineteen_token");
+  localStorage.removeItem("nineteen_user");
+  if (window.location.pathname !== "/login") {
+    window.location.replace("/login");
+  }
+}
+
 async function doFetch(url, options = {}) {
   const res = await fetch(`${API_URL}${url}`, {
     ...options,
     headers: { ...authHeaders(), ...(options.headers || {}) },
   });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || res.statusText);
@@ -47,6 +61,10 @@ export const projects = {
   buildFileSave: (id, payload) =>
     doFetch(`/api/projects/${id}/buildfile`, { method: "PUT", body: JSON.stringify(payload) }),
   buildFileReset: (id) => doFetch(`/api/projects/${id}/buildfile`, { method: "DELETE" }),
+  trigger: (id) => doFetch(`/api/projects/${id}/trigger`),
+  saveTrigger: (id, payload) =>
+    doFetch(`/api/projects/${id}/trigger`, { method: "PUT", body: JSON.stringify(payload) }),
+  events: (id) => doFetch(`/api/projects/${id}/events`),
   resourcesStreamUrl: (id) => {
     const token = localStorage.getItem("nineteen_token") || "";
     return `${API_URL}/api/projects/${id}/resources/stream?token=${encodeURIComponent(token)}`;

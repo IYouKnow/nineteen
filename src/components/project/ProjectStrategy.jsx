@@ -1,10 +1,16 @@
-import { useState } from "react";
-import { Hand, Zap, GitBranch, Tag, Rocket, Save, Loader2, Play } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Hand, Zap, GitBranch, Tag, Rocket, Save, Loader2, Play, Webhook,
+  Copy, CheckCircle2, AlertTriangle, ExternalLink,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import * as api from "@/lib/api";
 import StrategyCard from "./StrategyCard";
 import TriggerHistory from "./TriggerHistory";
 
@@ -70,28 +76,180 @@ function ExampleRow({ text, match }) {
   );
 }
 
+function WebhookPanel({ trigger, strategy }) {
+  const [copied, setCopied] = useState(false);
+
+  if (strategy === "manual") return null;
+
+  const copy = async () => {
+    if (!trigger?.webhook_url) return;
+    try {
+      await navigator.clipboard.writeText(trigger.webhook_url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
+
+  if (!trigger?.public_base_url) {
+    return (
+      <div className="rounded-lg border border-warning/40 bg-warning/5 p-4">
+        <div className="flex items-start gap-2.5">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-foreground">A public base URL is required</p>
+            <p className="text-xs text-muted-foreground">
+              GitHub cannot deliver webhooks to <code className="font-mono">localhost</code>. Add the domain or
+              public IP that reaches this server in Settings → Integrations, then save the strategy again.
+            </p>
+            <Button asChild variant="outline" size="sm" className="mt-1 gap-1.5">
+              <Link to="/settings/integrations">
+                Open Integrations <ExternalLink className="h-3.5 w-3.5" />
+              </Link>
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/30 text-muted-foreground">
+            <Webhook className="h-4 w-4" />
+          </span>
+          <div>
+            <p className="text-sm font-medium">GitHub webhook</p>
+            <p className="text-xs text-muted-foreground">Events are delivered to this URL and verified by signature.</p>
+          </div>
+        </div>
+        {trigger.registered ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-success/25 bg-success/10 px-2.5 py-0.5 text-xs font-medium text-success">
+            <CheckCircle2 className="h-3.5 w-3.5" /> Registered
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+            Not registered
+          </span>
+        )}
+      </div>
+
+      <div className="mt-4 space-y-1.5">
+        <label className="text-xs font-medium text-muted-foreground">Payload URL</label>
+        <div className="flex items-center gap-2">
+          <Input readOnly value={trigger.webhook_url || ""} className="bg-card font-mono text-xs" />
+          <Button variant="outline" size="icon" onClick={copy} title="Copy URL">
+            {copied ? <CheckCircle2 className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
+          </Button>
+        </div>
+      </div>
+
+      {trigger.webhook_error && (
+        <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+          <p className="text-xs text-destructive">{trigger.webhook_error}</p>
+        </div>
+      )}
+
+      <p className="mt-3 text-xs text-muted-foreground/70">
+        Subscribed events: {strategy === "release" ? "release" : strategy === "tag" ? "push, create" : "push"}. Content
+        type <code className="font-mono">application/json</code>; the secret is managed automatically.
+      </p>
+    </div>
+  );
+}
+
 export default function ProjectStrategy({ project }) {
+  const qc = useQueryClient();
+  const initialized = useRef(false);
+
   const [strategy, setStrategy] = useState(project.auto_deploy ? "commit" : "manual");
   const [branch, setBranch] = useState(project.branch || "main");
   const [tagMode, setTagMode] = useState("pattern");
   const [tagPattern, setTagPattern] = useState("v*");
   const [preRelease, setPreRelease] = useState(false);
+  const [enabled, setEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deploying, setDeploying] = useState(false);
 
-  const head = HEADERS[strategy];
+  const { data: trigger } = useQuery({
+    queryKey: ["trigger", project.id],
+    queryFn: () => api.projects.trigger(project.id),
+  });
+
+  const { data: events = [] } = useQuery({
+    queryKey: ["events", project.id],
+    queryFn: () => api.projects.events(project.id),
+    refetchInterval: 10000,
+  });
+
+  useEffect(() => {
+    if (!trigger || initialized.current) return;
+    initialized.current = true;
+    setStrategy(trigger.strategy || "manual");
+    setBranch(trigger.branch || project.branch || "main");
+    setTagMode(trigger.tag_mode || "pattern");
+    setTagPattern(trigger.tag_pattern || "v*");
+    setPreRelease(!!trigger.pre_release);
+    setEnabled(trigger.enabled !== false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trigger]);
+
+  const head = HEADERS[strategy] || HEADERS.manual;
   const HeadIcon = head.icon;
   const ex = buildExamples(strategy, branch, tagMode, preRelease);
 
-  const save = () => {
+  const save = async () => {
     setSaving(true);
-    setTimeout(() => {
+    try {
+      const res = await api.projects.saveTrigger(project.id, {
+        strategy,
+        branch,
+        tag_mode: tagMode,
+        tag_pattern: tagPattern,
+        pre_release: preRelease,
+        enabled,
+      });
+      qc.setQueryData(["trigger", project.id], res);
+      qc.invalidateQueries({ queryKey: ["project", project.id] });
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      if (res.webhook_error) {
+        toast.error("Strategy saved with a warning", { description: res.webhook_error });
+      } else {
+        toast.success("Deployment strategy saved", {
+          description: res.registered
+            ? "Webhook registered with GitHub."
+            : "Your trigger configuration has been updated.",
+        });
+      }
+    } catch (e) {
+      toast.error("Save failed", { description: e?.message });
+    } finally {
       setSaving(false);
-      toast.success("Deployment strategy saved", { description: "Your trigger configuration has been updated." });
-    }, 600);
+    }
   };
 
-  const deployNow = () => {
-    toast.success("Deployment queued", { description: "A new deployment has been triggered manually." });
+  const deployNow = async () => {
+    setDeploying(true);
+    try {
+      await api.deployments.create(project.id, {
+        commit_message: "Manual deployment from Strategy tab",
+        branch: project.branch || "main",
+        author: "you",
+        trigger: "manual",
+      });
+      qc.invalidateQueries({ queryKey: ["deployments", project.id] });
+      qc.invalidateQueries({ queryKey: ["deployments-recent"] });
+      qc.invalidateQueries({ queryKey: ["project", project.id] });
+      qc.invalidateQueries({ queryKey: ["events", project.id] });
+      toast.success("Deployment queued", { description: "A new deployment has been triggered manually." });
+    } catch (e) {
+      toast.error("Deploy failed", { description: e?.message });
+    } finally {
+      setDeploying(false);
+    }
   };
 
   return (
@@ -125,8 +283,9 @@ export default function ProjectStrategy({ project }) {
                   <p className="text-sm text-foreground">No configuration needed</p>
                   <p className="text-xs text-muted-foreground">Use the Deploy button to ship changes.</p>
                 </div>
-                <Button variant="outline" size="sm" onClick={deployNow} className="gap-2">
-                  <Play className="h-3.5 w-3.5" /> Deploy now
+                <Button variant="outline" size="sm" onClick={deployNow} disabled={deploying} className="gap-2">
+                  {deploying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                  Deploy now
                 </Button>
               </div>
             )}
@@ -197,6 +356,16 @@ export default function ProjectStrategy({ project }) {
                 <Switch checked={preRelease} onCheckedChange={setPreRelease} />
               </div>
             )}
+
+            {strategy !== "manual" && (
+              <div className="flex items-center justify-between rounded-md border border-border bg-muted/20 px-3 py-3">
+                <div>
+                  <p className="text-sm text-foreground">Automatic deployments</p>
+                  <p className="text-xs text-muted-foreground">Pause triggers without losing this configuration.</p>
+                </div>
+                <Switch checked={enabled} onCheckedChange={setEnabled} />
+              </div>
+            )}
           </div>
 
           <div>
@@ -227,7 +396,9 @@ export default function ProjectStrategy({ project }) {
         </div>
       </div>
 
-      <TriggerHistory />
+      <WebhookPanel trigger={trigger} strategy={strategy} />
+
+      <TriggerHistory events={events} />
     </div>
   );
 }

@@ -85,7 +85,7 @@ function DeploymentRow({ deployment }) {
 }
 
 export default function Dashboard() {
-  const { data: projects, isLoading, isError } = useQuery({
+  const { data: projects, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["projects"],
     queryFn: () => api.projects.list(),
     enabled: true,
@@ -187,6 +187,17 @@ export default function Dashboard() {
                 <Skeleton key={i} className="h-[104px] rounded-lg" />
               ))}
             </div>
+          ) : isError ? (
+            <EmptyState
+              icon={FolderGit2}
+              title="Couldn't load projects"
+              description={error?.message || "Something went wrong while fetching your projects."}
+              action={
+                <Button variant="outline" onClick={() => refetch()}>
+                  Retry
+                </Button>
+              }
+            />
           ) : list.length === 0 ? (
             <EmptyState
               icon={FolderGit2}

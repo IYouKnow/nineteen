@@ -20,7 +20,7 @@ import { IntegrationSettingsDialog } from "@/components/ui/integration-settings-
 import { UpdateSection } from "@/components/update/UpdateSection";
 import {
   Globe, Palette, Bell, Key, Link2, Server,
-  Plus, Trash2, CheckCircle2, Sun, Moon, Monitor,
+  Plus, Trash2, CheckCircle2, Sun, Moon, Monitor, Webhook, ShieldCheck,
 } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL || "";
@@ -43,6 +43,7 @@ const DEFAULT_SETTINGS = {
   default_instance_type: "starter",
   default_region: "fra1",
   auto_deploy: "true",
+  public_base_url: "",
 };
 
 const TIMEZONES = [
@@ -492,7 +493,7 @@ function ApiKeysTab() {
   );
 }
 
-function IntegrationsTab() {
+function IntegrationsTab({ settings = { public_base_url: "" }, saving, onSave }) {
   const [integrations, setIntegrations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(null);
@@ -500,6 +501,7 @@ function IntegrationsTab() {
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState(null);
   const [selectedIntegration, setSelectedIntegration] = useState(null);
+  const [baseUrl, setBaseUrl] = useState(settings.public_base_url || "");
 
   useEffect(() => { fetchIntegrations(); }, []);
 
@@ -628,6 +630,79 @@ function IntegrationsTab() {
           )}
         </div>
       )}
+
+      <SectionHeader icon={Webhook} title="Webhooks" description="Let GitHub trigger deployments automatically" />
+      <Card>
+        <CardContent className="pt-6 space-y-5">
+          <div className="space-y-2">
+            <Label htmlFor="public-base-url">Public base URL</Label>
+            <Input
+              id="public-base-url"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="https://deploy.example.com"
+              className="max-w-md font-mono"
+            />
+            <p className="text-xs text-muted-foreground">
+              The domain or public IP that reaches this server. GitHub sends webhook events to{" "}
+              <code className="font-mono">{baseUrl.trim() || "https://your-domain"}/api/webhooks/github/&lt;project-id&gt;</code>.
+              GitHub does not support <code className="font-mono">localhost</code>, so use a public domain or a tunnel.
+            </p>
+          </div>
+          <Button
+            variant="white"
+            disabled={saving}
+            onClick={() => onSave({ public_base_url: baseUrl.trim() })}
+          >
+            Save URL
+          </Button>
+
+          <Separator />
+
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+              <p className="text-sm font-medium text-foreground">GitHub token permissions</p>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              To register webhooks automatically, the connected GitHub token must include{" "}
+              <span className="text-foreground">all</span> of the following. Missing any of them makes webhook
+              registration fail.
+            </p>
+            <ul className="space-y-2 text-xs text-muted-foreground">
+              <li className="flex gap-2">
+                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+                <span>
+                  <span className="text-foreground">Classic token:</span>{" "}
+                  <code className="font-mono">repo</code> (or <code className="font-mono">admin:repo_hook</code> /{" "}
+                  <code className="font-mono">write:repo_hook</code>) to create and manage repository webhooks.
+                </span>
+              </li>
+              <li className="flex gap-2">
+                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+                <span>
+                  <span className="text-foreground">Fine-grained token:</span>{" "}
+                  <code className="font-mono">Webhooks: Read and write</code> (repository permission).
+                </span>
+              </li>
+              <li className="flex gap-2">
+                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+                <span>
+                  <span className="text-foreground">Contents: Read</span> on the repository (needed to read private
+                  repos and build files).
+                </span>
+              </li>
+              <li className="flex gap-2">
+                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+                <span>
+                  <span className="text-foreground">Admin access</span> to the repository — a webhook cannot be created
+                  without it.
+                </span>
+              </li>
+            </ul>
+          </div>
+        </CardContent>
+      </Card>
 
       <SectionHeader icon={Globe} title="Domains" description="Connect custom domains to your projects" />
       <Card>
@@ -801,7 +876,7 @@ export default function Settings() {
             <Route index element={<Navigate to="/settings/general" replace />} />
             <Route path="general" element={<GeneralTab settings={settings} saving={saving} onSave={updateSettings} />} />
             <Route path="appearance" element={<AppearanceTab settings={settings} onSave={updateSettings} />} />
-            <Route path="integrations" element={<IntegrationsTab />} />
+            <Route path="integrations" element={<IntegrationsTab settings={settings} saving={saving} onSave={updateSettings} />} />
             <Route path="deployment" element={<DeploymentDefaultsTab settings={settings} onSave={updateSettings} />} />
             <Route path="updates" element={<UpdateSection />} />
           </Routes>

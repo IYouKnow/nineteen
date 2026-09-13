@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -220,4 +221,164 @@ func (g *GitHubClient) CountRepositories() (int, error) {
 		}
 	}
 	return total, nil
+}
+
+// GitHubWebhook is the subset of a repository hook the app cares about.
+type GitHubWebhook struct {
+	ID     int64    `json:"id"`
+	Active bool     `json:"active"`
+	Events []string `json:"events"`
+	Config struct {
+		URL         string `json:"url"`
+		ContentType string `json:"content_type"`
+	} `json:"config"`
+}
+
+// doJSON performs a request with an optional JSON body and returns the response
+// body and status code. Non-2xx responses are returned to the caller (not as an
+// error) so callers can map status codes to friendly messages.
+func (g *GitHubClient) doJSON(method, url string, payload interface{}) ([]byte, int, error) {
+	var body io.Reader
+	if payload != nil {
+		b, err := json.Marshal(payload)
+		if err != nil {
+			return nil, 0, err
+		}
+		body = bytes.NewReader(b)
+	}
+
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, 0, err
+	}
+	if g.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+g.Token)
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := g.Client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return data, resp.StatusCode, nil
+}
+
+// webhookPermissionError turns GitHub's webhook API failures into a message
+// that tells the user exactly what token scope / access is missing.
+func webhookPermissionError(status int, body []byte) error {
+	switch status {
+	case http.StatusForbidden:
+		return fmt.Errorf("GitHub refused to manage the webhook (403). The token needs webhook write access — classic: repo, write:repo_hook or admin:repo_hook; fine-grained: Webhooks (read and write) — and you must have admin access to the repository")
+	case http.StatusUnauthorized:
+		return fmt.Errorf("GitHub rejected the token (401) while managing the webhook")
+	case http.StatusNotFound:
+		return fmt.Errorf("repository not found or you do not have admin access (404)")
+	default:
+		msg := strings.TrimSpace(string(body))
+		if msg == "" {
+			msg = http.StatusText(status)
+		}
+		return fmt.Errorf("GitHub API returned status %d: %s", status, msg)
+	}
+}
+
+// CreateWebhook registers a repository webhook that delivers the given events
+// to hookURL, signed with secret. It returns the new hook id.
+func (g *GitHubClient) CreateWebhook(fullName, hookURL, secret string, events []string) (int64, error) {
+	if len(events) == 0 {
+		events = []string{"push"}
+	}
+	payload := map[string]interface{}{
+		"name":   "web",
+		"active": true,
+		"events": events,
+		"config": map[string]interface{}{
+			"url":          hookURL,
+			"content_type": "json",
+			"secret":       secret,
+			"insecure_ssl": "0",
+		},
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/hooks", fullName)
+	data, status, err := g.doJSON(http.MethodPost, url, payload)
+	if err != nil {
+		return 0, err
+	}
+	if status < 200 || status >= 300 {
+		return 0, webhookPermissionError(status, data)
+	}
+	var hook struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(data, &hook); err != nil {
+		return 0, err
+	}
+	return hook.ID, nil
+}
+
+// UpdateWebhook points an existing repository webhook at hookURL and refreshes
+// its secret and event list.
+func (g *GitHubClient) UpdateWebhook(fullName string, hookID int64, hookURL, secret string, events []string) error {
+	if len(events) == 0 {
+		events = []string{"push"}
+	}
+	payload := map[string]interface{}{
+		"active": true,
+		"events": events,
+		"config": map[string]interface{}{
+			"url":          hookURL,
+			"content_type": "json",
+			"secret":       secret,
+			"insecure_ssl": "0",
+		},
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/hooks/%d", fullName, hookID)
+	data, status, err := g.doJSON(http.MethodPatch, url, payload)
+	if err != nil {
+		return err
+	}
+	if status < 200 || status >= 300 {
+		return webhookPermissionError(status, data)
+	}
+	return nil
+}
+
+// DeleteWebhook removes a repository webhook.
+func (g *GitHubClient) DeleteWebhook(fullName string, hookID int64) error {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/hooks/%d", fullName, hookID)
+	data, status, err := g.doJSON(http.MethodDelete, url, nil)
+	if err != nil {
+		return err
+	}
+	if status < 200 || status >= 300 {
+		return webhookPermissionError(status, data)
+	}
+	return nil
+}
+
+// ListWebhooks returns the repository's webhooks, used to detect an existing
+// hook for this app before creating a duplicate.
+func (g *GitHubClient) ListWebhooks(fullName string) ([]GitHubWebhook, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/hooks", fullName)
+	data, status, err := g.doJSON(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		return nil, webhookPermissionError(status, data)
+	}
+	var hooks []GitHubWebhook
+	if err := json.Unmarshal(data, &hooks); err != nil {
+		return nil, err
+	}
+	return hooks, nil
 }

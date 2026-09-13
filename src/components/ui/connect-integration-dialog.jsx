@@ -153,18 +153,40 @@ export function ConnectIntegrationDialog({ provider, open, onClose, onConnect })
               </Button>
             </div>
             {provider.id === "github" && (
-              <p className="text-[11px] text-muted-foreground">
-                Generate a token at{" "}
-                <a
-                  href="https://github.com/settings/tokens"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline hover:text-foreground"
-                >
-                  github.com/settings/tokens
-                </a>
-                . Works with both classic and fine-grained tokens.
-              </p>
+              <div className="space-y-2">
+                <p className="text-[11px] text-muted-foreground">
+                  Generate a token at{" "}
+                  <a
+                    href="https://github.com/settings/tokens"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-foreground"
+                  >
+                    github.com/settings/tokens
+                  </a>
+                  . Works with both classic and fine-grained tokens.
+                </p>
+                <div className="rounded-md border border-border bg-muted/30 p-2.5">
+                  <p className="text-[11px] font-medium text-foreground">Required for automatic deployments</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    To register webhooks automatically, the token needs <span className="text-foreground">all</span> of
+                    these, and you must have admin access to the repository:
+                  </p>
+                  <ul className="mt-1.5 space-y-1 text-[11px] text-muted-foreground">
+                    <li>
+                      <span className="text-foreground">Classic:</span>{" "}
+                      <code className="font-mono">repo</code> (or{" "}
+                      <code className="font-mono">admin:repo_hook</code> /{" "}
+                      <code className="font-mono">write:repo_hook</code>)
+                    </li>
+                    <li>
+                      <span className="text-foreground">Fine-grained:</span>{" "}
+                      <code className="font-mono">Webhooks: Read and write</code> +{" "}
+                      <code className="font-mono">Contents: Read</code>
+                    </li>
+                  </ul>
+                </div>
+              </div>
             )}
           </div>
 

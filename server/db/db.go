@@ -196,6 +196,33 @@ func runMigrations() {
 			updated_date DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_project_volumes_project ON project_volumes(project_id)`,
+		`CREATE TABLE IF NOT EXISTS project_triggers (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_id INTEGER NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+			strategy TEXT DEFAULT 'manual',
+			branch TEXT DEFAULT 'main',
+			tag_mode TEXT DEFAULT 'pattern',
+			tag_pattern TEXT DEFAULT 'v*',
+			pre_release BOOLEAN DEFAULT FALSE,
+			enabled BOOLEAN DEFAULT TRUE,
+			webhook_id INTEGER,
+			webhook_secret TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS deploy_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			event_type TEXT DEFAULT '',
+			ref TEXT DEFAULT '',
+			sha TEXT DEFAULT '',
+			matched BOOLEAN DEFAULT FALSE,
+			reason TEXT DEFAULT '',
+			source TEXT DEFAULT '',
+			deployment_id INTEGER,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_deploy_events_project ON deploy_events(project_id, id)`,
 	}
 
 	for _, m := range migrations {
@@ -237,6 +264,17 @@ func runMigrations() {
 		`INSERT INTO project_volumes (project_id, name, host_path, container_path)
 		 SELECT id, 'data', 'data', '/app/data' FROM projects
 		 WHERE id NOT IN (SELECT project_id FROM project_volumes)`,
+	); err != nil {
+		log.Fatalf("Migration failed: %v", err)
+	}
+
+	// Every project gets a trigger row so the Strategy tab always has config to
+	// read. Projects created before this table default to manual, except those
+	// that had auto_deploy enabled (treated as "every commit").
+	if _, err := DB.Exec(
+		`INSERT INTO project_triggers (project_id, strategy)
+		 SELECT id, CASE WHEN auto_deploy THEN 'commit' ELSE 'manual' END FROM projects
+		 WHERE id NOT IN (SELECT project_id FROM project_triggers)`,
 	); err != nil {
 		log.Fatalf("Migration failed: %v", err)
 	}

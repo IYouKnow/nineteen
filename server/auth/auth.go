@@ -5,23 +5,33 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
-var jwtSecret []byte
+var (
+	jwtSecret  []byte
+	secretOnce sync.Once
+)
 
-func init() {
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		b := make([]byte, 32)
-		rand.Read(b)
-		secret = hex.EncodeToString(b)
-		os.Setenv("JWT_SECRET", secret)
-	}
-	jwtSecret = []byte(secret)
+// secret lazily resolves the JWT signing key on first use so that callers that
+// load .env (e.g. main via godotenv) run before we read the environment. A
+// package init() would run too early and miss JWT_SECRET.
+func secret() []byte {
+	secretOnce.Do(func() {
+		s := os.Getenv("JWT_SECRET")
+		if s == "" {
+			b := make([]byte, 32)
+			rand.Read(b)
+			s = hex.EncodeToString(b)
+			os.Setenv("JWT_SECRET", s)
+		}
+		jwtSecret = []byte(s)
+	})
+	return jwtSecret
 }
 
 type Claims struct {
@@ -53,12 +63,12 @@ func GenerateToken(userID int64, username, email string) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	return token.SignedString(secret())
 }
 
 func ValidateToken(tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		return jwtSecret, nil
+		return secret(), nil
 	})
 
 	if err != nil {

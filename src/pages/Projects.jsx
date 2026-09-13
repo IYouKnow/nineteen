@@ -96,7 +96,7 @@ export default function Projects() {
     setFilter(urlFilter);
   }, [urlFilter]);
 
-  const { data: projects, isLoading, isError } = useQuery({
+  const { data: projects, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["projects"],
     queryFn: () => api.projects.list(),
     enabled: true,
@@ -190,6 +190,17 @@ export default function Projects() {
               <Skeleton key={i} className="h-[140px] rounded-lg" />
             ))}
           </div>
+        ) : isError ? (
+          <EmptyState
+            icon={FolderGit2}
+            title="Couldn't load projects"
+            description={error?.message || "Something went wrong while fetching your projects."}
+            action={
+              <Button variant="outline" onClick={() => refetch()}>
+                Retry
+              </Button>
+            }
+          />
         ) : filtered.length === 0 ? (
           <EmptyState
             icon={FolderGit2}
