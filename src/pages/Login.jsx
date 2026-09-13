@@ -93,7 +93,7 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
-          <CardTitle className="text-xl font-bold">NexusCore</CardTitle>
+          <CardTitle className="text-xl font-bold">Nineteen</CardTitle>
           {step === "code" && <CardDescription>Enter your invite code to get started</CardDescription>}
           {step === "create" && <CardDescription>Create your account</CardDescription>}
           {step === "login" && <CardDescription>Sign in to your account</CardDescription>}

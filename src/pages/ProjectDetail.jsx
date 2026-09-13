@@ -1,7 +1,7 @@
 import * as api from "@/lib/api";
 
 import { useEffect, useState } from "react";
-import { useParams, useSearchParams, useNavigate } from "react-router-dom";
+import { useParams, useSearchParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -13,6 +13,8 @@ import {
   Trash2,
   Loader2,
   Settings as SettingsIcon,
+  ArrowLeft,
+  ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -259,6 +261,18 @@ export default function ProjectDetail() {
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
+      <nav className="mb-4 flex items-center gap-1.5 text-sm">
+        <Link
+          to="/projects"
+          className="flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Projects
+        </Link>
+        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40" />
+        <span className="truncate font-medium text-foreground">{project.name}</span>
+      </nav>
+
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3.5">
@@ -300,10 +314,29 @@ export default function ProjectDetail() {
               onManage={() => setTab("environments")}
             />
           )}
-          <Button variant="outline" size="sm" onClick={() => run("start")} disabled={!!busy} className="gap-1.5">
-            {busy === "start" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-            Start
-          </Button>
+          {isRunning ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => run("stop")}
+              disabled={!!busy}
+              className="gap-1.5"
+            >
+              {busy === "stop" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
+              Stop
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => run("start")}
+              disabled={!!busy}
+              className="gap-1.5"
+            >
+              {busy === "start" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              Start
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -313,16 +346,6 @@ export default function ProjectDetail() {
           >
             {busy === "restart" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
             {busy === "restart" ? "Restarting…" : "Restart"}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => run("stop")}
-            disabled={!isRunning || !!busy}
-            className="gap-1.5"
-          >
-            {busy === "stop" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
-            Stop
           </Button>
           {liveUrl && (
             <Button asChild variant="outline" size="icon" className="h-9 w-9">

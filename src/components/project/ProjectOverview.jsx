@@ -19,8 +19,6 @@ import { Button } from "@/components/ui/button";
 import { timeAgo, formatDate, formatDuration, shortSha } from "@/lib/format";
 import { getFramework, INSTANCE_TYPES, REGIONS, projectAddress } from "@/lib/devStatus";
 
-import { getEnvType } from "@/lib/environments";
-
 function InfoTile({ icon: Icon, label, value, mono }) {
   return (
     <div className="rounded-lg border border-border bg-card p-3.5">
@@ -36,7 +34,6 @@ function InfoTile({ icon: Icon, label, value, mono }) {
 export default function ProjectOverview({ project, deployments = [], envVars = [], environment }) {
   const latest = deployments[0];
   const liveUrl = projectAddress(project);
-  const envType = environment ? getEnvType(environment.type) : null;
   const fw = getFramework(project.framework);
   const instance = INSTANCE_TYPES.find((i) => i.id === project.instance_type) || INSTANCE_TYPES[0];
   const region = REGIONS.find((r) => r.id === project.region) || REGIONS[0];
@@ -51,14 +48,6 @@ export default function ProjectOverview({ project, deployments = [], envVars = [
             <div className="flex items-center gap-4">
               <FrameworkIcon framework={project.framework} size="lg" />
               <div>
-                {envType && (
-                  <div className="mb-1 flex items-center gap-1.5">
-                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: envType.color }} />
-                    <span className="text-xs font-medium text-muted-foreground">
-                      {environment.name} environment
-                    </span>
-                  </div>
-                )}
                 <div className="flex items-center gap-2.5">
                   <StatusDot status={project.status} className="h-2.5 w-2.5" />
                   <span className="text-lg font-semibold capitalize tracking-tight">
