@@ -1,4 +1,3 @@
-import db from '@/lib/db';
 import * as api from "@/lib/api";
 
 import { useQueryClient } from "@tanstack/react-query";
@@ -16,9 +15,6 @@ export default function ProjectSettings({ project, envVars = [], environment, is
 
   const remove = async () => {
     await api.projects.delete(project.id);
-    if (envVars.length) {
-      await db.entities.EnvironmentVariable.deleteMany({ project_id: project.id });
-    }
     qc.invalidateQueries({ queryKey: ["projects"] });
     qc.invalidateQueries({ queryKey: ["deployments-recent"] });
     navigate("/projects");

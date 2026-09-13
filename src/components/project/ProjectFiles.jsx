@@ -1,54 +1,78 @@
-import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { HardDrive } from "lucide-react";
 import EmptyState from "@/components/dev/EmptyState";
 import FileTree from "@/components/project/FileTree";
-import {
-  getFolderTree,
-  uploadFiles,
-  renameNode,
-  deleteNode,
-  downloadNode,
-} from "@/lib/projectFiles";
+import * as api from "@/lib/api";
 
-export default function ProjectFiles({ folder }) {
-  const [tree, setTree] = useState(null);
+export default function ProjectFiles({ projectId }) {
+  const qc = useQueryClient();
 
-  useEffect(() => {
-    if (folder) setTree(getFolderTree(folder));
-    else setTree(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folder?.id]);
+  const { data: tree, isLoading } = useQuery({
+    queryKey: ["project-files", projectId],
+    queryFn: () => api.projectFiles.list(projectId),
+    enabled: !!projectId,
+  });
 
-  if (!folder) {
-    return (
-      <EmptyState
-        icon={HardDrive}
-        title="Folder not available"
-        description="This project's persistent folder could not be found."
-        className="py-10"
-      />
-    );
-  }
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["project-files", projectId] });
 
-  const handleUpload = (parentPath, files) => {
-    setTree(uploadFiles(folder, parentPath, files));
-    toast.success(`Uploaded ${files.length} file${files.length === 1 ? "" : "s"}`, {
-      description: parentPath,
-    });
+  const handleUpload = async (parentPath, files) => {
+    try {
+      await api.projectFiles.upload(projectId, parentPath, files);
+      toast.success(`Uploaded ${files.length} file${files.length === 1 ? "" : "s"}`, {
+        description: parentPath,
+      });
+      invalidate();
+    } catch (e) {
+      toast.error("Upload failed", { description: e?.message });
+    }
   };
-  const handleRename = (path, newName) => {
-    setTree(renameNode(folder, path, newName));
-    toast.success("Renamed", { description: newName });
+
+  const handleCreateFolder = async (parentPath, name) => {
+    try {
+      await api.projectFiles.createFolder(projectId, parentPath, name);
+      toast.success("Folder created", { description: name });
+      invalidate();
+    } catch (e) {
+      toast.error("Could not create folder", { description: e?.message });
+    }
   };
-  const handleDelete = (path) => {
-    setTree(deleteNode(folder, path));
-    toast.success("Deleted", { description: path });
+
+  const handleRename = async (path, newName) => {
+    try {
+      await api.projectFiles.rename(projectId, path, newName);
+      toast.success("Renamed", { description: newName });
+      invalidate();
+    } catch (e) {
+      toast.error("Could not rename", { description: e?.message });
+    }
   };
-  const handleDownload = (node) => {
-    downloadNode(node);
-    toast.success(`Downloading ${node.name}`);
+
+  const handleDelete = async (path) => {
+    try {
+      await api.projectFiles.remove(projectId, path);
+      toast.success("Deleted", { description: path });
+      invalidate();
+    } catch (e) {
+      toast.error("Could not delete", { description: e?.message });
+    }
+  };
+
+  const handleDownload = async (node) => {
+    try {
+      const blob = await api.projectFiles.download(projectId, node.path);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = node.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error("Download failed", { description: e?.message });
+    }
   };
 
   return (
@@ -56,18 +80,33 @@ export default function ProjectFiles({ folder }) {
       <div className="mb-4">
         <h3 className="text-sm font-medium">Project folder</h3>
         <p className="text-xs text-muted-foreground">
-          This project's persistent folder. Its files survive redeploys.
+          This project's persistent folder, mounted at <code className="font-mono">/app/data</code>.
+          Its files survive redeploys.
         </p>
       </div>
 
-      <FileTree
-        key={folder.id}
-        tree={tree}
-        onUpload={handleUpload}
-        onRename={handleRename}
-        onDelete={handleDelete}
-        onDownload={handleDownload}
-      />
+      {isLoading ? (
+        <div className="rounded-lg border border-border bg-card px-4 py-10 text-center text-xs text-muted-foreground">
+          Loading files…
+        </div>
+      ) : tree ? (
+        <FileTree
+          key={projectId}
+          tree={tree}
+          onUpload={handleUpload}
+          onCreateFolder={handleCreateFolder}
+          onRename={handleRename}
+          onDelete={handleDelete}
+          onDownload={handleDownload}
+        />
+      ) : (
+        <EmptyState
+          icon={HardDrive}
+          title="Folder not available"
+          description="This project's persistent folder could not be loaded."
+          className="py-10"
+        />
+      )}
     </div>
   );
 }

@@ -33,7 +33,7 @@ function InfoTile({ icon: Icon, label, value, mono }) {
   );
 }
 
-export default function ProjectOverview({ project, deployments = [], envVars = [], folder, environment }) {
+export default function ProjectOverview({ project, deployments = [], envVars = [], environment }) {
   const latest = deployments[0];
   const liveUrl = projectAddress(project);
   const envType = environment ? getEnvType(environment.type) : null;
@@ -149,7 +149,7 @@ export default function ProjectOverview({ project, deployments = [], envVars = [
             value={project.auto_deploy ? "Enabled" : "Disabled"}
           />
           <InfoTile icon={KeyRound} label="Env variables" value={envVars.length} />
-          <InfoTile icon={HardDrive} label="Files" value={folder?.name || "—"} mono />
+          <InfoTile icon={HardDrive} label="Folder" value="/app/data" mono />
           <InfoTile
             icon={Calendar}
             label="Created"

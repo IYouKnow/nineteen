@@ -1,5 +1,3 @@
-import db from '@/lib/db';
-
 // Database resource metadata for the Databases area.
 // Databases are first-class infrastructure resources, independent of projects,
 // and can be connected to one or more projects via the DatabaseConnection entity.

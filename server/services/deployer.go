@@ -408,8 +408,9 @@ var sizeUnits = map[string]int64{
 }
 
 // Run starts a published container and returns its id. If envFile is non-empty
-// its content is passed to the container via --env-file.
-func (d *Deployer) Run(ctx context.Context, image, name string, hostPort, containerPort int, envFile string, log func(string)) (string, error) {
+// its content is passed to the container via --env-file. If dataDir is
+// non-empty it is bind-mounted at ProjectDataMount so the app's data persists.
+func (d *Deployer) Run(ctx context.Context, image, name string, hostPort, containerPort int, envFile, dataDir string, log func(string)) (string, error) {
 	args := []string{
 		"run", "-d",
 		"--name", name,
@@ -418,6 +419,9 @@ func (d *Deployer) Run(ctx context.Context, image, name string, hostPort, contai
 	}
 	if envFile != "" {
 		args = append(args, "--env-file", envFile)
+	}
+	if dataDir != "" {
+		args = append(args, "--mount", "type=bind,source="+filepath.ToSlash(dataDir)+",target="+ProjectDataMount)
 	}
 	args = append(args, image)
 

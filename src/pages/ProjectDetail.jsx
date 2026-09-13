@@ -1,7 +1,6 @@
-import db from '@/lib/db';
 import * as api from "@/lib/api";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -97,23 +96,6 @@ export default function ProjectDetail() {
     queryKey: ["envvars", projectId],
     queryFn: () => api.envVars.list(projectId),
   });
-
-  // Every project has a persistent folder by default. The backend doesn't
-  // expose a file listing yet, so derive the folder from the project record.
-  const folder = useMemo(() => {
-    if (!project) return null;
-    const slug =
-      project.slug ||
-      (project.name || "project").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    return {
-      id: `folder-${project.id}`,
-      project_id: project.id,
-      name: `${slug}-data`,
-      source: "/data",
-      destination: "/app/data",
-      created_date: project.created_date,
-    };
-  }, [project]);
 
   // --- Environments (frontend mock layer) ---
   const [environments, setEnvironments] = useState([]);
@@ -259,7 +241,6 @@ export default function ProjectDetail() {
 
   const remove = async () => {
     await api.projects.delete(project.id);
-    if (envVars.length) await db.entities.EnvironmentVariable.deleteMany({ project_id: projectId });
     qc.invalidateQueries({ queryKey: ["projects"] });
     qc.invalidateQueries({ queryKey: ["deployments-recent"] });
     navigate("/projects");
@@ -418,7 +399,6 @@ export default function ProjectDetail() {
             environment={environment}
             deployments={envDeployments}
             envVars={envVariables}
-            folder={folder}
           />
         )}
         {tab === "deployments" && (
@@ -442,7 +422,7 @@ export default function ProjectDetail() {
           />
         )}
         {tab === "buildfile" && <BuildFileTab project={project} />}
-        {tab === "files" && <ProjectFiles folder={folder} />}
+        {tab === "files" && <ProjectFiles projectId={project.id} />}
         {tab === "architecture" &&
           (isProd ? (
             <ProjectArchitecture project={project} onOpenLogs={() => setTab("logs")} />

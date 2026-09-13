@@ -1,5 +1,3 @@
-import db from '@/lib/db';
-
 // Frontend-only environment model for projects.
 // Environments are optional & configurable; every project starts with a single
 // Production environment. Additional environments (Staging / Development / Custom)

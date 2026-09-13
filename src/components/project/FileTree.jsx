@@ -10,6 +10,7 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  FolderPlus,
   HardDrive,
   Image as ImageIcon,
   Pencil,
@@ -181,7 +182,7 @@ function FileRow({
               </button>
             }
             title={`Delete ${isFolder ? "folder" : "file"}?`}
-            description={`"${node.name}" will be removed from the mount.`}
+            description={`"${node.name}" will be permanently removed.`}
             confirmLabel="Delete"
             onConfirm={() => onDelete(node.path)}
           />
@@ -191,11 +192,20 @@ function FileRow({
   );
 }
 
-export default function FileTree({ tree, onUpload, onRename, onDelete, onDownload }) {
+export default function FileTree({
+  tree,
+  onUpload,
+  onCreateFolder,
+  onRename,
+  onDelete,
+  onDownload,
+}) {
   const [expanded, setExpanded] = useState(() => new Set());
   const [selectedPath, setSelectedPath] = useState(tree?.path || null);
   const [renaming, setRenaming] = useState(null);
   const [draft, setDraft] = useState("");
+  const [folderParent, setFolderParent] = useState(null);
+  const [folderName, setFolderName] = useState("");
   const inputRef = useRef(null);
   const targetRef = useRef(tree?.path || null);
 
@@ -243,6 +253,17 @@ export default function FileTree({ tree, onUpload, onRename, onDelete, onDownloa
     setRenaming(null);
   };
 
+  const startCreateFolder = (parentPath) => {
+    setFolderParent(parentPath || tree?.path || "");
+    setFolderName("");
+  };
+
+  const commitCreateFolder = () => {
+    const name = folderName.trim();
+    if (name) onCreateFolder?.(folderParent, name);
+    setFolderParent(null);
+  };
+
   if (!tree) return null;
 
   return (
@@ -253,7 +274,17 @@ export default function FileTree({ tree, onUpload, onRename, onDelete, onDownloa
         <span className="text-[11px] text-muted-foreground">
           {stats.files} file{stats.files === 1 ? "" : "s"} · {formatBytes(stats.size)}
         </span>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-1.5">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5 text-xs"
+            title={`New folder in ${uploadTarget}`}
+            onClick={() => startCreateFolder(uploadTarget)}
+          >
+            <FolderPlus className="h-3.5 w-3.5" />
+            New folder
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -311,6 +342,33 @@ export default function FileTree({ tree, onUpload, onRename, onDelete, onDownloa
             </Button>
             <Button onClick={commitRename} disabled={!draft.trim()}>
               Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={folderParent !== null} onOpenChange={(open) => !open && setFolderParent(null)}>
+        <DialogContent className="border-border bg-popover">
+          <DialogHeader>
+            <DialogTitle>New folder</DialogTitle>
+          </DialogHeader>
+          <div className="py-2">
+            <Label className="text-xs">Name</Label>
+            <Input
+              autoFocus
+              value={folderName}
+              onChange={(e) => setFolderName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && commitCreateFolder()}
+              placeholder="uploads"
+              className="mt-1.5 font-mono"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFolderParent(null)}>
+              Cancel
+            </Button>
+            <Button onClick={commitCreateFolder} disabled={!folderName.trim()}>
+              Create
             </Button>
           </DialogFooter>
         </DialogContent>

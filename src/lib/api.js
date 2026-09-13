@@ -19,6 +19,21 @@ async function doFetch(url, options = {}) {
   return txt ? JSON.parse(txt) : null;
 }
 
+// Multipart uploads must not set Content-Type (the browser adds the boundary).
+async function doUpload(url, formData) {
+  const res = await fetch(`${API_URL}${url}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${localStorage.getItem("nineteen_token")}` },
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || res.statusText);
+  }
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : null;
+}
+
 export const projects = {
   list: () => doFetch("/api/projects"),
   get: (id) => doFetch(`/api/projects/${id}`),
@@ -170,6 +185,38 @@ export const envVars = {
   update: (projectId, id, payload) =>
     doFetch(`/api/projects/${projectId}/env-vars/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
   remove: (projectId, id) => doFetch(`/api/projects/${projectId}/env-vars/${id}`, { method: "DELETE" }),
+};
+
+export const projectFiles = {
+  list: (projectId) => doFetch(`/api/projects/${projectId}/files`),
+  upload: (projectId, parent, files) => {
+    const form = new FormData();
+    form.append("path", parent || "");
+    Array.from(files).forEach((file) => form.append("files", file, file.name));
+    return doUpload(`/api/projects/${projectId}/files/upload`, form);
+  },
+  createFolder: (projectId, parent, name) =>
+    doFetch(`/api/projects/${projectId}/files/folder`, {
+      method: "POST",
+      body: JSON.stringify({ path: parent, name }),
+    }),
+  rename: (projectId, path, name) =>
+    doFetch(`/api/projects/${projectId}/files/entry`, {
+      method: "PUT",
+      body: JSON.stringify({ path, name }),
+    }),
+  remove: (projectId, path) =>
+    doFetch(`/api/projects/${projectId}/files/entry?path=${encodeURIComponent(path)}`, {
+      method: "DELETE",
+    }),
+  download: async (projectId, path) => {
+    const res = await fetch(
+      `${API_URL}/api/projects/${projectId}/files/download?path=${encodeURIComponent(path)}`,
+      { headers: { Authorization: `Bearer ${localStorage.getItem("nineteen_token")}` } }
+    );
+    if (!res.ok) throw new Error("Download failed");
+    return res.blob();
+  },
 };
 
 export const update = {
