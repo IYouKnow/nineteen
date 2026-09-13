@@ -187,6 +187,17 @@ export const envVars = {
   remove: (projectId, id) => doFetch(`/api/projects/${projectId}/env-vars/${id}`, { method: "DELETE" }),
 };
 
+export const projectVolumes = {
+  list: (projectId) => doFetch(`/api/projects/${projectId}/volumes`),
+  create: (projectId, payload) =>
+    doFetch(`/api/projects/${projectId}/volumes`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  remove: (projectId, volumeId) =>
+    doFetch(`/api/projects/${projectId}/volumes/${volumeId}`, { method: "DELETE" }),
+};
+
 export const projectFiles = {
   list: (projectId) => doFetch(`/api/projects/${projectId}/files`),
   upload: (projectId, parent, files) => {

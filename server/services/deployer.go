@@ -407,10 +407,16 @@ var sizeUnits = map[string]int64{
 	"KIB": 1 << 10, "MIB": 1 << 20, "GIB": 1 << 30, "TIB": 1 << 40,
 }
 
+// BindMount maps a host path to a path inside a container.
+type BindMount struct {
+	Source string
+	Target string
+}
+
 // Run starts a published container and returns its id. If envFile is non-empty
-// its content is passed to the container via --env-file. If dataDir is
-// non-empty it is bind-mounted at ProjectDataMount so the app's data persists.
-func (d *Deployer) Run(ctx context.Context, image, name string, hostPort, containerPort int, envFile, dataDir string, log func(string)) (string, error) {
+// its content is passed to the container via --env-file. Each bind mount maps a
+// host path into the container so data persists across redeploys.
+func (d *Deployer) Run(ctx context.Context, image, name string, hostPort, containerPort int, envFile string, mounts []BindMount, log func(string)) (string, error) {
 	args := []string{
 		"run", "-d",
 		"--name", name,
@@ -420,8 +426,11 @@ func (d *Deployer) Run(ctx context.Context, image, name string, hostPort, contai
 	if envFile != "" {
 		args = append(args, "--env-file", envFile)
 	}
-	if dataDir != "" {
-		args = append(args, "--mount", "type=bind,source="+filepath.ToSlash(dataDir)+",target="+ProjectDataMount)
+	for _, m := range mounts {
+		if m.Source == "" || m.Target == "" {
+			continue
+		}
+		args = append(args, "--mount", "type=bind,source="+filepath.ToSlash(m.Source)+",target="+m.Target)
 	}
 	args = append(args, image)
 

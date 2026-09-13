@@ -270,7 +270,9 @@ export default function FileTree({
     <div className="overflow-hidden rounded-lg border border-border bg-card">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border/60 bg-muted/20 px-3 py-2">
         <HardDrive className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <code className="truncate font-mono text-xs font-medium text-foreground">{tree.path}</code>
+        <code className="truncate font-mono text-xs font-medium text-foreground">
+          {tree.label || tree.path}
+        </code>
         <span className="text-[11px] text-muted-foreground">
           {stats.files} file{stats.files === 1 ? "" : "s"} · {formatBytes(stats.size)}
         </span>

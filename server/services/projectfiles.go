@@ -4,16 +4,23 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-// ProjectDataMount is where a project's persistent folder is mounted inside the
-// running container.
+// ProjectDataMount is the default container path a project's data folder is
+// mounted at.
 const ProjectDataMount = "/app/data"
+
+var (
+	hostDataDirOnce sync.Once
+	hostDataDirVal  string
+)
 
 // DataDir returns the server's data directory: NINETEEN_DATA_DIR when set,
 // otherwise the directory holding DB_PATH, otherwise ./data.
@@ -38,6 +45,40 @@ func ProjectDataDir(projectID int64) string {
 	return dir
 }
 
+// HostProjectDataDir returns the host path of a project's folder, for bind
+// mounting into project containers.
+func HostProjectDataDir(projectID int64) string {
+	return filepath.Join(HostDataDir(), "projects", strconv.FormatInt(projectID, 10))
+}
+
+// HostDataDir returns the host path that corresponds to DataDir(). The server
+// may itself run in a container whose data dir is bind-mounted from the host;
+// the Docker daemon (which starts project containers) resolves bind sources on
+// the host, so the in-container path must be translated before it is handed to
+// Docker. Falls back to the local absolute path when not containerized.
+func HostDataDir() string {
+	hostDataDirOnce.Do(func() {
+		hostDataDirVal = detectHostDataDir()
+	})
+	return hostDataDirVal
+}
+
+func detectHostDataDir() string {
+	if dir := os.Getenv("NINETEEN_HOST_DATA_DIR"); dir != "" {
+		return dir
+	}
+	u := NewUpdateService("")
+	if insp, err := u.inspectContainer(u.ContainerName); err == nil {
+		if host := u.findDataMount(insp); host != "" {
+			return host
+		}
+	}
+	if abs, err := filepath.Abs(DataDir()); err == nil {
+		return abs
+	}
+	return DataDir()
+}
+
 // EnsureProjectDataDir creates (if needed) and returns the project's folder.
 func EnsureProjectDataDir(projectID int64) (string, error) {
 	dir := ProjectDataDir(projectID)
@@ -52,18 +93,51 @@ func RemoveProjectDataDir(projectID int64) error {
 	return os.RemoveAll(ProjectDataDir(projectID))
 }
 
-// resolveProjectPath maps a client-supplied container path (e.g.
-// /app/data/uploads/hero.jpg) to an absolute host path under the project
-// folder, rejecting anything that would escape it.
+// ValidHostPath normalizes a project-relative volume folder and rejects
+// anything that could escape the project directory.
+func ValidHostPath(p string) (string, error) {
+	p = strings.TrimSpace(strings.ReplaceAll(p, "\\", "/"))
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return "", fmt.Errorf("folder is required")
+	}
+	clean := path.Clean(p)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "\x00") {
+		return "", fmt.Errorf("invalid folder")
+	}
+	return clean, nil
+}
+
+// ProjectVolumeDir returns the in-container path of a volume's host folder.
+func ProjectVolumeDir(projectID int64, hostPath string) string {
+	return filepath.Join(ProjectDataDir(projectID), filepath.FromSlash(hostPath))
+}
+
+// EnsureProjectVolumeDir creates (if needed) and returns the volume's folder.
+func EnsureProjectVolumeDir(projectID int64, hostPath string) (string, error) {
+	dir := ProjectVolumeDir(projectID, hostPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// HostProjectVolumeDir returns the host path of a volume's folder, for bind
+// mounting into a project container.
+func HostProjectVolumeDir(projectID int64, hostPath string) string {
+	return filepath.Join(HostProjectDataDir(projectID), filepath.FromSlash(hostPath))
+}
+
+// resolveProjectPath maps a client-supplied path (relative to the project
+// folder, e.g. "data/uploads/hero.jpg") to an absolute host path, rejecting
+// anything that would escape the project folder.
 func resolveProjectPath(projectID int64, clientPath string) (string, error) {
 	root, err := EnsureProjectDataDir(projectID)
 	if err != nil {
 		return "", err
 	}
-	rel := strings.TrimPrefix(clientPath, ProjectDataMount)
-	rel = strings.TrimPrefix(rel, "/")
-	// Clean against an absolute root so "../" segments can't climb above it.
-	clean := filepath.Clean("/" + filepath.ToSlash(rel))
+	rel := strings.TrimPrefix(strings.TrimSpace(clientPath), "/")
+	clean := path.Clean("/" + rel)
 	full := filepath.Join(root, filepath.FromSlash(clean))
 	if full != root && !strings.HasPrefix(full, root+string(os.PathSeparator)) {
 		return "", fmt.Errorf("path escapes the project folder")
@@ -75,6 +149,7 @@ func resolveProjectPath(projectID int64, clientPath string) (string, error) {
 type FileNode struct {
 	Name     string      `json:"name"`
 	Path     string      `json:"path"`
+	Label    string      `json:"label,omitempty"`
 	Type     string      `json:"type"`
 	Size     int64       `json:"size"`
 	Modified string      `json:"modified"`
@@ -86,7 +161,8 @@ const (
 	maxTreeEntries = 2000
 )
 
-// ProjectFileTree builds the recursive file tree for a project's folder.
+// ProjectFileTree builds the recursive file tree for a project's folder. Node
+// paths are relative to the folder root.
 func ProjectFileTree(projectID int64) (*FileNode, error) {
 	root, err := EnsureProjectDataDir(projectID)
 	if err != nil {
@@ -97,11 +173,12 @@ func ProjectFileTree(projectID int64) (*FileNode, error) {
 		return nil, err
 	}
 	return &FileNode{
-		Name:     "data",
-		Path:     ProjectDataMount,
+		Name:     filepath.Base(root),
+		Path:     "",
+		Label:    HostProjectDataDir(projectID),
 		Type:     "folder",
 		Modified: info.ModTime().UTC().Format(time.RFC3339),
-		Children: buildChildren(root, ProjectDataMount, 0),
+		Children: buildChildren(root, "", 0),
 	}, nil
 }
 
@@ -125,7 +202,7 @@ func buildChildren(dir, base string, depth int) []*FileNode {
 		name := entry.Name()
 		node := &FileNode{
 			Name:     name,
-			Path:     base + "/" + name,
+			Path:     path.Join(base, name),
 			Modified: info.ModTime().UTC().Format(time.RFC3339),
 		}
 		if entry.IsDir() {
@@ -167,7 +244,7 @@ func uniqueEntryName(dir, name string) string {
 	}
 }
 
-// CreateProjectFolder creates a folder under parentPath.
+// CreateProjectFolder creates a folder under parentPath (project-relative).
 func CreateProjectFolder(projectID int64, parentPath, name string) error {
 	name = strings.TrimSpace(name)
 	if !validEntryName(name) {

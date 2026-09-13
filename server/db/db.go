@@ -186,6 +186,16 @@ func runMigrations() {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_db_connections_database ON database_connections(database_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_db_connections_project ON database_connections(project_id)`,
+		`CREATE TABLE IF NOT EXISTS project_volumes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			host_path TEXT NOT NULL,
+			container_path TEXT NOT NULL,
+			created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_date DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_project_volumes_project ON project_volumes(project_id)`,
 	}
 
 	for _, m := range migrations {
@@ -219,6 +229,16 @@ func runMigrations() {
 		if _, err := DB.Exec(c.ddl); err != nil {
 			log.Fatalf("Migration failed: %v", err)
 		}
+	}
+
+	// Every project gets a default data volume. Backfill any created before the
+	// project_volumes table existed.
+	if _, err := DB.Exec(
+		`INSERT INTO project_volumes (project_id, name, host_path, container_path)
+		 SELECT id, 'data', 'data', '/app/data' FROM projects
+		 WHERE id NOT IN (SELECT project_id FROM project_volumes)`,
+	); err != nil {
+		log.Fatalf("Migration failed: %v", err)
 	}
 }
 

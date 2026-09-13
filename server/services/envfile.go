@@ -76,10 +76,10 @@ func WriteEnvFile(vars []models.EnvVar) (string, error) {
 }
 
 // WriteComposeOverride generates a compose override that injects the given
-// absolute .env file and/or bind mount into every service. Returns "" when
+// absolute .env file and/or bind mounts into every service. Returns "" when
 // there are no services or nothing to inject.
-func WriteComposeOverride(serviceNames []string, envFile, dataHost, dataTarget string) (string, error) {
-	if len(serviceNames) == 0 || (envFile == "" && dataHost == "") {
+func WriteComposeOverride(serviceNames []string, envFile string, mounts []BindMount) (string, error) {
+	if len(serviceNames) == 0 || (envFile == "" && len(mounts) == 0) {
 		return "", nil
 	}
 	f, err := os.CreateTemp("", "nineteen-override-*.yml")
@@ -93,11 +93,16 @@ func WriteComposeOverride(serviceNames []string, envFile, dataHost, dataTarget s
 		if envFile != "" {
 			b.WriteString("    env_file:\n      - " + envFile + "\n")
 		}
-		if dataHost != "" {
+		if len(mounts) > 0 {
 			b.WriteString("    volumes:\n")
-			b.WriteString("      - type: bind\n")
-			b.WriteString("        source: " + filepath.ToSlash(dataHost) + "\n")
-			b.WriteString("        target: " + dataTarget + "\n")
+			for _, m := range mounts {
+				if m.Source == "" || m.Target == "" {
+					continue
+				}
+				b.WriteString("      - type: bind\n")
+				b.WriteString("        source: " + filepath.ToSlash(m.Source) + "\n")
+				b.WriteString("        target: " + m.Target + "\n")
+			}
 		}
 	}
 	if _, err := f.WriteString(b.String()); err != nil {

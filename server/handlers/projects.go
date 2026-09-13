@@ -204,6 +204,10 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	id, _ := result.LastInsertId()
 	_, _ = services.EnsureProjectDataDir(id)
+	_, _ = db.DB.Exec(
+		"INSERT INTO project_volumes (project_id, name, host_path, container_path) VALUES (?, ?, ?, ?)",
+		id, "data", "data", services.ProjectDataMount,
+	)
 	p, err := getProject(claims.UserID, id)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to load project")
@@ -1120,13 +1124,12 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 			log("info", fmt.Sprintf("Assigned free port %d", hostPort))
 		}
 	}
-	dataHost, err := services.EnsureProjectDataDir(project.ID)
-	if err != nil {
-		log("warn", "Could not prepare the persistent folder: "+err.Error())
-		dataHost = ""
+	mounts := projectBindMounts(project.ID)
+	if len(mounts) > 0 {
+		log("info", fmt.Sprintf("Mounting %d persistent volume(s)", len(mounts)))
 	}
 	log("info", fmt.Sprintf("Starting container on 127.0.0.1:%d", hostPort))
-	if _, err := d.Run(ctx, image, containerName, hostPort, containerPort, envPath, dataHost, func(line string) { log("info", line) }); err != nil {
+	if _, err := d.Run(ctx, image, containerName, hostPort, containerPort, envPath, mounts, func(line string) { log("info", line) }); err != nil {
 		if ctx.Err() != nil {
 			log("warn", "Deployment cancelled")
 			finishDeploymentCancelled(deployID, project)
@@ -1168,15 +1171,11 @@ func composeDeploy(ctx context.Context, log func(string, string), d *services.De
 
 	// Prepare the persistent folder, then inject it (and env vars) into every
 	// service via a generated override.
-	dataHost, err := services.EnsureProjectDataDir(project.ID)
-	if err != nil {
-		log("warn", "Could not prepare the persistent folder: "+err.Error())
-		dataHost = ""
-	}
+	mounts := projectBindMounts(project.ID)
 	overridePath := ""
-	if envPath != "" || dataHost != "" {
+	if envPath != "" || len(mounts) > 0 {
 		if names := services.ComposeServiceNames(filepath.Join(dir, composeFile)); len(names) > 0 {
-			if p, err := services.WriteComposeOverride(names, envPath, dataHost, services.ProjectDataMount); err == nil {
+			if p, err := services.WriteComposeOverride(names, envPath, mounts); err == nil {
 				overridePath = p
 				defer os.Remove(overridePath)
 			} else {

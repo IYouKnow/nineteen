@@ -25,6 +25,20 @@ type Project struct {
 	UpdatedDate   string    `json:"updated_date"`
 }
 
+// ProjectVolume maps a folder inside a project's persistent directory to a path
+// inside the running container. The host folder always lives under the
+// project's data directory; HostDir is the resolved absolute host path.
+type ProjectVolume struct {
+	ID            int64  `json:"id"`
+	ProjectID     int64  `json:"project_id"`
+	Name          string `json:"name"`
+	HostPath      string `json:"host_path"`
+	ContainerPath string `json:"container_path"`
+	HostDir       string `json:"host_dir,omitempty"`
+	CreatedDate   string `json:"created_date"`
+	UpdatedDate   string `json:"updated_date"`
+}
+
 type Deployment struct {
 	ID           int64  `json:"id"`
 	UserID       int64  `json:"user_id"`
