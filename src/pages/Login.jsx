@@ -10,6 +10,8 @@ const API_URL = import.meta.env.VITE_API_URL || "";
 
 export default function Login() {
   const [hasUsers, setHasUsers] = useState(null);
+  const [loadError, setLoadError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [step, setStep] = useState("code");
   const [inviteCode, setInviteCode] = useState("");
   const [username, setUsername] = useState("");
@@ -21,17 +23,29 @@ export default function Login() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    fetch(`${API_URL}/api/auth/has-users`)
-      .then((res) => res.json())
-      .then((data) => {
-        setHasUsers(data.has_users);
+    let cancelled = false;
+    setLoadError(false);
+    setHasUsers(null);
+
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/auth/has-users`);
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
+        const data = await res.json();
+        if (cancelled) return;
+        setHasUsers(!!data.has_users);
         setStep(data.has_users ? "login" : "code");
-      })
-      .catch(() => {
-        setHasUsers(false);
-        setStep("code");
-      });
-  }, []);
+      } catch {
+        // A failed request is NOT the same as "no users". Showing the invite
+        // flow here would wrongly push existing users into registration.
+        if (!cancelled) setLoadError(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
 
   const handleValidateCode = async (e) => {
     e.preventDefault();
@@ -80,6 +94,28 @@ export default function Login() {
       toast.error("Login failed", { description: result.error, duration: Infinity });
     }
   };
+
+  if (loadError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-sm">
+          <CardHeader className="text-center">
+            <CardTitle className="text-xl font-bold">Nineteen</CardTitle>
+            <CardDescription>Couldn&apos;t reach the server</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-center text-sm text-muted-foreground">
+              The dashboard couldn&apos;t contact the API. This is usually a temporary network issue and does not
+              mean your account is gone.
+            </p>
+            <Button className="w-full" onClick={() => setReloadKey((k) => k + 1)}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (hasUsers === null) {
     return (

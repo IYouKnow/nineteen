@@ -38,25 +38,46 @@ export function AuthProvider({ children }) {
       return;
     }
 
+    let cancelled = false;
     fetch(`${API_URL}/api/auth/me`, {
       headers: { Authorization: `Bearer ${storedToken}` },
     })
       .then((res) => {
-        if (!res.ok) throw new Error("Invalid token");
+        // Only a definitive auth rejection ends the session. A network error
+        // or a 5xx (e.g. the server is briefly busy during a deploy) must not
+        // log the user out.
+        if (res.status === 401 || res.status === 403) {
+          const err = new Error("Invalid token");
+          err.definitive = true;
+          throw err;
+        }
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
         return res.json();
       })
       .then((userData) => {
+        if (cancelled) return;
         setUser(userData);
         setToken(storedToken);
       })
-      .catch(() => {
-        localStorage.removeItem(AUTH_TOKEN_KEY);
-        localStorage.removeItem(AUTH_USER_KEY);
-        queryClientInstance.clear();
-        setToken(null);
-        setUser(null);
+      .catch((err) => {
+        if (cancelled) return;
+        if (err && err.definitive) {
+          localStorage.removeItem(AUTH_TOKEN_KEY);
+          localStorage.removeItem(AUTH_USER_KEY);
+          queryClientInstance.clear();
+          setToken(null);
+          setUser(null);
+        }
+        // Otherwise keep the stored session; the user stays signed in and the
+        // next successful /me call refreshes it.
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const login = useCallback(async (username, password) => {
