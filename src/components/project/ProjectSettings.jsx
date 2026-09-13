@@ -10,7 +10,7 @@ import ConfirmDialog from "@/components/dev/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Trash2, AlertTriangle } from "lucide-react";
 
-export default function ProjectSettings({ project, envVars = [], mounts = [], environment, isProd = true, onVarAdd, onVarUpdate, onVarDelete }) {
+export default function ProjectSettings({ project, envVars = [], environment, isProd = true, onVarAdd, onVarUpdate, onVarDelete }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
 
@@ -18,9 +18,6 @@ export default function ProjectSettings({ project, envVars = [], mounts = [], en
     await api.projects.delete(project.id);
     if (envVars.length) {
       await db.entities.EnvironmentVariable.deleteMany({ project_id: project.id });
-    }
-    if (mounts.length) {
-      await db.entities.Mount.deleteMany({ project_id: project.id });
     }
     qc.invalidateQueries({ queryKey: ["projects"] });
     qc.invalidateQueries({ queryKey: ["deployments-recent"] });
@@ -52,7 +49,7 @@ export default function ProjectSettings({ project, envVars = [], mounts = [], en
             <div className="flex-1">
               <h3 className="text-sm font-medium text-foreground">Danger zone</h3>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Deleting a project removes all deployments, environment variables and mounts. This cannot be undone.
+                Deleting a project removes all deployments, environment variables and files. This cannot be undone.
               </p>
               <div className="mt-4">
                 <ConfirmDialog

@@ -16,7 +16,7 @@ function Row({ icon, label, value }) {
   );
 }
 
-export default function ReviewStep({ source, services, config, repository, buildLabel, persistentStorage }) {
+export default function ReviewStep({ source, services, config, repository, buildLabel }) {
   const fw = getFramework(config.framework);
   const selectedSource = SOURCES.find((s) => s.id === source.type);
   const template = source.type === "template" ? TEMPLATES.find((t) => t.id === source.template) : null;
@@ -79,11 +79,7 @@ export default function ReviewStep({ source, services, config, repository, build
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <HardDrive className="h-4 w-4" />
               Persistent storage{" "}
-              {persistentStorage ? (
-                <span className="font-medium text-foreground">enabled</span>
-              ) : (
-                <span className="font-medium text-foreground">disabled</span>
-              )}
+              <span className="font-mono text-xs text-foreground">/data → /app/data</span>
             </div>
           </div>
         </section>

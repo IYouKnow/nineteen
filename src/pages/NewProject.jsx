@@ -1,5 +1,4 @@
 import * as api from "@/lib/api";
-import db from "@/lib/db";
 import { resolveProjectPort } from "@/lib/devStatus";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -35,7 +34,6 @@ export default function NewProject() {
   const [stepId, setStepId] = useState("source");
   const [source, setSource] = useState(emptySource);
   const [services, setServices] = useState([]);
-  const [persistentStorage, setPersistentStorage] = useState(true);
   const [config, setConfig] = useState({
     name: "",
     branch: "main",
@@ -202,15 +200,6 @@ export default function NewProject() {
         author: "you",
         trigger: "manual",
       });
-      if (persistentStorage) {
-        await db.entities.Mount.create({
-          project_id: project.id,
-          name: `${slug}-data`,
-          source: "/data",
-          destination: "/app/data",
-          type: "volume",
-        });
-      }
       qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["deployments-recent"] });
       navigate(`/projects/${project.id}/deployments/${deployment.id}`);
@@ -253,12 +242,7 @@ export default function NewProject() {
             />
           )}
           {activeStep === "infra" && (
-            <InfrastructureStep
-              services={services}
-              setServices={setServices}
-              persistentStorage={persistentStorage}
-              setPersistentStorage={setPersistentStorage}
-            />
+            <InfrastructureStep services={services} setServices={setServices} />
           )}
           {activeStep === "config" && (
             <ConfigurationStep
@@ -275,7 +259,6 @@ export default function NewProject() {
               config={config}
               repository={repository}
               buildLabel={buildLabel}
-              persistentStorage={persistentStorage}
             />
           )}
         </div>

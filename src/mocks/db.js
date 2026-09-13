@@ -162,20 +162,6 @@ function makeEnvVar(data) {
   };
 }
 
-function makeMount(data) {
-  return {
-    created_date: daysAgo(3),
-    destination: "/app/data",
-    id: "",
-    name: "",
-    project_id: "",
-    source: "/data",
-    type: "volume",
-    updated_date: hoursAgo(1),
-    ...data,
-  };
-}
-
 function seedState() {
   const projects = [
     makeProject({
@@ -571,13 +557,7 @@ function seedState() {
     makeEnvVar({ id: "env-013", project_id: "proj-northstar-crm", key: "AUTH_DOMAIN", value: "auth.nineteen.app", is_secret: false, created_date: daysAgo(3) }),
   ];
 
-  const mounts = [
-    makeMount({ id: "mount-001", project_id: "proj-atlas-commerce", name: "product-images", source: "/data/products", destination: "/app/public/products", type: "volume", created_date: daysAgo(9) }),
-    makeMount({ id: "mount-002", project_id: "proj-beacon-api", name: "webhook-buffer", source: "/var/lib/beacon", destination: "/srv/beacon", type: "volume", created_date: daysAgo(6) }),
-    makeMount({ id: "mount-003", project_id: "proj-northstar-crm", name: "crm-exports", source: "/data/exports", destination: "/app/exports", type: "bind", created_date: daysAgo(4) }),
-  ];
-
-  return { projects, databases, deployments, connections, envVars, mounts };
+  return { projects, databases, deployments, connections, envVars };
 }
 
 function createStore() {
@@ -693,7 +673,6 @@ function createStore() {
       currentState.deployments = currentState.deployments.filter((d) => d.project_id !== id);
       currentState.connections = currentState.connections.filter((c) => c.project_id !== id);
       currentState.envVars = currentState.envVars.filter((v) => v.project_id !== id);
-      currentState.mounts = currentState.mounts.filter((m) => m.project_id !== id);
     },
   });
 
@@ -762,15 +741,6 @@ function createStore() {
     }),
   });
 
-  const mountApi = makeEntityApi("mounts", {
-    create: (data) => makeMount({
-      id: data.id || `mount-${Date.now()}`,
-      ...data,
-      created_date: data.created_date || new Date().toISOString(),
-      updated_date: new Date().toISOString(),
-    }),
-  });
-
   return {
     auth: {
       isAuthenticated: async () => true,
@@ -796,7 +766,6 @@ function createStore() {
       Database: databaseApi,
       DatabaseConnection: connectionApi,
       EnvironmentVariable: envVarApi,
-      Mount: mountApi,
     },
     integrations: {
       Core: {

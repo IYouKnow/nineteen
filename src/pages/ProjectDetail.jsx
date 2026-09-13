@@ -1,7 +1,7 @@
 import db from '@/lib/db';
 import * as api from "@/lib/api";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -32,7 +32,7 @@ import ProjectOverview from "@/components/project/ProjectOverview";
 import ProjectDeployments from "@/components/project/ProjectDeployments";
 import ProjectSource from "@/components/project/ProjectSource";
 import ProjectSettings from "@/components/project/ProjectSettings";
-import MountEditor from "@/components/project/MountEditor";
+import ProjectFiles from "@/components/project/ProjectFiles";
 import BuildFileTab from "@/components/project/BuildFileTab";
 import ProjectDatabases from "@/components/project/ProjectDatabases";
 import ProjectStrategy from "@/components/project/ProjectStrategy";
@@ -60,7 +60,7 @@ const TABS = [
   { id: "strategy", label: "Strategy", disabled: true },
   { id: "source", label: "Source" },
   { id: "buildfile", label: "Build file" },
-  { id: "mounts", label: "Mounts" },
+  { id: "files", label: "Files" },
   { id: "architecture", label: "Architecture", disabled: true },
   { id: "databases", label: "Databases", disabled: true },
   { id: "environments", label: "Environments", disabled: true },
@@ -98,10 +98,22 @@ export default function ProjectDetail() {
     queryFn: () => api.envVars.list(projectId),
   });
 
-  const { data: mounts = [] } = useQuery({
-    queryKey: ["mounts", projectId],
-    queryFn: () => db.entities.Mount.filter({ project_id: projectId }),
-  });
+  // Every project has a persistent folder by default. The backend doesn't
+  // expose a file listing yet, so derive the folder from the project record.
+  const folder = useMemo(() => {
+    if (!project) return null;
+    const slug =
+      project.slug ||
+      (project.name || "project").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    return {
+      id: `folder-${project.id}`,
+      project_id: project.id,
+      name: `${slug}-data`,
+      source: "/data",
+      destination: "/app/data",
+      created_date: project.created_date,
+    };
+  }, [project]);
 
   // --- Environments (frontend mock layer) ---
   const [environments, setEnvironments] = useState([]);
@@ -248,7 +260,6 @@ export default function ProjectDetail() {
   const remove = async () => {
     await api.projects.delete(project.id);
     if (envVars.length) await db.entities.EnvironmentVariable.deleteMany({ project_id: projectId });
-    if (mounts.length) await db.entities.Mount.deleteMany({ project_id: projectId });
     qc.invalidateQueries({ queryKey: ["projects"] });
     qc.invalidateQueries({ queryKey: ["deployments-recent"] });
     navigate("/projects");
@@ -407,7 +418,7 @@ export default function ProjectDetail() {
             environment={environment}
             deployments={envDeployments}
             envVars={envVariables}
-            mounts={mounts}
+            folder={folder}
           />
         )}
         {tab === "deployments" && (
@@ -431,7 +442,7 @@ export default function ProjectDetail() {
           />
         )}
         {tab === "buildfile" && <BuildFileTab project={project} />}
-        {tab === "mounts" && <MountEditor projectId={project.id} mounts={mounts} />}
+        {tab === "files" && <ProjectFiles folder={folder} />}
         {tab === "architecture" &&
           (isProd ? (
             <ProjectArchitecture project={project} onOpenLogs={() => setTab("logs")} />
@@ -472,7 +483,6 @@ export default function ProjectDetail() {
             environment={environment}
             isProd={isProd}
             envVars={envVariables}
-            mounts={mounts}
             onVarAdd={onVarAdd}
             onVarUpdate={onVarUpdate}
             onVarDelete={onVarDelete}
