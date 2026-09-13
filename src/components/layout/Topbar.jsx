@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Menu, Search, Bell, User, Settings, LogOut, Sun, Moon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useTheme } from "@/lib/theme";
 import { useAuth } from "@/hooks/useAuth";
+import { update } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import GlobalSearch from "@/components/layout/GlobalSearch";
 import {
@@ -29,7 +30,23 @@ export default function Topbar({ onMenu }) {
   const { theme, setTheme } = useTheme();
   const { user, logout } = useAuth();
   const [searchOpen, setSearchOpen] = useState(false);
+  const [version, setVersion] = useState(null);
   const name = user?.display_name || user?.username || "User";
+
+  useEffect(() => {
+    let cancelled = false;
+    update
+      .poll()
+      .then((data) => {
+        if (!cancelled) setVersion(data?.current_version || "dev");
+      })
+      .catch(() => {
+        if (!cancelled) setVersion("dev");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-md">
@@ -41,7 +58,7 @@ export default function Topbar({ onMenu }) {
       </button>
 
       <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground/60">
-        <span>nineteen@0.3.2</span>
+        <span>nineteen@{version ?? "…"}</span>
         <span className="hidden sm:inline text-muted-foreground/30">·</span>
         <span className="hidden sm:inline">self-hosted</span>
       </div>

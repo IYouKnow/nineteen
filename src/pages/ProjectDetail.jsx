@@ -56,7 +56,7 @@ const TABS = [
   { id: "overview", label: "Overview" },
   { id: "deployments", label: "Deployments" },
   { id: "logs", label: "Logs" },
-  { id: "strategy", label: "Strategy", disabled: true },
+  { id: "strategy", label: "Strategy" },
   { id: "source", label: "Source" },
   { id: "buildfile", label: "Build file" },
   { id: "files", label: "Files" },
