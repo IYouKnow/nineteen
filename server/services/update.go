@@ -294,10 +294,14 @@ func (u *UpdateService) runUpdate(targetVersion string) {
 	}
 	u.Log("Image built successfully")
 
-	// Tag the running image so it is retained for manual rollback.
+	// Tag the running image under a stable name so it is retained for manual
+	// rollback. If this fails there is no fallback, so abort before touching the
+	// running container.
 	if err := runCommand("docker", "tag", insp.Image, u.PreviousImage); err != nil {
-		u.Log("warn: failed to tag previous image " + u.PreviousImage + ": " + err.Error())
+		u.fail("Failed to tag previous image " + u.PreviousImage + ": " + err.Error())
+		return
 	}
+	u.Log("Tagged previous image as " + u.PreviousImage)
 
 	runArgs, err := u.buildRunArgs(insp)
 	if err != nil {
@@ -308,12 +312,14 @@ func (u *UpdateService) runUpdate(targetVersion string) {
 
 	st := u.GetState()
 	st.State = "swapping"
-	st.PreviousImage = insp.Image
+	st.PreviousImage = u.PreviousImage
 	st.Message = "Replacing container…"
 	u.SetState(st)
 	u.Log("Launching update helper to swap the container")
 
-	if err := u.launchHelper("update", runArgs, u.NewImage, insp.Image, targetVersion); err != nil {
+	// The freshly built image is the helper itself and the target; the stable
+	// previous tag is the fallback if the new version fails to start.
+	if err := u.launchHelper("update", runArgs, u.NewImage, u.NewImage, u.PreviousImage, targetVersion); err != nil {
 		u.fail("Failed to launch update helper: " + err.Error())
 		return
 	}
@@ -322,12 +328,20 @@ func (u *UpdateService) runUpdate(targetVersion string) {
 
 func (u *UpdateService) rollbackTo(prevImage string) {
 	u.Log("Manual rollback to " + prevImage)
+
+	// Never remove the running container unless the rollback target actually
+	// exists — a missing target would otherwise leave the instance with nothing.
+	if err := runCommand("docker", "image", "inspect", prevImage); err != nil {
+		u.fail("Rollback target image " + prevImage + " is not available: " + err.Error())
+		return
+	}
+
 	u.SetState(UpdateState{
-		State:         "swapping",
+		State:          "swapping",
 		CurrentVersion: u.Version,
-		Repo:          u.Repo,
-		PreviousImage: prevImage,
-		Message:       "Rolling back…",
+		Repo:           u.Repo,
+		PreviousImage:  prevImage,
+		Message:        "Rolling back…",
 	})
 
 	insp, err := u.inspectContainer(u.ContainerName)
@@ -341,7 +355,9 @@ func (u *UpdateService) rollbackTo(prevImage string) {
 		return
 	}
 	u.Log("Launching update helper to roll back")
-	if err := u.launchHelper("rollback", runArgs, prevImage, "", ""); err != nil {
+	// The currently running image is both the helper (it exists and carries the
+	// docker CLI) and the fallback if the rollback target fails to start.
+	if err := u.launchHelper("rollback", runArgs, insp.Image, prevImage, insp.Image, ""); err != nil {
 		u.fail("Failed to launch rollback helper: " + err.Error())
 		return
 	}
@@ -678,10 +694,11 @@ func (u *UpdateService) buildImage(dir, version string) error {
 
 // ---- detached helper ----
 
-// launchHelper runs a detached helper container (from the just-built image,
-// which already carries the docker CLI) that performs the actual swap. Because
-// the helper is a separate container it survives the current one being removed.
-func (u *UpdateService) launchHelper(mode string, runArgs []string, image, fallback, version string) error {
+// launchHelper runs a detached helper container (from helperImage, which must
+// already exist and carries the docker CLI) that performs the actual swap.
+// Because the helper is a separate container it survives the current one being
+// removed.
+func (u *UpdateService) launchHelper(mode string, runArgs []string, helperImage, image, fallback, version string) error {
 	runArgsJSON, _ := json.Marshal(runArgs)
 	env := []string{
 		"NINETEEN_HELPER_CONTAINER=" + u.ContainerName,
@@ -705,9 +722,9 @@ func (u *UpdateService) launchHelper(mode string, runArgs []string, image, fallb
 	for _, e := range env {
 		args = append(args, "-e", e)
 	}
-	// The freshly built image already contains the docker CLI and the app
-	// binary, so we reuse it as the helper and override its entrypoint.
-	args = append(args, "--entrypoint", "/app/nineteen-server", u.NewImage, "update-helper")
+	// The helper image already contains the docker CLI and the app binary, so we
+	// reuse it as the helper and override its entrypoint.
+	args = append(args, "--entrypoint", "/app/nineteen-server", helperImage, "update-helper")
 
 	out, err := exec.Command("docker", args...).CombinedOutput()
 	if err != nil {
@@ -741,6 +758,15 @@ func RunUpdateHelper() {
 	}
 
 	log("Update helper started (mode=" + mode + ")")
+
+	// Refuse to remove the running container unless the target image exists;
+	// otherwise a bad target would leave the instance with no container at all.
+	if err := runCommand("docker", "image", "inspect", image); err != nil {
+		log("Target image " + image + " is not available: " + err.Error())
+		writeHelperState(stateFile, "failed", "Target image "+image+" is not available: "+err.Error())
+		return
+	}
+
 	runCommandQuiet("docker", "rm", "-f", container)
 
 	if err := runContainer(container, runArgs, image); err != nil {
