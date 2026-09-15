@@ -1178,6 +1178,9 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 			log("info", fmt.Sprintf("Assigned free port %d", hostPort))
 		}
 	}
+	// Point the project's data volume at wherever the built image actually
+	// writes, so the Files tab reflects the app's real data directory.
+	syncProjectDataMount(project.ID, image, func(msg string) { log("info", msg) })
 	mounts := projectBindMounts(project.ID)
 	if len(mounts) > 0 {
 		log("info", fmt.Sprintf("Mounting %d persistent volume(s)", len(mounts)))

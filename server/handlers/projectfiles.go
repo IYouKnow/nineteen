@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -77,6 +78,45 @@ func projectBindMounts(projectID int64) []services.BindMount {
 		})
 	}
 	return mounts
+}
+
+// syncProjectDataMount points the project's default data volume at the folder
+// the built image actually writes to, so files the app persists show up in the
+// Files tab. It only ever retargets the untouched default mount (/app/data); a
+// volume the user has customised, or one whose path already covers the detected
+// directory, is left alone.
+func syncProjectDataMount(projectID int64, image string, log func(string)) {
+	detected := services.DetectDataMount(image)
+	if detected == "" {
+		return
+	}
+	vols, err := loadProjectVolumes(projectID)
+	if err != nil || len(vols) == 0 {
+		return
+	}
+	for _, v := range vols {
+		if v.ContainerPath == detected || strings.HasPrefix(detected+"/", v.ContainerPath+"/") {
+			return // the detected directory is already covered by a mount
+		}
+	}
+	target := vols[0]
+	for _, v := range vols {
+		if v.Name == "data" {
+			target = v
+			break
+		}
+	}
+	if target.ContainerPath != services.ProjectDataMount {
+		log(fmt.Sprintf("App data looks like %s, but the %q volume targets %s — leaving it as configured", detected, target.Name, target.ContainerPath))
+		return
+	}
+	if _, err := db.DB.Exec(
+		"UPDATE project_volumes SET container_path = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
+		detected, target.ID,
+	); err != nil {
+		return
+	}
+	log(fmt.Sprintf("App data directory detected at %s — mounting the project folder there (was %s)", detected, services.ProjectDataMount))
 }
 
 func validContainerPath(p string) bool {

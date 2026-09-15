@@ -262,6 +262,19 @@ export const projectFiles = {
     if (!res.ok) throw new Error("Download failed");
     return res.blob();
   },
+  containerList: (projectId, path = "/") =>
+    doFetch(`/api/projects/${projectId}/container-files?path=${encodeURIComponent(path)}`),
+  containerDownload: async (projectId, path) => {
+    const res = await fetch(
+      `${API_URL}/api/projects/${projectId}/container-files/download?path=${encodeURIComponent(path)}`,
+      { headers: { Authorization: `Bearer ${localStorage.getItem("nineteen_token")}` } }
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || "Download failed");
+    }
+    return res.blob();
+  },
 };
 
 export const update = {

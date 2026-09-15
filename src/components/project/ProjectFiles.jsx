@@ -17,6 +17,8 @@ import {
 import EmptyState from "@/components/dev/EmptyState";
 import ConfirmDialog from "@/components/dev/ConfirmDialog";
 import FileTree from "@/components/project/FileTree";
+import ContainerFiles from "@/components/project/ContainerFiles";
+import { cn } from "@/lib/utils";
 import * as api from "@/lib/api";
 
 function VolumesTable({ volumes, onAdd, onRemove }) {
@@ -92,6 +94,7 @@ export default function ProjectFiles({ projectId }) {
   const [hostPath, setHostPath] = useState("");
   const [containerPath, setContainerPath] = useState("/app/data");
   const [saving, setSaving] = useState(false);
+  const [mode, setMode] = useState("persistent");
 
   const { data: volumes = [] } = useQuery({
     queryKey: ["project-volumes", projectId],
@@ -216,7 +219,30 @@ export default function ProjectFiles({ projectId }) {
 
       <VolumesTable volumes={volumes} onAdd={openAdd} onRemove={removeVolume} />
 
-      {isLoading ? (
+      <div className="flex w-fit items-center gap-1 rounded-lg border border-border bg-muted/20 p-0.5 text-xs">
+        {[
+          { id: "persistent", label: "Persistent folder" },
+          { id: "container", label: "Container" },
+        ].map((m) => (
+          <button
+            key={m.id}
+            type="button"
+            onClick={() => setMode(m.id)}
+            className={cn(
+              "rounded-md px-2.5 py-1 transition-colors",
+              mode === m.id
+                ? "bg-background font-medium text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+
+      {mode === "container" ? (
+        <ContainerFiles projectId={projectId} />
+      ) : isLoading ? (
         <div className="rounded-lg border border-border bg-card px-4 py-10 text-center text-xs text-muted-foreground">
           Loading files…
         </div>

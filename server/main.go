@@ -85,6 +85,8 @@ func main() {
 	mux.HandleFunc("/api/projects/{id}/files/folder", handlers.ProjectFolderHandler)
 	mux.HandleFunc("/api/projects/{id}/files/entry", handlers.ProjectFileEntryHandler)
 	mux.HandleFunc("/api/projects/{id}/files/download", handlers.ProjectFileDownloadHandler)
+	mux.HandleFunc("/api/projects/{id}/container-files", handlers.ProjectContainerFilesHandler)
+	mux.HandleFunc("/api/projects/{id}/container-files/download", handlers.ProjectContainerFileDownloadHandler)
 	mux.HandleFunc("/api/projects/{id}/volumes", handlers.ProjectVolumesHandler)
 	mux.HandleFunc("/api/projects/{id}/volumes/{volumeId}", handlers.ProjectVolumeHandler)
 	mux.HandleFunc("/api/projects/{id}/buildfile", handlers.ProjectBuildFileHandler)
