@@ -371,7 +371,8 @@ type inspectResult struct {
 	Mounts []struct {
 		Type   string `json:"Type"`
 		Source string `json:"Source"`
-		Target string `json:"Target"`
+		// Docker's inspect output names the container path "Destination".
+		Target string `json:"Destination"`
 	} `json:"Mounts"`
 }
 
@@ -442,6 +443,51 @@ func (u *UpdateService) buildRunArgs(insp *inspectResult) ([]string, error) {
 	return args, nil
 }
 
+// bindModes are the access/propagation options Docker appends to a bind
+// specification, e.g. "/host/data:/app/data:rw". They must be stripped before
+// the container path can be compared to a target.
+var bindModes = map[string]bool{
+	"rw": true, "ro": true, "z": true, "Z": true,
+	"nocopy": true, "private": true, "rprivate": true,
+	"shared": true, "rshared": true, "slave": true, "rslave": true,
+	"unbindable": true, "runbindable": true,
+	"consistent": true, "cached": true, "delegated": true,
+}
+
+// isBindMode reports whether a bind option segment is composed only of known
+// Docker bind modes (which may be comma-separated, e.g. "ro,z").
+func isBindMode(seg string) bool {
+	if seg == "" {
+		return false
+	}
+	for _, m := range strings.Split(seg, ",") {
+		if !bindModes[m] {
+			return false
+		}
+	}
+	return true
+}
+
+// splitBind parses a HostConfig.Binds entry ("source:target[:mode]") into its
+// source and target. Source may itself contain a colon (e.g. a Windows drive
+// letter), so the target is taken as the last segment and a trailing mode is
+// dropped when present.
+func splitBind(b string) (source, target string, ok bool) {
+	parts := strings.Split(b, ":")
+	if len(parts) < 2 {
+		return "", "", false
+	}
+	if last := parts[len(parts)-1]; len(parts) >= 3 && isBindMode(last) {
+		parts = parts[:len(parts)-1]
+	}
+	source = strings.Join(parts[:len(parts)-1], ":")
+	target = parts[len(parts)-1]
+	if source == "" || target == "" {
+		return "", "", false
+	}
+	return source, target, true
+}
+
 func (u *UpdateService) findDataMount(insp *inspectResult) string {
 	target := u.DataDir
 	if target == "" {
@@ -454,9 +500,8 @@ func (u *UpdateService) findDataMount(insp *inspectResult) string {
 		}
 	}
 	for _, b := range insp.HostConfig.Binds {
-		parts := strings.SplitN(b, ":", 2)
-		if len(parts) == 2 && parts[1] == target {
-			return parts[0]
+		if src, dst, ok := splitBind(b); ok && dst == target {
+			return src
 		}
 	}
 	// Fall back to a bind mount that ends with the data directory name (some
