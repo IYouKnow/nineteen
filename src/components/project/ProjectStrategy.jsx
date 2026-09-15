@@ -19,6 +19,12 @@ import StrategyRow from "./StrategyRow";
 import StrategyFormModal from "./StrategyFormModal";
 import TriggerHistory from "./TriggerHistory";
 
+const PROVIDER_LABELS = { github: "GitHub", gitea: "Gitea", gitlab: "GitLab" };
+
+function providerLabel(provider) {
+  return PROVIDER_LABELS[provider] || provider || "Git";
+}
+
 // The GitHub events the project webhook must subscribe to for its enabled rules.
 function subscribedEvents(triggers) {
   const set = new Set();
@@ -122,11 +128,36 @@ function WebhookPanel({ data, triggers }) {
   );
 }
 
+function ProviderWebhookNotice({ provider, triggers }) {
+  if (triggers.length === 0) return null;
+  const label = providerLabel(provider);
+  return (
+    <div className="rounded-lg border border-border bg-card p-5">
+      <div className="flex items-start gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/30 text-muted-foreground">
+          <Webhook className="h-4 w-4" />
+        </span>
+        <div className="space-y-1">
+          <p className="text-sm font-medium">{label} webhook</p>
+          <p className="text-xs text-muted-foreground">
+            This project is hosted on {label}, so the GitHub webhook is not used. Automatic
+            deployments require a {label} webhook, which isn't configured yet — strategies are saved
+            but won't fire automatically.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ProjectStrategy({ project }) {
   const qc = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [busyId, setBusyId] = useState(null);
+
+  const provider = project.provider || "github";
+  const isGitHub = provider === "github";
 
   const { data, isLoading } = useQuery({
     queryKey: ["triggers", project.id],
@@ -246,7 +277,8 @@ export default function ProjectStrategy({ project }) {
             <StrategyRow
               key={t.id}
               trigger={t}
-              webhook={webhook}
+              webhook={isGitHub ? webhook : null}
+              showWebhook={isGitHub}
               lastEvent={lastEventByTrigger[t.id]}
               busy={busyId === t.id}
               onEdit={openEdit}
@@ -257,7 +289,11 @@ export default function ProjectStrategy({ project }) {
         </div>
       )}
 
-      <WebhookPanel data={webhook} triggers={triggers} />
+      {isGitHub ? (
+        <WebhookPanel data={webhook} triggers={triggers} />
+      ) : (
+        <ProviderWebhookNotice provider={provider} triggers={triggers} />
+      )}
 
       <TriggerHistory events={events} triggers={triggers} />
 

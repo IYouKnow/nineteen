@@ -43,7 +43,7 @@ function WebhookBadge({ webhook }) {
   );
 }
 
-export default function StrategyRow({ trigger, webhook, lastEvent, onEdit, onToggle, onDelete, busy }) {
+export default function StrategyRow({ trigger, webhook, showWebhook = true, lastEvent, onEdit, onToggle, onDelete, busy }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const meta = strategyMeta(trigger.strategy);
   const Icon = meta.icon;
@@ -82,7 +82,7 @@ export default function StrategyRow({ trigger, webhook, lastEvent, onEdit, onTog
             >
               {enabled ? "Active" : "Paused"}
             </span>
-            <WebhookBadge webhook={webhook} />
+            {showWebhook && <WebhookBadge webhook={webhook} />}
           </div>
           <p className="mt-1 text-xs text-muted-foreground">{summary}</p>
           <p className="mt-1 truncate text-xs text-muted-foreground/70">

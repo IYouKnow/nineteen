@@ -87,10 +87,12 @@ export default function StrategyFormModal({ open, onOpenChange, project, trigger
       if (res?.webhook_error) {
         toast.error("Strategy saved with a warning", { description: res.webhook_error });
       } else {
+        const isGitHub = (project.provider || "github") === "github";
         toast.success(editing ? "Strategy updated" : "Strategy added", {
-          description: res?.registered
-            ? "Webhook registered with GitHub."
-            : "Your trigger configuration has been saved.",
+          description:
+            isGitHub && res?.registered
+              ? "Webhook registered with GitHub."
+              : "Your trigger configuration has been saved.",
         });
       }
       onSaved?.(res);

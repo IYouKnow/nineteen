@@ -31,10 +31,26 @@ var validTriggerStrategies = map[string]bool{
 // project-level webhook state shared by all of them.
 type triggerListResponse struct {
 	Triggers      []models.ProjectTrigger `json:"triggers"`
+	Provider      string                  `json:"provider"`
 	PublicBaseURL string                  `json:"public_base_url"`
 	WebhookURL    string                  `json:"webhook_url"`
 	Registered    bool                    `json:"registered"`
 	WebhookError  string                  `json:"webhook_error"`
+}
+
+// projectProvider returns a project's source provider, defaulting to GitHub when
+// unset for backward compatibility.
+func projectProvider(project models.Project) string {
+	if strings.TrimSpace(project.Provider) == "" {
+		return "github"
+	}
+	return project.Provider
+}
+
+// isGitHubProject reports whether the project's repository is hosted on GitHub,
+// the only provider with automatic webhook delivery wired up.
+func isGitHubProject(project models.Project) bool {
+	return projectProvider(project) == "github"
 }
 
 type triggerPayload struct {
@@ -125,7 +141,7 @@ func ProjectTriggersHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		base := publicBaseURL(claims.UserID)
-		respondJSON(w, http.StatusOK, buildTriggerListResponse(project.ID, base))
+		respondJSON(w, http.StatusOK, buildTriggerListResponse(project, base))
 	case http.MethodPost:
 		createTriggerHandler(w, r, claims.UserID, project)
 	default:
@@ -251,22 +267,30 @@ func enabledValue(req triggerPayload) bool {
 func respondTriggerList(w http.ResponseWriter, status int, userID int64, project models.Project) {
 	base := publicBaseURL(userID)
 	webhookErr := syncProjectWebhook(userID, project, base)
-	resp := buildTriggerListResponse(project.ID, base)
+	resp := buildTriggerListResponse(project, base)
 	resp.WebhookError = webhookErr
 	respondJSON(w, status, resp)
 }
 
-func buildTriggerListResponse(projectID int64, base string) triggerListResponse {
-	triggers, err := loadTriggers(projectID)
+func buildTriggerListResponse(project models.Project, base string) triggerListResponse {
+	triggers, err := loadTriggers(project.ID)
 	if err != nil || triggers == nil {
 		triggers = []models.ProjectTrigger{}
 	}
-	wh := ensureProjectWebhookRow(projectID)
-	resp := triggerListResponse{Triggers: triggers, PublicBaseURL: base}
-	if base != "" {
-		resp.WebhookURL = webhookURL(base, projectID)
+	resp := triggerListResponse{
+		Triggers:      triggers,
+		Provider:      projectProvider(project),
+		PublicBaseURL: base,
 	}
-	resp.Registered = wh.WebhookID != nil && *wh.WebhookID > 0
+	// Only GitHub projects have webhook delivery wired up; other providers
+	// (e.g. Gitea) must not surface or use the GitHub webhook endpoint.
+	if isGitHubProject(project) {
+		wh := ensureProjectWebhookRow(project.ID)
+		if base != "" {
+			resp.WebhookURL = webhookURL(base, project.ID)
+		}
+		resp.Registered = wh.WebhookID != nil && *wh.WebhookID > 0
+	}
 	return resp
 }
 
@@ -281,6 +305,12 @@ func syncProjectWebhook(userID int64, project models.Project, base string) strin
 
 	autoDeploy := len(events) > 0
 	db.DB.Exec("UPDATE projects SET auto_deploy = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", boolToInt(autoDeploy), project.ID)
+
+	// Non-GitHub providers (e.g. Gitea) do not use the GitHub webhook. Their
+	// provider-specific webhooks are not managed here, so leave GitHub untouched.
+	if !isGitHubProject(project) {
+		return ""
+	}
 
 	if !autoDeploy {
 		removeProjectWebhook(userID, project)
@@ -325,6 +355,9 @@ func webhookEventsForTriggers(triggers []models.ProjectTrigger) []string {
 // ensureProjectWebhook creates or updates the repository webhook so it points at
 // this project's inbound endpoint with the current secret and event set.
 func ensureProjectWebhook(userID int64, project models.Project, base string, events []string) error {
+	if !isGitHubProject(project) {
+		return nil
+	}
 	if project.Repository == "" {
 		return fmt.Errorf("Link a repository before enabling automatic deployments")
 	}
@@ -360,6 +393,9 @@ func ensureProjectWebhook(userID int64, project models.Project, base string, eve
 // removeProjectWebhook deletes the repository webhook and clears the stored
 // id/secret. Best-effort: a GitHub outage must not block disabling triggers.
 func removeProjectWebhook(userID int64, project models.Project) {
+	if !isGitHubProject(project) {
+		return
+	}
 	wh, err := loadProjectWebhook(project.ID)
 	if err != nil || wh.WebhookID == nil || *wh.WebhookID == 0 {
 		return
@@ -454,6 +490,15 @@ func GitHubWebhookHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "Webhook is not configured for this project")
 		return
 	}
+	project, err := getProjectByID(projectID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+	if !isGitHubProject(project) {
+		respondError(w, http.StatusNotFound, "Webhook is not configured for this project")
+		return
+	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, 5<<20))
 	if err != nil {
@@ -502,13 +547,6 @@ func GitHubWebhookHandler(w http.ResponseWriter, r *http.Request) {
 	if matchedTrigger == nil {
 		logDeployEvent(projectID, event, match.Ref, match.SHA, false, match.Reason, "webhook", nil, nil)
 		respondJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "matched": false, "reason": match.Reason})
-		return
-	}
-
-	project, err := getProjectByID(projectID)
-	if err != nil {
-		logDeployEvent(projectID, event, match.Ref, match.SHA, false, "Project not found", "webhook", nil, nil)
-		respondError(w, http.StatusNotFound, "Project not found")
 		return
 	}
 
