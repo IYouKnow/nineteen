@@ -367,7 +367,7 @@ func (u *UpdateService) rollbackTo(prevImage string) {
 // ---- container introspection ----
 
 type inspectResult struct {
-	Image string `json:"Image"`
+	Image  string `json:"Image"`
 	Config struct {
 		Image  string            `json:"Image"`
 		Env    []string          `json:"Env"`
@@ -382,7 +382,11 @@ type inspectResult struct {
 		RestartPolicy struct {
 			Name string `json:"Name"`
 		} `json:"RestartPolicy"`
-		NetworkMode string `json:"NetworkMode"`
+		NetworkMode string   `json:"NetworkMode"`
+		ExtraHosts  []string `json:"ExtraHosts"`
+		Dns         []string `json:"Dns"`
+		DnsSearch   []string `json:"DnsSearch"`
+		DnsOptions  []string `json:"DnsOptions"`
 	} `json:"HostConfig"`
 	Mounts []struct {
 		Type   string `json:"Type"`
@@ -446,6 +450,31 @@ func (u *UpdateService) buildRunArgs(insp *inspectResult) ([]string, error) {
 
 	if nm := insp.HostConfig.NetworkMode; nm != "" && nm != "default" {
 		args = append(args, "--network", nm)
+	}
+
+	// Preserve hostname overrides and DNS configuration. Without these the
+	// recreated container can lose the ability to resolve internal hosts
+	// (e.g. a self-hosted Gitea reachable only through extra_hosts or a
+	// custom resolver).
+	for _, h := range insp.HostConfig.ExtraHosts {
+		if strings.TrimSpace(h) != "" {
+			args = append(args, "--add-host", h)
+		}
+	}
+	for _, d := range insp.HostConfig.Dns {
+		if strings.TrimSpace(d) != "" {
+			args = append(args, "--dns", d)
+		}
+	}
+	for _, d := range insp.HostConfig.DnsSearch {
+		if strings.TrimSpace(d) != "" {
+			args = append(args, "--dns-search", d)
+		}
+	}
+	for _, d := range insp.HostConfig.DnsOptions {
+		if strings.TrimSpace(d) != "" {
+			args = append(args, "--dns-opt", d)
+		}
 	}
 
 	for _, e := range insp.Config.Env {
