@@ -28,8 +28,7 @@ export const SOURCES = [
     label: "Gitea",
     icon: "gitea",
     color: "#609966",
-    description: "Lightweight, self-hosted Git service.",
-    disabled: true,
+    description: "Connect a self-hosted Gitea instance and select from its repositories.",
   },
 ];
 
@@ -135,13 +134,12 @@ export function sourceReady(source) {
     case "template":
       return !!source.template;
     case "github":
+    case "gitea":
       return !!source.repo;
     case "public":
       return source.publicUrl.trim().length > 0;
     case "gitlab":
       return source.gitlabHost.trim().length > 0 && source.gitlabProject.trim().length > 0;
-    case "gitea":
-      return source.giteaHost.trim().length > 0 && source.giteaProject.trim().length > 0;
     default:
       return false;
   }
@@ -149,9 +147,9 @@ export function sourceReady(source) {
 
 export function buildRepository(source) {
   if (source.type === "template") return "";
-  if (source.type === "github") return source.repo?.full_name || "";
+  if (source.type === "github" || source.type === "gitea") return source.repo?.full_name || "";
   if (source.type === "public") return source.publicUrl.trim();
-  const host = (source.type === "gitlab" ? source.gitlabHost : source.giteaHost).trim().replace(/\/+$/, "");
-  const project = (source.type === "gitlab" ? source.gitlabProject : source.giteaProject).trim().replace(/^\/+/, "");
+  const host = source.gitlabHost.trim().replace(/\/+$/, "");
+  const project = source.gitlabProject.trim().replace(/^\/+/, "");
   return `${host}/${project}`;
 }

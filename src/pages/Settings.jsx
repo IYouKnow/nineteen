@@ -81,6 +81,7 @@ const REGIONS = [
 
 const INTEGRATION_PROVIDERS = [
   { id: "github", name: "GitHub", description: "Connect repositories for source control and CI/CD", enabled: true, icon: "github" },
+  { id: "gitea", name: "Gitea", description: "Connect a self-hosted Gitea instance for source control", enabled: true, icon: "gitea" },
   { id: "gitlab", name: "GitLab", description: "Connect GitLab repositories for source control and CI/CD", enabled: false },
   { id: "bitbucket", name: "Bitbucket", description: "Connect Bitbucket repositories for source control", enabled: false },
   { id: "dockerhub", name: "Docker Hub", description: "Container registry integration", enabled: false },
@@ -543,7 +544,7 @@ function IntegrationsTab({ settings = { public_base_url: "" }, saving, onSave })
 
   async function handleDisconnect(integration) {
     try {
-      const res = await fetch(`${API_URL}/api/settings/integrations?provider=${integration.provider}`, {
+      const res = await fetch(`${API_URL}/api/settings/integrations?id=${integration.id}`, {
         method: "DELETE",
         headers: getAuthHeaders(),
       });

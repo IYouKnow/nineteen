@@ -124,7 +124,13 @@ export default function BuildStep({ config, setConfig, scan, scanLoading, scanEr
     update({ dockerfilePath: p });
     if (scanTarget?.repo) {
       try {
-        const res = await api.integrations.port(scanTarget.repo, scanTarget.branch, p);
+        const res = await api.integrations.port(
+          scanTarget.repo,
+          scanTarget.branch,
+          p,
+          scanTarget.provider,
+          scanTarget.integrationId
+        );
         if (res?.port > 0) update({ port: String(res.port) });
       } catch {
         /* ignore — port stays as-is */

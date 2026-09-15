@@ -13,8 +13,126 @@ import (
 
 	"nineteen-server/auth"
 	"nineteen-server/db"
+	"nineteen-server/models"
 	"nineteen-server/services"
 )
+
+// repoClient is the subset of a git provider client the scan and build-file
+// flows need. Both the GitHub and Gitea clients implement it.
+type repoClient interface {
+	GetRepoTree(fullName, ref string) ([]string, bool, error)
+	GetRepoFile(fullName, ref, path string) ([]byte, error)
+}
+
+// giteaBaseURLFromConfig extracts the instance base URL from an integration's
+// config JSON.
+func giteaBaseURLFromConfig(configJSON string) string {
+	var cfg struct {
+		BaseURL string `json:"base_url"`
+	}
+	if configJSON != "" {
+		_ = json.Unmarshal([]byte(configJSON), &cfg)
+	}
+	return services.NormalizeGiteaBaseURL(cfg.BaseURL)
+}
+
+func branchOrDefault(branch string) string {
+	if branch == "" {
+		return "main"
+	}
+	return branch
+}
+
+// newRepoClient builds the provider client for a repository given its provider
+// id, decrypted token and integration config JSON.
+func newRepoClient(provider, token, configJSON string) (repoClient, error) {
+	switch provider {
+	case "", "github":
+		return services.NewGitHubClient(token), nil
+	case "gitea":
+		base := giteaBaseURLFromConfig(configJSON)
+		if base == "" {
+			return nil, fmt.Errorf("Gitea integration is missing its base URL")
+		}
+		return services.NewGiteaClient(base, token), nil
+	default:
+		return nil, fmt.Errorf("unsupported provider %q", provider)
+	}
+}
+
+// resolveRepoIntegration returns the decrypted token and config JSON for a
+// specific integration id, or the first integration of the given provider when
+// no id is supplied.
+func resolveRepoIntegration(userID int64, provider, integrationID string) (string, string, error) {
+	var enc, cfg string
+	if integrationID != "" {
+		id, err := strconv.ParseInt(integrationID, 10, 64)
+		if err != nil {
+			return "", "", fmt.Errorf("invalid integration id")
+		}
+		if err := db.DB.QueryRow(
+			"SELECT access_token, config FROM integrations WHERE id = ? AND user_id = ?",
+			id, userID,
+		).Scan(&enc, &cfg); err != nil {
+			return "", "", err
+		}
+	} else {
+		if provider == "" {
+			provider = "github"
+		}
+		if err := db.DB.QueryRow(
+			"SELECT access_token, config FROM integrations WHERE user_id = ? AND provider = ? ORDER BY id ASC LIMIT 1",
+			userID, provider,
+		).Scan(&enc, &cfg); err != nil {
+			return "", "", err
+		}
+	}
+	token, err := auth.DecryptToken(enc)
+	if err != nil {
+		return "", "", err
+	}
+	return token, cfg, nil
+}
+
+// projectIntegrationAuth resolves the provider, decrypted token and config JSON
+// for a project's repository integration, falling back to the first integration
+// of its provider for projects created before integrations were tracked per
+// project.
+func projectIntegrationAuth(project models.Project) (provider, token, config string, err error) {
+	var enc string
+	if project.IntegrationID != nil {
+		err = db.DB.QueryRow(
+			"SELECT provider, access_token, config FROM integrations WHERE id = ?",
+			*project.IntegrationID,
+		).Scan(&provider, &enc, &config)
+	} else {
+		provider = project.Provider
+		if provider == "" {
+			provider = "github"
+		}
+		err = db.DB.QueryRow(
+			"SELECT access_token, config FROM integrations WHERE user_id = ? AND provider = ? ORDER BY id ASC LIMIT 1",
+			project.UserID, provider,
+		).Scan(&enc, &config)
+	}
+	if err != nil {
+		return "", "", "", err
+	}
+	token, err = auth.DecryptToken(enc)
+	if err != nil {
+		return "", "", "", err
+	}
+	return provider, token, config, nil
+}
+
+// projectRepoClient resolves the git client for a project's repository.
+func projectRepoClient(project models.Project) (repoClient, error) {
+	provider, token, cfg, err := projectIntegrationAuth(project)
+	if err != nil {
+		return nil, err
+	}
+	return newRepoClient(provider, token, cfg)
+}
 
 func SettingsHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -374,6 +492,23 @@ func connectIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 		if count, err := ghClient.CountRepositories(); err == nil {
 			repoCount = count
 		}
+	case "gitea":
+		base := giteaBaseURLFromConfig(req.Config)
+		if base == "" {
+			respondError(w, http.StatusBadRequest, "base_url is required for Gitea")
+			return
+		}
+		giteaClient := services.NewGiteaClient(base, req.AccessToken)
+		user, err := giteaClient.ValidateToken()
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "Invalid Gitea token: "+err.Error())
+			return
+		}
+		username = user.Login
+		avatarURL = user.AvatarURL
+		if count, err := giteaClient.CountRepositories(); err == nil {
+			repoCount = count
+		}
 	default:
 		respondError(w, http.StatusBadRequest, "Unsupported provider")
 		return
@@ -411,9 +546,31 @@ func disconnectIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Prefer an explicit id so a single account can be disconnected when a user
+	// has several of the same provider (e.g. multiple Gitea instances).
+	if idStr := r.URL.Query().Get("id"); idStr != "" {
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "Invalid integration ID")
+			return
+		}
+		result, err := db.DB.Exec("DELETE FROM integrations WHERE id = ? AND user_id = ?", id, claims.UserID)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to disconnect integration")
+			return
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			respondError(w, http.StatusNotFound, "Integration not found")
+			return
+		}
+		respondJSON(w, http.StatusOK, map[string]string{"message": "Integration disconnected"})
+		return
+	}
+
 	provider := r.URL.Query().Get("provider")
 	if provider == "" {
-		respondError(w, http.StatusBadRequest, "provider query param is required")
+		respondError(w, http.StatusBadRequest, "id or provider query param is required")
 		return
 	}
 
@@ -561,17 +718,13 @@ func IntegrationReposHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var provider, encryptedToken string
+	var provider, encryptedToken, configJSON string
 	err = db.DB.QueryRow(
-		"SELECT provider, access_token FROM integrations WHERE id = ? AND user_id = ?",
+		"SELECT provider, access_token, config FROM integrations WHERE id = ? AND user_id = ?",
 		id, claims.UserID,
-	).Scan(&provider, &encryptedToken)
+	).Scan(&provider, &encryptedToken, &configJSON)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "Integration not found")
-		return
-	}
-	if provider != "github" {
-		respondError(w, http.StatusBadRequest, "Provider does not support repository listing")
 		return
 	}
 
@@ -581,27 +734,48 @@ func IntegrationReposHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ghClient := services.NewGitHubClient(token)
-	repos, err := ghClient.ListRepositories(page, perPage)
-	if err != nil {
-		respondError(w, http.StatusBadGateway, "Failed to fetch repositories: "+err.Error())
-		return
-	}
-
-	list := make([]RepoResponse, 0, len(repos))
-	for _, rp := range repos {
-		branch := rp.DefaultBranch
-		if branch == "" {
-			branch = "main"
+	list := []RepoResponse{}
+	switch provider {
+	case "github":
+		repos, err := services.NewGitHubClient(token).ListRepositories(page, perPage)
+		if err != nil {
+			respondError(w, http.StatusBadGateway, "Failed to fetch repositories: "+err.Error())
+			return
 		}
-		list = append(list, RepoResponse{
-			FullName:    rp.FullName,
-			Description: rp.Description,
-			Framework:   detectFramework(rp.Language, rp.Name),
-			Branch:      branch,
-			Stars:       rp.StargazersCount,
-			Private:     rp.Private,
-		})
+		for _, rp := range repos {
+			list = append(list, RepoResponse{
+				FullName:    rp.FullName,
+				Description: rp.Description,
+				Framework:   detectFramework(rp.Language, rp.Name),
+				Branch:      branchOrDefault(rp.DefaultBranch),
+				Stars:       rp.StargazersCount,
+				Private:     rp.Private,
+			})
+		}
+	case "gitea":
+		base := giteaBaseURLFromConfig(configJSON)
+		if base == "" {
+			respondError(w, http.StatusBadRequest, "Gitea integration is missing its base URL")
+			return
+		}
+		repos, err := services.NewGiteaClient(base, token).ListRepositories(page, perPage)
+		if err != nil {
+			respondError(w, http.StatusBadGateway, "Failed to fetch repositories: "+err.Error())
+			return
+		}
+		for _, rp := range repos {
+			list = append(list, RepoResponse{
+				FullName:    rp.FullName,
+				Description: rp.Description,
+				Framework:   detectFramework(rp.Language, rp.Name),
+				Branch:      branchOrDefault(rp.DefaultBranch),
+				Stars:       rp.StarsCount,
+				Private:     rp.Private,
+			})
+		}
+	default:
+		respondError(w, http.StatusBadRequest, "Provider does not support repository listing")
+		return
 	}
 
 	respondJSON(w, http.StatusOK, list)
@@ -644,20 +818,24 @@ func IntegrationScanHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use the user's GitHub integration token when available (private repos);
-	// fall back to an anonymous call for public repos.
-	token := ""
-	var enc string
-	if err := db.DB.QueryRow(
-		"SELECT access_token FROM integrations WHERE user_id = ? AND provider = 'github' ORDER BY id ASC LIMIT 1",
-		claims.UserID,
-	).Scan(&enc); err == nil {
-		if t, err := auth.DecryptToken(enc); err == nil {
-			token = t
+	provider := strings.TrimSpace(r.URL.Query().Get("provider"))
+	if provider == "" {
+		provider = "github"
+	}
+	integrationID := strings.TrimSpace(r.URL.Query().Get("integration"))
+
+	// Use the matching integration token when available (private repos); fall
+	// back to an anonymous GitHub call for public repos.
+	token, cfg, ierr := resolveRepoIntegration(claims.UserID, provider, integrationID)
+	client, cerr := newRepoClient(provider, token, cfg)
+	if ierr != nil || cerr != nil {
+		if provider != "github" {
+			respondError(w, http.StatusBadRequest, "No "+provider+" integration available to read the repository")
+			return
 		}
+		client = services.NewGitHubClient("")
 	}
 
-	client := services.NewGitHubClient(token)
 	files, truncated, err := client.GetRepoTree(repo, branch)
 	if err != nil {
 		respondError(w, http.StatusBadGateway, "Failed to scan repository: "+err.Error())
@@ -717,20 +895,22 @@ func IntegrationPortHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use the user's GitHub integration token when available (private repos);
-	// fall back to an anonymous call for public repos.
-	token := ""
-	var enc string
-	if err := db.DB.QueryRow(
-		"SELECT access_token FROM integrations WHERE user_id = ? AND provider = 'github' ORDER BY id ASC LIMIT 1",
-		claims.UserID,
-	).Scan(&enc); err == nil {
-		if t, err := auth.DecryptToken(enc); err == nil {
-			token = t
+	provider := strings.TrimSpace(r.URL.Query().Get("provider"))
+	if provider == "" {
+		provider = "github"
+	}
+	integrationID := strings.TrimSpace(r.URL.Query().Get("integration"))
+
+	token, cfg, ierr := resolveRepoIntegration(claims.UserID, provider, integrationID)
+	client, cerr := newRepoClient(provider, token, cfg)
+	if ierr != nil || cerr != nil {
+		if provider != "github" {
+			respondError(w, http.StatusBadRequest, "No "+provider+" integration available to read the repository")
+			return
 		}
+		client = services.NewGitHubClient("")
 	}
 
-	client := services.NewGitHubClient(token)
 	data, err := client.GetRepoFile(repo, branch, file)
 	if err != nil {
 		respondError(w, http.StatusBadGateway, "Failed to fetch file: "+err.Error())
@@ -743,6 +923,7 @@ func IntegrationPortHandler(w http.ResponseWriter, r *http.Request) {
 type TestIntegrationRequest struct {
 	Provider    string `json:"provider"`
 	AccessToken string `json:"access_token"`
+	Config      string `json:"config"`
 }
 
 func TestIntegrationHandler(w http.ResponseWriter, r *http.Request) {
@@ -783,6 +964,30 @@ func TestIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 			"avatar":     user.AvatarURL,
 			"name":       user.Name,
 			"type":       user.Type,
+			"repo_count": repoCount,
+		})
+	case "gitea":
+		base := giteaBaseURLFromConfig(req.Config)
+		if base == "" {
+			respondError(w, http.StatusBadRequest, "base_url is required for Gitea")
+			return
+		}
+		giteaClient := services.NewGiteaClient(base, req.AccessToken)
+		user, err := giteaClient.ValidateToken()
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "Invalid token: "+err.Error())
+			return
+		}
+		repoCount := 0
+		if count, err := giteaClient.CountRepositories(); err == nil {
+			repoCount = count
+		}
+		respondJSON(w, http.StatusOK, map[string]interface{}{
+			"valid":      true,
+			"username":   user.Login,
+			"avatar":     user.AvatarURL,
+			"name":       user.FullName,
+			"type":       "User",
 			"repo_count": repoCount,
 		})
 	default:

@@ -19,41 +19,43 @@ function getAuthHeaders() {
   return { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
 }
 
-export default function SourceStep({ source, setSource }) {
+// Per-provider presentation for the repository picker. Both GitHub and Gitea
+// expose the same stored-integration shape (id, username, provider).
+const PROVIDER_META = {
+  github: {
+    label: "GitHub",
+    icon: "github",
+    color: "#24292f",
+    connectHint: "Grant read access to your repositories so you can pick one to deploy.",
+  },
+  gitea: {
+    label: "Gitea",
+    icon: "gitea",
+    color: "#609966",
+    connectHint: "Connect a self-hosted Gitea instance so you can pick one of its repositories.",
+  },
+};
+
+// IntegrationPanel renders the connect prompt, account selector and searchable
+// repository list for a single provider (GitHub or Gitea).
+function IntegrationPanel({ providerId, selectedRepo, update, integrations, integrationsLoading, onConnect }) {
+  const meta = PROVIDER_META[providerId];
   const [query, setQuery] = useState("");
   const [selectedAccount, setSelectedAccount] = useState(null);
-  const navigate = useNavigate();
 
-  const update = (patch) => setSource((s) => ({ ...s, ...patch }));
-  const selectSource = (id) => update({ type: id, template: null });
-  const selectTemplate = (id) => update({ type: "template", template: id, repo: null, publicUrl: "" });
-
-  const { data: integrations = [], isLoading: integrationsLoading } = useQuery({
-    queryKey: ["integrations"],
-    queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/settings/integrations`, { headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("Failed to load integrations");
-      return res.json();
-    },
-    staleTime: 30000,
-  });
-
-  const githubIntegrations = useMemo(
-    () => (integrations || []).filter((i) => i.provider === "github"),
-    [integrations]
+  const providerIntegrations = useMemo(
+    () => (integrations || []).filter((i) => i.provider === providerId),
+    [integrations, providerId]
   );
-  const connected = githubIntegrations.length > 0;
+  const connected = providerIntegrations.length > 0;
 
   useEffect(() => {
-    if (connected && !selectedAccount) setSelectedAccount(githubIntegrations[0].id);
-  }, [connected, selectedAccount, githubIntegrations]);
+    setSelectedAccount(null);
+  }, [providerId]);
 
-  const handleChangeAccount = (id) => {
-    setSelectedAccount(id);
-    update({ repo: null });
-  };
-
-  const handleConnect = () => navigate("/settings/integrations");
+  useEffect(() => {
+    if (connected && !selectedAccount) setSelectedAccount(providerIntegrations[0].id);
+  }, [connected, selectedAccount, providerIntegrations]);
 
   const { data: repos = [], isLoading: reposLoading } = useQuery({
     queryKey: ["integration-repos", selectedAccount],
@@ -77,6 +79,156 @@ export default function SourceStep({ source, setSource }) {
       (r) => r.full_name?.toLowerCase().includes(q) || r.description?.toLowerCase().includes(q)
     );
   }, [repos, query]);
+
+  const handleChangeAccount = (id) => {
+    setSelectedAccount(id);
+    update({ repo: null, integrationId: null });
+  };
+
+  const selectRepo = (repo) => update({ repo, integrationId: selectedAccount, provider: providerId });
+
+  if (integrationsLoading) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Checking {meta.label} connection…
+      </div>
+    );
+  }
+
+  if (!connected) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
+        <div
+          className="flex h-12 w-12 items-center justify-center rounded-xl text-white"
+          style={{ background: meta.color }}
+        >
+          <SourceIcon icon={meta.icon} color="transparent" size={24} />
+        </div>
+        <div>
+          <p className="text-sm font-medium">Connect your {meta.label} account</p>
+          <p className="mt-1 max-w-sm text-xs text-muted-foreground">{meta.connectHint}</p>
+        </div>
+        <Button type="button" onClick={onConnect} className="gap-2">
+          <Plug className="h-4 w-4" />
+          Connect {meta.label}
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-success/15 text-success">
+            <Check className="h-3.5 w-3.5" />
+          </span>
+          <span className="hidden text-sm font-medium sm:inline">Repositories</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {providerIntegrations.length > 1 ? (
+            <Select
+              value={selectedAccount != null ? String(selectedAccount) : undefined}
+              onValueChange={(v) => handleChangeAccount(Number(v))}
+            >
+              <SelectTrigger className="h-8 w-auto min-w-[160px] gap-2 bg-card font-mono text-xs">
+                <SelectValue placeholder="Select account" />
+              </SelectTrigger>
+              <SelectContent>
+                {providerIntegrations.map((a) => (
+                  <SelectItem key={a.id} value={String(a.id)}>
+                    {a.label && a.label !== meta.label ? `${a.label} (@${a.username})` : `@${a.username}`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <span className="rounded-md border border-border bg-card px-2.5 py-1 font-mono text-xs text-muted-foreground">
+              @{providerIntegrations[0]?.username}
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search repositories…"
+          className="pl-9"
+        />
+      </div>
+      <div className="mt-2 max-h-64 space-y-1 overflow-y-auto">
+        {reposLoading ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading repositories…
+          </div>
+        ) : filteredRepos.length === 0 ? (
+          <p className="py-8 text-center text-xs text-muted-foreground">No repositories found.</p>
+        ) : (
+          filteredRepos.map((repo) => {
+            const active = selectedRepo === repo.full_name;
+            return (
+              <button
+                key={repo.full_name}
+                type="button"
+                onClick={() => selectRepo(repo)}
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors",
+                  active ? "bg-primary/10 ring-1 ring-primary/40" : "hover:bg-muted/40"
+                )}
+              >
+                <FrameworkIcon framework={repo.framework} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-mono text-xs text-foreground">{repo.full_name}</p>
+                  <p className="truncate text-xs text-muted-foreground">{repo.description}</p>
+                </div>
+                <span className="hidden items-center gap-1 font-mono text-xs text-muted-foreground/60 sm:flex">
+                  <Star className="h-3 w-3" /> {repo.stars}
+                </span>
+                {repo.private && (
+                  <span className="hidden text-[10px] uppercase tracking-wide text-muted-foreground/60 sm:inline">
+                    Private
+                  </span>
+                )}
+                {active && (
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                    <Check className="h-3 w-3" />
+                  </span>
+                )}
+              </button>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function SourceStep({ source, setSource }) {
+  const navigate = useNavigate();
+
+  const update = (patch) => setSource((s) => ({ ...s, ...patch }));
+  const selectSource = (id) =>
+    update({ type: id, template: null, repo: null, integrationId: null, publicUrl: "" });
+  const selectTemplate = (id) =>
+    update({ type: "template", template: id, repo: null, integrationId: null, publicUrl: "" });
+
+  const { data: integrations = [], isLoading: integrationsLoading } = useQuery({
+    queryKey: ["integrations"],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/api/settings/integrations`, { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("Failed to load integrations");
+      return res.json();
+    },
+    staleTime: 30000,
+  });
+
+  const handleConnect = () => navigate("/settings/integrations");
+
+  const isRepoSource = source.type === "github" || source.type === "gitea";
 
   return (
     <div className="animate-fade-in">
@@ -132,139 +284,38 @@ export default function SourceStep({ source, setSource }) {
       </div>
 
       {/* Sub-panel per source */}
-      {source.type && source.type !== "template" && (
+      {isRepoSource && (
         <div className="mt-5 rounded-lg border border-border bg-muted/15 p-4 animate-slide-up">
-          {source.type === "github" && (
+          <IntegrationPanel
+            providerId={source.type}
+            selectedRepo={source.repo?.full_name}
+            update={update}
+            integrations={integrations}
+            integrationsLoading={integrationsLoading}
+            onConnect={handleConnect}
+          />
+        </div>
+      )}
+
+      {source.type === "public" && (
+        <div className="mt-5 rounded-lg border border-border bg-muted/15 p-4 animate-slide-up">
+          <div className="space-y-3">
             <div>
-              {integrationsLoading ? (
-                <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Checking GitHub connection…
-                </div>
-              ) : !connected ? (
-                <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#24292f] text-white">
-                    <SourceIcon icon="github" color="transparent" size={24} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">Connect your GitHub account</p>
-                    <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-                      Grant read access to your repositories so you can pick one to deploy.
-                    </p>
-                  </div>
-                  <Button type="button" onClick={handleConnect} className="gap-2">
-                    <Plug className="h-4 w-4" />
-                    Connect GitHub
-                  </Button>
-                </div>
-              ) : (
-                <div>
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-success/15 text-success">
-                        <Check className="h-3.5 w-3.5" />
-                      </span>
-                      <span className="hidden text-sm font-medium sm:inline">Repositories</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {githubIntegrations.length > 1 ? (
-                        <Select value={selectedAccount} onValueChange={handleChangeAccount}>
-                          <SelectTrigger className="h-8 w-auto min-w-[160px] gap-2 bg-card font-mono text-xs">
-                            <SelectValue placeholder="Select account" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {githubIntegrations.map((a) => (
-                              <SelectItem key={a.id} value={a.id}>
-                                @{a.username}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <span className="rounded-md border border-border bg-card px-2.5 py-1 font-mono text-xs text-muted-foreground">
-                          @{githubIntegrations[0]?.username}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="relative">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
-                    <Input
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                      placeholder="Search repositories…"
-                      className="pl-9"
-                    />
-                  </div>
-                  <div className="mt-2 max-h-64 space-y-1 overflow-y-auto">
-                    {reposLoading ? (
-                      <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Loading repositories…
-                      </div>
-                    ) : filteredRepos.length === 0 ? (
-                      <p className="py-8 text-center text-xs text-muted-foreground">No repositories found.</p>
-                    ) : (
-                      filteredRepos.map((repo) => {
-                        const active = source.repo?.full_name === repo.full_name;
-                        return (
-                          <button
-                            key={repo.full_name}
-                            type="button"
-                            onClick={() => update({ repo })}
-                            className={cn(
-                              "flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors",
-                              active ? "bg-primary/10 ring-1 ring-primary/40" : "hover:bg-muted/40"
-                            )}
-                          >
-                            <FrameworkIcon framework={repo.framework} />
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate font-mono text-xs text-foreground">{repo.full_name}</p>
-                              <p className="truncate text-xs text-muted-foreground">{repo.description}</p>
-                            </div>
-                            <span className="hidden items-center gap-1 font-mono text-xs text-muted-foreground/60 sm:flex">
-                              <Star className="h-3 w-3" /> {repo.stars}
-                            </span>
-                            {repo.private && (
-                              <span className="hidden text-[10px] uppercase tracking-wide text-muted-foreground/60 sm:inline">
-                                Private
-                              </span>
-                            )}
-                            {active && (
-                              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                                <Check className="h-3 w-3" />
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {source.type === "public" && (
-            <div className="space-y-3">
-              <div>
-                <Label className="text-xs">Repository URL</Label>
-                <div className="relative mt-1.5">
-                  <Link2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
-                  <Input
-                    value={source.publicUrl}
-                    onChange={(e) => update({ publicUrl: e.target.value })}
-                    placeholder="https://github.com/acme/public-repo.git"
-                    className="pl-9 font-mono text-sm"
-                  />
-                </div>
-                <p className="mt-1.5 text-xs text-muted-foreground">
-                  Any public Git clone URL — HTTPS only. We&apos;ll detect the framework automatically.
-                </p>
+              <Label className="text-xs">Repository URL</Label>
+              <div className="relative mt-1.5">
+                <Link2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
+                <Input
+                  value={source.publicUrl}
+                  onChange={(e) => update({ publicUrl: e.target.value })}
+                  placeholder="https://github.com/acme/public-repo.git"
+                  className="pl-9 font-mono text-sm"
+                />
               </div>
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Any public Git clone URL — HTTPS only. We&apos;ll detect the framework automatically.
+              </p>
             </div>
-          )}
-
+          </div>
         </div>
       )}
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,16 +36,62 @@ func (d *Deployer) DockerAvailable() error {
 	return nil
 }
 
-// CloneRepo clones repository into a fresh temp dir using token auth.
-// Returns the clone directory. The clone is cancellable via ctx — cancelling
-// kills the git process so an in-flight deployment can be aborted.
-func (d *Deployer) CloneRepo(ctx context.Context, token, repository string, log func(string)) (string, error) {
+// CloneURL builds an authenticated HTTPS clone URL for a repository. GitHub's
+// host is fixed; for Gitea the host comes from the integration's base URL. When
+// the repository already carries a scheme (a public clone URL) it is used as-is,
+// with credentials injected when a token is present.
+func CloneURL(provider, baseURL, repository, token string) (string, error) {
+	repo := strings.Trim(strings.TrimSpace(repository), "/")
+	if repo == "" {
+		return "", fmt.Errorf("repository is required")
+	}
+	if strings.Contains(repo, "://") {
+		if token == "" {
+			return repo, nil
+		}
+		return strings.Replace(repo, "://", "://oauth2:"+token+"@", 1), nil
+	}
+
+	host := "github.com"
+	if provider == "gitea" {
+		host = hostFromURL(baseURL)
+		if host == "" {
+			return "", fmt.Errorf("Gitea base URL is required to clone the repository")
+		}
+	}
+	if token == "" {
+		return fmt.Sprintf("https://%s/%s.git", host, repo), nil
+	}
+	return fmt.Sprintf("https://oauth2:%s@%s/%s.git", token, host, repo), nil
+}
+
+// hostFromURL returns the host (with optional port) of a URL, tolerating input
+// without a scheme.
+func hostFromURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	// Keep any sub-path so Gitea installs served under a prefix still clone.
+	return u.Host + strings.TrimRight(u.Path, "/")
+}
+
+// CloneRepo clones cloneURL into a fresh temp dir. Returns the clone directory.
+// The clone is cancellable via ctx — cancelling kills the git process so an
+// in-flight deployment can be aborted.
+func (d *Deployer) CloneRepo(ctx context.Context, cloneURL string, log func(string)) (string, error) {
 	dir, err := os.MkdirTemp("", "nineteen-build-")
 	if err != nil {
 		return "", err
 	}
-	url := fmt.Sprintf("https://oauth2:%s@github.com/%s.git", token, repository)
-	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", url, dir)
+	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", cloneURL, dir)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if err := streamCommand(cmd, log); err != nil {
 		return dir, err

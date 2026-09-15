@@ -250,6 +250,8 @@ func runMigrations() {
 		{"projects", "dockerfile_path", `ALTER TABLE projects ADD COLUMN dockerfile_path TEXT DEFAULT ''`},
 		{"projects", "compose_path", `ALTER TABLE projects ADD COLUMN compose_path TEXT DEFAULT ''`},
 		{"projects", "port", `ALTER TABLE projects ADD COLUMN port INTEGER`},
+		{"projects", "provider", `ALTER TABLE projects ADD COLUMN provider TEXT DEFAULT 'github'`},
+		{"projects", "integration_id", `ALTER TABLE projects ADD COLUMN integration_id INTEGER`},
 		{"deploy_events", "trigger_id", `ALTER TABLE deploy_events ADD COLUMN trigger_id INTEGER`},
 	}
 
@@ -265,6 +267,11 @@ func runMigrations() {
 			log.Fatalf("Migration failed: %v", err)
 		}
 	}
+
+	// Multiple accounts per provider are supported (e.g. several self-hosted
+	// Gitea instances), so the legacy UNIQUE(user_id, provider) constraint is
+	// dropped by rebuilding the table.
+	migrateIntegrationsDropUnique()
 
 	// Every project gets a default data volume. Backfill any created before the
 	// project_volumes table existed.
@@ -328,6 +335,93 @@ func migrateProjectTriggers() {
 			log.Fatalf("Migration failed: %v", err)
 		}
 	}
+}
+
+// migrateIntegrationsDropUnique rebuilds the integrations table without the
+// original UNIQUE(user_id, provider) constraint so a user can connect more than
+// one account per provider (notably multiple self-hosted Gitea instances).
+// SQLite cannot drop a constraint in place, so the table is recreated and its
+// rows copied. The presence of a unique index over (user_id, provider) marks an
+// un-migrated table, making this safe to run on every boot.
+func migrateIntegrationsDropUnique() {
+	needsRebuild := false
+	for _, name := range uniqueIndexes("integrations") {
+		cols := indexColumns(name)
+		if len(cols) == 2 && cols[0] == "user_id" && cols[1] == "provider" {
+			needsRebuild = true
+			break
+		}
+	}
+	if !needsRebuild {
+		return
+	}
+
+	steps := []string{
+		`CREATE TABLE integrations_new (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			provider TEXT NOT NULL,
+			label TEXT DEFAULT '',
+			username TEXT DEFAULT '',
+			avatar_url TEXT DEFAULT '',
+			access_token TEXT DEFAULT '',
+			config TEXT DEFAULT '{}',
+			metadata TEXT DEFAULT '{}',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`INSERT INTO integrations_new (id, user_id, provider, label, username, avatar_url, access_token, config, metadata, created_at, updated_at)
+		 SELECT id, user_id, provider, label, username, avatar_url, access_token, config, metadata, created_at, updated_at FROM integrations`,
+		`DROP TABLE integrations`,
+		`ALTER TABLE integrations_new RENAME TO integrations`,
+	}
+	for _, s := range steps {
+		if _, err := DB.Exec(s); err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
+	}
+}
+
+// uniqueIndexes returns the names of the table's UNIQUE constraint indexes.
+func uniqueIndexes(table string) []string {
+	rows, err := DB.Query(fmt.Sprintf("PRAGMA index_list(%s)", table))
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var seq, unique, partial int
+		var name, origin string
+		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
+			return names
+		}
+		if unique == 1 && origin == "u" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// indexColumns returns the column names an index covers, in order.
+func indexColumns(index string) []string {
+	rows, err := DB.Query(fmt.Sprintf("PRAGMA index_info(%s)", index))
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var cols []string
+	for rows.Next() {
+		var seqno, cid int
+		var name string
+		if err := rows.Scan(&seqno, &cid, &name); err != nil {
+			return cols
+		}
+		cols = append(cols, name)
+	}
+	return cols
 }
 
 func columnExists(table, column string) (bool, error) {

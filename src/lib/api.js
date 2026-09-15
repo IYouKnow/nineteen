@@ -90,14 +90,21 @@ export const deployments = {
     doFetch(`/api/projects/${projectId}/deployments`, { method: "POST", body: JSON.stringify(payload) }),
 };
 
+function repoParams(repository, branch, provider, integrationId) {
+  const params = new URLSearchParams();
+  params.set("repo", repository || "");
+  params.set("branch", branch || "");
+  if (provider) params.set("provider", provider);
+  if (integrationId) params.set("integration", String(integrationId));
+  return params.toString();
+}
+
 export const integrations = {
-  scanRepo: (repository, branch) =>
+  scanRepo: (repository, branch, provider, integrationId) =>
+    doFetch(`/api/settings/integrations/scan?${repoParams(repository, branch, provider, integrationId)}`),
+  port: (repository, branch, file, provider, integrationId) =>
     doFetch(
-      `/api/settings/integrations/scan?repo=${encodeURIComponent(repository)}&branch=${encodeURIComponent(branch || "")}`
-    ),
-  port: (repository, branch, file) =>
-    doFetch(
-      `/api/settings/integrations/port?repo=${encodeURIComponent(repository)}&branch=${encodeURIComponent(branch || "")}&file=${encodeURIComponent(file)}`
+      `/api/settings/integrations/port?${repoParams(repository, branch, provider, integrationId)}&file=${encodeURIComponent(file)}`
     ),
 };
 

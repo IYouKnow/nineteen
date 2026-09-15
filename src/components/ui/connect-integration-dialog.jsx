@@ -22,7 +22,9 @@ function getAuthHeaders() {
 export function ConnectIntegrationDialog({ provider, open, onClose, onConnect }) {
   const [token, setToken] = useState("");
   const [label, setLabel] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
   const [showToken, setShowToken] = useState(false);
+  const isGitea = provider.id === "gitea";
   const [testing, setTesting] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -31,6 +33,7 @@ export function ConnectIntegrationDialog({ provider, open, onClose, onConnect })
   function handleClose() {
     setToken("");
     setLabel("");
+    setBaseUrl("");
     setShowToken(false);
     setTestResult(null);
     setError(null);
@@ -39,7 +42,7 @@ export function ConnectIntegrationDialog({ provider, open, onClose, onConnect })
 
   useEffect(() => {
     const trimmed = token.trim();
-    if (!trimmed) {
+    if (!trimmed || (isGitea && !baseUrl.trim())) {
       setTestResult(null);
       setError(null);
       setTesting(false);
@@ -52,7 +55,7 @@ export function ConnectIntegrationDialog({ provider, open, onClose, onConnect })
     }, 700);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, baseUrl]);
 
   async function runTest(tok) {
     setTesting(true);
@@ -60,7 +63,11 @@ export function ConnectIntegrationDialog({ provider, open, onClose, onConnect })
       const res = await fetch(`${API_URL}/api/settings/integrations/test`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ provider: provider.id, access_token: tok }),
+        body: JSON.stringify({
+          provider: provider.id,
+          access_token: tok,
+          config: JSON.stringify({ base_url: baseUrl.trim() }),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Test failed");
@@ -86,7 +93,7 @@ export function ConnectIntegrationDialog({ provider, open, onClose, onConnect })
           provider: provider.id,
           access_token: token,
           label: label.trim() || provider.name,
-          config: "{}",
+          config: JSON.stringify({ base_url: baseUrl.trim() }),
         }),
       });
       const data = await res.json();
@@ -119,9 +126,26 @@ export function ConnectIntegrationDialog({ provider, open, onClose, onConnect })
               A friendly name to identify this connection
             </p>
           </div>
+          {isGitea && (
+            <div className="space-y-2">
+              <Label htmlFor="integration-base-url">Instance URL</Label>
+              <Input
+                id="integration-base-url"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="https://gitea.example.com"
+                className="font-mono"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                The root URL of your Gitea instance. A trailing slash is optional.
+              </p>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="integration-token">
-              {provider.id === "github"
+              {isGitea
+                ? "Access Token"
+                : provider.id === "github"
                 ? "Personal Access Token"
                 : "API Key"}
             </Label>
@@ -132,7 +156,9 @@ export function ConnectIntegrationDialog({ provider, open, onClose, onConnect })
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
                 placeholder={
-                  provider.id === "github"
+                  isGitea
+                    ? "Enter your Gitea token"
+                    : provider.id === "github"
                     ? "ghp_xxxxxxxxxxxx"
                     : "Enter your token"
                 }
@@ -187,6 +213,20 @@ export function ConnectIntegrationDialog({ provider, open, onClose, onConnect })
                   </ul>
                 </div>
               </div>
+            )}
+            {isGitea && baseUrl.trim() && (
+              <p className="text-[11px] text-muted-foreground">
+                Create a token at{" "}
+                <a
+                  href={`${baseUrl.trim().replace(/\/+$/, "")}/user/settings/applications`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-foreground"
+                >
+                  {baseUrl.trim().replace(/\/+$/, "")}/user/settings/applications
+                </a>{" "}
+                with the <code className="font-mono">repository</code> (read) scope.
+              </p>
             )}
           </div>
 
@@ -245,7 +285,7 @@ export function ConnectIntegrationDialog({ provider, open, onClose, onConnect })
           </Button>
           <Button
             variant="white"
-            disabled={!token.trim() || !testResult || connecting}
+            disabled={!token.trim() || (isGitea && !baseUrl.trim()) || !testResult || connecting}
             onClick={handleConnect}
           >
             {connecting ? (

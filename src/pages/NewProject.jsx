@@ -19,13 +19,11 @@ const emptySource = {
   type: null,
   template: null,
   repo: null,
+  integrationId: null,
   publicUrl: "",
   gitlabHost: "https://gitlab.com",
   gitlabToken: "",
   gitlabProject: "",
-  giteaHost: "",
-  giteaToken: "",
-  giteaProject: "",
 };
 
 export default function NewProject() {
@@ -48,24 +46,35 @@ export default function NewProject() {
   const prefilledRef = useRef(false);
   const autoNameRef = useRef("");
 
-  // Repositories we can scan for build files (GitHub source, or a public
+  // Repositories we can scan for build files (GitHub/Gitea source, or a public
   // github.com URL).
   const scanTarget = useMemo(() => {
-    if (source.type === "github" && source.repo?.full_name) {
-      return { repo: source.repo.full_name, branch: source.repo.branch || "main" };
+    if ((source.type === "github" || source.type === "gitea") && source.repo?.full_name) {
+      return {
+        repo: source.repo.full_name,
+        branch: source.repo.branch || "main",
+        provider: source.type,
+        integrationId: source.integrationId,
+      };
     }
     if (source.type === "public" && source.publicUrl) {
       const m = source.publicUrl
         .trim()
         .match(/^https?:\/\/(?:www\.)?github\.com\/([^/\s]+)\/([^/\s#?]+?)(?:\.git)?\/?$/i);
-      if (m) return { repo: `${m[1]}/${m[2]}`, branch: "" };
+      if (m) return { repo: `${m[1]}/${m[2]}`, branch: "", provider: "github", integrationId: null };
     }
     return null;
   }, [source]);
 
   const { data: scan, isLoading: scanLoading, isError: scanError } = useQuery({
-    queryKey: ["repo-scan", scanTarget?.repo, scanTarget?.branch],
-    queryFn: () => api.integrations.scanRepo(scanTarget.repo, scanTarget.branch),
+    queryKey: ["repo-scan", scanTarget?.repo, scanTarget?.branch, scanTarget?.provider, scanTarget?.integrationId],
+    queryFn: () =>
+      api.integrations.scanRepo(
+        scanTarget.repo,
+        scanTarget.branch,
+        scanTarget.provider,
+        scanTarget.integrationId
+      ),
     enabled: !!scanTarget,
     staleTime: 60000,
     retry: false,
@@ -178,7 +187,8 @@ export default function NewProject() {
     setCreating(true);
     try {
       const slug = config.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-      const framework = source.type === "github" && source.repo ? source.repo.framework : config.framework;
+      const repoSource = source.type === "github" || source.type === "gitea";
+      const framework = repoSource && source.repo ? source.repo.framework : config.framework;
       const project = await api.projects.create({
         name: config.name,
         slug,
@@ -186,6 +196,15 @@ export default function NewProject() {
         framework,
         repository,
         branch: config.branch,
+        provider:
+          source.type === "gitea"
+            ? "gitea"
+            : source.type === "github"
+            ? "github"
+            : source.type === "gitlab"
+            ? "gitlab"
+            : "git",
+        integration_id: source.integrationId ?? null,
         domain: `${slug}.fra1.nineteen.app`,
         auto_deploy: config.autoDeploy,
         last_deployed_at: new Date().toISOString(),

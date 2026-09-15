@@ -7,6 +7,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Plus, Search, FolderGit2, ArrowUpRight, LayoutGrid, List } from "lucide-react";
 import StatusBadge from "@/components/dev/StatusBadge";
 import FrameworkIcon from "@/components/dev/FrameworkIcon";
+import ProviderBadge from "@/components/dev/ProviderBadge";
 import EmptyState from "@/components/dev/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +49,7 @@ function ProjectCard({ project }) {
         <span className="font-mono">{getFramework(project.framework).label}</span>
         <span className="text-muted-foreground/30">·</span>
         <span className="font-mono">{project.branch || "main"}</span>
+        <ProviderBadge provider={project.provider} />
         <span className="ml-auto flex items-center gap-1">
           {timeAgo(project.last_deployed_at)}
           <ArrowUpRight className="h-3 w-3 text-muted-foreground/40 transition group-hover:text-foreground" />
@@ -70,6 +72,7 @@ function ProjectRow({ project }) {
           {project.repository || "no repository"}
         </p>
       </div>
+      <ProviderBadge provider={project.provider} className="hidden sm:inline-flex" />
       <span className="hidden font-mono text-xs text-muted-foreground sm:inline">
         {getFramework(project.framework).label}
       </span>

@@ -68,7 +68,8 @@ type rowScanner interface {
 
 const projectSelect = `SELECT id, user_id, name, slug, status, framework, repository, branch,
 	domain, description, auto_deploy, region, instance_type, build_strategy,
-	dockerfile_path, compose_path, port, last_deployed_at, created_date, updated_date FROM projects`
+	dockerfile_path, compose_path, port, last_deployed_at, created_date, updated_date,
+	provider, integration_id FROM projects`
 
 func ProjectsHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -117,7 +118,8 @@ func listProjectsHandler(w http.ResponseWriter, r *http.Request) {
 			&p.Repository, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
 			&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
 			&p.Port,
-			&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate); err != nil {
+			&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
+			&p.Provider, &p.IntegrationID); err != nil {
 			continue
 		}
 		projects = append(projects, p)
@@ -150,6 +152,8 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 		DockerfilePath string `json:"dockerfile_path"`
 		ComposePath   string `json:"compose_path"`
 		Port          *int   `json:"port"`
+		Provider      string `json:"provider"`
+		IntegrationID *int64 `json:"integration_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
@@ -188,14 +192,19 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 	if req.Status == "" {
 		req.Status = "idle"
 	}
+	if req.Provider == "" {
+		req.Provider = "github"
+	}
 
 	result, err := db.DB.Exec(
 		`INSERT INTO projects (user_id, name, slug, status, framework, repository, branch, domain,
-			description, auto_deploy, region, instance_type, build_strategy, dockerfile_path, compose_path, port)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			description, auto_deploy, region, instance_type, build_strategy, dockerfile_path, compose_path, port,
+			provider, integration_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		claims.UserID, req.Name, req.Slug, req.Status, req.Framework, req.Repository,
 		req.Branch, req.Domain, req.Description, req.AutoDeploy, req.Region, req.InstanceType,
 		req.BuildStrategy, req.DockerfilePath, req.ComposePath, req.Port,
+		req.Provider, req.IntegrationID,
 	)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to create project")
@@ -407,9 +416,9 @@ func ProjectBuildFileHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Project has no repository linked")
 		return
 	}
-	token, err := githubToken(claims.UserID)
+	client, err := projectRepoClient(project)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "No GitHub integration available to read the repository")
+		respondError(w, http.StatusBadRequest, "No integration available to read the repository")
 		return
 	}
 
@@ -417,7 +426,6 @@ func ProjectBuildFileHandler(w http.ResponseWriter, r *http.Request) {
 	if branch == "" {
 		branch = "main"
 	}
-	client := services.NewGitHubClient(token)
 	files, _, err := client.GetRepoTree(project.Repository, branch)
 	if err != nil {
 		respondError(w, http.StatusBadGateway, "Failed to read repository: "+err.Error())
@@ -587,6 +595,7 @@ func getProject(userID, id int64) (models.Project, error) {
 		&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
 		&p.Port,
 		&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
+		&p.Provider, &p.IntegrationID,
 	)
 	reconcileProjectStatus(&p)
 	return p, err
@@ -603,6 +612,7 @@ func getProjectByID(id int64) (models.Project, error) {
 		&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
 		&p.Port,
 		&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
+		&p.Provider, &p.IntegrationID,
 	)
 	return p, err
 }
@@ -613,6 +623,7 @@ var updatableProjectColumns = map[string]bool{
 	"instance_type": true, "build_strategy": true, "name": true, "slug": true,
 	"dockerfile_path": true, "compose_path": true,
 	"last_deployed_at": true, "port": true,
+	"provider": true, "integration_id": true,
 }
 
 func updateProject(w http.ResponseWriter, r *http.Request, userID, id int64) (models.Project, error) {
@@ -1020,15 +1031,26 @@ func buildAndDeploy(deployID int64, project models.Project) {
 		return
 	}
 
-	token, err := githubToken(project.UserID)
+	provider := project.Provider
+	if provider == "" {
+		provider = "github"
+	}
+	// A missing integration is fatal only for private repos: public clone URLs
+	// (and provider "git") need no credentials, so fall through anonymously.
+	_, token, cfg, err := projectIntegrationAuth(project)
 	if err != nil {
-		log("error", "No GitHub integration available to clone the repository")
+		log("warn", "No "+provider+" integration available; attempting an anonymous clone")
+		token, cfg = "", ""
+	}
+	cloneURL, err := services.CloneURL(provider, giteaBaseURLFromConfig(cfg), project.Repository, token)
+	if err != nil {
+		log("error", "Cannot build clone URL: "+err.Error())
 		finishDeployment(deployID, project.ID, statusError, 0, "")
 		return
 	}
 
 	log("info", fmt.Sprintf("Deploying %s (%s)", project.Repository, project.Slug))
-	dir, err := d.CloneRepo(ctx, token, project.Repository, func(line string) { log("info", line) })
+	dir, err := d.CloneRepo(ctx, cloneURL, func(line string) { log("info", line) })
 	defer os.RemoveAll(dir)
 	if err != nil {
 		if ctx.Err() != nil {

@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import FrameworkIcon from "@/components/dev/FrameworkIcon";
 import StatusBadge from "@/components/dev/StatusBadge";
+import ProviderBadge from "@/components/dev/ProviderBadge";
 import ConfirmDialog from "@/components/dev/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -281,18 +282,22 @@ export default function ProjectDetail() {
             <div className="flex items-center gap-2.5">
               <h1 className="truncate text-xl font-semibold tracking-tight">{project.name}</h1>
               <StatusBadge status={project.status} />
+              <ProviderBadge provider={project.provider} />
             </div>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-xs text-muted-foreground">
-              {project.repository && (
-                <a
-                  href={`https://github.com/${project.repository}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="transition-colors hover:text-foreground"
-                >
-                  {project.repository}
-                </a>
-              )}
+              {project.repository &&
+                (project.provider === "github" ? (
+                  <a
+                    href={`https://github.com/${project.repository}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="transition-colors hover:text-foreground"
+                  >
+                    {project.repository}
+                  </a>
+                ) : (
+                  <span>{project.repository}</span>
+                ))}
               <span className="text-muted-foreground/30">·</span>
               <span>{isProd ? project.branch || "main" : environment?.branch || "main"}</span>
               {liveUrl && (
