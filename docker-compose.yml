@@ -16,6 +16,10 @@ services:
       # GitHub repo that hosts the Nineteen source; used by the self-update
       # feature to check for and pull new releases.
       NINETEEN_REPO: "${NINETEEN_REPO:?Set NINETEEN_REPO in the .env file}"
+      # Interface deployed project ports are published on. 0.0.0.0 (default)
+      # makes project URLs reachable from other machines; use 127.0.0.1 to keep
+      # them local to the host.
+      NINETEEN_PROJECT_BIND: "${NINETEEN_PROJECT_BIND:-0.0.0.0}"
     volumes:
       # The app deploys project containers on the *host* Docker daemon, so it
       # needs the daemon socket. Project containers run on the host network,

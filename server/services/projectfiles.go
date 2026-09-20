@@ -114,11 +114,21 @@ func ProjectVolumeDir(projectID int64, hostPath string) string {
 }
 
 // EnsureProjectVolumeDir creates (if needed) and returns the volume's folder.
+//
+// The folder is made world-writable because Docker does not adjust the
+// ownership of a host bind mount: the server (running as root) creates the
+// folder, but the project container may run as a non-root user (e.g. USER app),
+// which then cannot create its data files (a SQLite database, uploads, …) and
+// crash-loops. On Docker Desktop the bind layer is effectively permissive, so
+// this only bites on a Linux host.
 func EnsureProjectVolumeDir(projectID int64, hostPath string) (string, error) {
 	dir := ProjectVolumeDir(projectID, hostPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o777); err != nil {
 		return "", err
 	}
+	// MkdirAll applies the process umask and never changes an existing folder,
+	// so force the mode explicitly on every call (including redeploys).
+	_ = os.Chmod(dir, 0o777)
 	return dir, nil
 }
 

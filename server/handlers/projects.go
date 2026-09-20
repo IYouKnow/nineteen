@@ -1185,7 +1185,7 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 	if len(mounts) > 0 {
 		log("info", fmt.Sprintf("Mounting %d persistent volume(s)", len(mounts)))
 	}
-	log("info", fmt.Sprintf("Starting container on 127.0.0.1:%d", hostPort))
+	log("info", fmt.Sprintf("Starting container on %s:%d", services.ProjectBindAddr(), hostPort))
 	if _, err := d.Run(ctx, image, containerName, hostPort, containerPort, envPath, mounts, func(line string) { log("info", line) }); err != nil {
 		if ctx.Err() != nil {
 			log("warn", "Deployment cancelled")

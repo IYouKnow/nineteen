@@ -454,6 +454,17 @@ var sizeUnits = map[string]int64{
 	"KIB": 1 << 10, "MIB": 1 << 20, "GIB": 1 << 30, "TIB": 1 << 40,
 }
 
+// ProjectBindAddr is the host interface a project's published port is bound to.
+// It defaults to every interface so the URL the UI shows (the server's own
+// hostname plus the project port) is reachable from other machines. Set
+// NINETEEN_PROJECT_BIND=127.0.0.1 to restrict project ports to the host.
+func ProjectBindAddr() string {
+	if v := strings.TrimSpace(os.Getenv("NINETEEN_PROJECT_BIND")); v != "" {
+		return v
+	}
+	return "0.0.0.0"
+}
+
 // BindMount maps a host path to a path inside a container.
 type BindMount struct {
 	Source string
@@ -468,7 +479,7 @@ func (d *Deployer) Run(ctx context.Context, image, name string, hostPort, contai
 		"run", "-d",
 		"--name", name,
 		"--restart", "unless-stopped",
-		"-p", fmt.Sprintf("127.0.0.1:%d:%d", hostPort, containerPort),
+		"-p", fmt.Sprintf("%s:%d:%d", ProjectBindAddr(), hostPort, containerPort),
 	}
 	if envFile != "" {
 		args = append(args, "--env-file", envFile)
