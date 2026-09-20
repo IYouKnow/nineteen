@@ -287,21 +287,23 @@ func (u *UpdateService) runUpdate(targetVersion string) {
 	}
 	defer os.RemoveAll(dir)
 
+	// Retain the running image under a stable tag for rollback. This must run
+	// BEFORE the build, which overwrites the "nineteen:new" tag the container
+	// was created from. It tags by the reference the container was created with
+	// rather than the digest in .Image: with the containerd image store that
+	// digest can be a manifest list, which `docker tag` cannot address.
+	if err := u.tagPreviousImage(insp); err != nil {
+		u.fail("Failed to tag previous image " + u.PreviousImage + ": " + err.Error())
+		return
+	}
+	u.Log("Tagged previous image as " + u.PreviousImage)
+
 	u.Log("Building image " + u.NewImage)
 	if err := u.buildImage(dir, targetVersion); err != nil {
 		u.fail("Build failed: " + err.Error())
 		return
 	}
 	u.Log("Image built successfully")
-
-	// Tag the running image under a stable name so it is retained for manual
-	// rollback. If this fails there is no fallback, so abort before touching the
-	// running container.
-	if err := runCommand("docker", "tag", insp.Image, u.PreviousImage); err != nil {
-		u.fail("Failed to tag previous image " + u.PreviousImage + ": " + err.Error())
-		return
-	}
-	u.Log("Tagged previous image as " + u.PreviousImage)
 
 	runArgs, err := u.buildRunArgs(insp)
 	if err != nil {
@@ -357,7 +359,8 @@ func (u *UpdateService) rollbackTo(prevImage string) {
 	u.Log("Launching update helper to roll back")
 	// The currently running image is both the helper (it exists and carries the
 	// docker CLI) and the fallback if the rollback target fails to start.
-	if err := u.launchHelper("rollback", runArgs, insp.Image, prevImage, insp.Image, ""); err != nil {
+	current := runningImageRef(insp)
+	if err := u.launchHelper("rollback", runArgs, current, prevImage, current, ""); err != nil {
 		u.fail("Failed to launch rollback helper: " + err.Error())
 		return
 	}
@@ -409,6 +412,45 @@ func (u *UpdateService) inspectContainer(name string) (*inspectResult, error) {
 		return nil, fmt.Errorf("no container named %q", name)
 	}
 	return &arr[0], nil
+}
+
+// runningImageRef returns a reference to the container's image that Docker can
+// resolve. It prefers the reference the container was created with (always a
+// name/tag, e.g. "nineteen:new") over the digest in .Image: under the containerd
+// image store that digest is a manifest list, which `docker tag` cannot address
+// and which is not guaranteed to resolve as an image.
+func runningImageRef(insp *inspectResult) string {
+	if ref := strings.TrimSpace(insp.Config.Image); ref != "" {
+		return ref
+	}
+	return insp.Image
+}
+
+// tagPreviousImage retains the running container's image under PreviousImage so
+// it can be restored by a rollback. It must be called before the new image is
+// built (which overwrites the tag the container was created from), and it
+// reports Docker's output when every candidate reference fails.
+func (u *UpdateService) tagPreviousImage(insp *inspectResult) error {
+	candidates := make([]string, 0, 2)
+	if ref := strings.TrimSpace(insp.Config.Image); ref != "" {
+		candidates = append(candidates, ref)
+	}
+	if insp.Image != "" {
+		candidates = append(candidates, insp.Image)
+	}
+	if len(candidates) == 0 {
+		return fmt.Errorf("no image reference found on container %s", u.ContainerName)
+	}
+
+	var lastErr error
+	for _, ref := range candidates {
+		out, err := exec.Command("docker", "tag", ref, u.PreviousImage).CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		lastErr = fmt.Errorf("%s: %s", err.Error(), strings.TrimSpace(string(out)))
+	}
+	return lastErr
 }
 
 // buildRunArgs reconstructs the docker run flags (excluding --name and the
