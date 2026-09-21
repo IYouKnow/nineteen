@@ -86,7 +86,8 @@ function DeploymentRow({ deployment }) {
 }
 
 export default function Dashboard() {
-  const { canWrite } = useAuth();
+  const { hasPermission } = useAuth();
+  const canCreate = hasPermission("projects.create");
   const { data: projects, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["projects"],
     queryFn: () => api.projects.list(),
@@ -126,7 +127,7 @@ export default function Dashboard() {
               Monitor your projects, deployments and cluster health.
             </p>
           </div>
-          {canWrite && (
+          {canCreate && (
             <Button asChild className="gap-2">
               <Link to="/projects/new">
                 <Plus className="h-4 w-4" />
@@ -208,7 +209,7 @@ export default function Dashboard() {
               title="No projects yet"
               description="Import a repository from GitHub to deploy your first project."
               action={
-                canWrite ? (
+                canCreate ? (
                   <Button asChild className="gap-2">
                     <Link to="/projects/new">
                       <Plus className="h-4 w-4" />

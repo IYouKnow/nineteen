@@ -27,6 +27,7 @@ import Settings from "@/pages/Settings";
 import AdminLayout from "@/pages/admin/AdminLayout";
 import AdminUsers from "@/pages/admin/AdminUsers";
 import AdminInvites from "@/pages/admin/AdminInvites";
+import AdminRoles from "@/pages/admin/AdminRoles";
 import AdminResources from "@/pages/admin/AdminResources";
 import AdminSystem from "@/pages/admin/AdminSystem";
 import AdminAudit from "@/pages/admin/AdminAudit";
@@ -41,14 +42,14 @@ function LoadingScreen() {
 }
 
 function AdminRoute({ children }) {
-  const { isAdmin } = useAuth();
-  if (!isAdmin) return <Navigate to="/" replace />;
+  const { canAccessAdmin } = useAuth();
+  if (!canAccessAdmin) return <Navigate to="/" replace />;
   return children;
 }
 
-function WriteRoute({ children }) {
-  const { canWrite } = useAuth();
-  if (!canWrite) return <Navigate to="/" replace />;
+function WriteRoute({ permission, children }) {
+  const { hasPermission } = useAuth();
+  if (!hasPermission(permission)) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -63,15 +64,15 @@ function AppRoutes() {
       <Route element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/projects" element={<Projects />} />
-        <Route path="/projects/new" element={<WriteRoute><NewProject /></WriteRoute>} />
+        <Route path="/projects/new" element={<WriteRoute permission="projects.create"><NewProject /></WriteRoute>} />
         <Route path="/projects/:projectId" element={<ProjectDetail />} />
         <Route path="/projects/:projectId/deployments/:deploymentId" element={<DeploymentDetail />} />
         <Route path="/databases" element={<Databases />} />
-        <Route path="/databases/new" element={<WriteRoute><NewDatabase /></WriteRoute>} />
+        <Route path="/databases/new" element={<WriteRoute permission="databases.create"><NewDatabase /></WriteRoute>} />
         <Route path="/databases/:databaseId" element={<DatabaseDetail />} />
         <Route path="/storage" element={<Storage />} />
-        <Route path="/storage/buckets/new" element={<WriteRoute><NewBucket /></WriteRoute>} />
-        <Route path="/storage/volumes/new" element={<WriteRoute><NewVolume /></WriteRoute>} />
+        <Route path="/storage/buckets/new" element={<WriteRoute permission="storage.create"><NewBucket /></WriteRoute>} />
+        <Route path="/storage/volumes/new" element={<WriteRoute permission="storage.create"><NewVolume /></WriteRoute>} />
         <Route path="/storage/buckets/:bucketId" element={<BucketDetail />} />
         <Route path="/storage/volumes/:volumeId" element={<VolumeDetail />} />
         <Route path="/profile" element={<Profile />} />
@@ -80,6 +81,7 @@ function AppRoutes() {
           <Route index element={<Navigate to="/admin/users" replace />} />
           <Route path="users" element={<AdminUsers />} />
           <Route path="invites" element={<AdminInvites />} />
+          <Route path="roles" element={<AdminRoles />} />
           <Route path="resources" element={<AdminResources />} />
           <Route path="system" element={<AdminSystem />} />
           <Route path="audit" element={<AdminAudit />} />

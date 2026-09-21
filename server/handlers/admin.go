@@ -37,7 +37,7 @@ func AdminUsersHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	if _, ok := requireAdmin(w, r); !ok {
+	if _, ok := requirePermission(w, r, "admin.users.read"); !ok {
 		return
 	}
 
@@ -79,7 +79,7 @@ type adminUserUpdate struct {
 
 // AdminUserHandler updates a user's role/status or soft-deletes the account.
 func AdminUserHandler(w http.ResponseWriter, r *http.Request) {
-	claims, ok := requireAdmin(w, r)
+	claims, ok := requirePermission(w, r, "admin.users.manage")
 	if !ok {
 		return
 	}
@@ -90,8 +90,11 @@ func AdminUserHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var targetRole, targetStatus, targetUsername string
-	err := db.DB.QueryRow("SELECT role, status, username FROM users WHERE id = ?", id).
-		Scan(&targetRole, &targetStatus, &targetUsername)
+	var targetSuper bool
+	err := db.DB.QueryRow(
+		`SELECT u.role, u.status, u.username, COALESCE(r.is_superuser, FALSE)
+		 FROM users u LEFT JOIN roles r ON r.name = u.role WHERE u.id = ?`, id,
+	).Scan(&targetRole, &targetStatus, &targetUsername, &targetSuper)
 	if err == sql.ErrNoRows {
 		respondError(w, http.StatusNotFound, "User not found")
 		return
@@ -114,11 +117,11 @@ func AdminUserHandler(w http.ResponseWriter, r *http.Request) {
 
 		if req.Role != nil {
 			role := strings.TrimSpace(*req.Role)
-			if !auth.ValidRole(role) {
-				respondError(w, http.StatusBadRequest, "role must be one of: admin, member, viewer")
+			if !roleExists(role) {
+				respondError(w, http.StatusBadRequest, "Unknown role: "+role)
 				return
 			}
-			if targetRole == auth.RoleAdmin && role != auth.RoleAdmin && activeAdminCount() <= 1 {
+			if targetSuper && !roleIsSuperuser(role) && activeAdminCount() <= 1 {
 				respondError(w, http.StatusConflict, "Cannot demote the last admin")
 				return
 			}
@@ -136,7 +139,7 @@ func AdminUserHandler(w http.ResponseWriter, r *http.Request) {
 				respondError(w, http.StatusConflict, "You cannot disable your own account")
 				return
 			}
-			if targetRole == auth.RoleAdmin && status == "disabled" && activeAdminCount() <= 1 {
+			if targetSuper && status == "disabled" && activeAdminCount() <= 1 {
 				respondError(w, http.StatusConflict, "Cannot disable the last admin")
 				return
 			}
@@ -170,7 +173,7 @@ func AdminUserHandler(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusConflict, "You cannot delete your own account here")
 			return
 		}
-		if targetRole == auth.RoleAdmin && activeAdminCount() <= 1 {
+		if targetSuper && activeAdminCount() <= 1 {
 			respondError(w, http.StatusConflict, "Cannot delete the last admin")
 			return
 		}
@@ -206,13 +209,11 @@ type adminInviteRow struct {
 
 // AdminInvitesHandler lists and creates invite codes.
 func AdminInvitesHandler(w http.ResponseWriter, r *http.Request) {
-	claims, ok := requireAdmin(w, r)
-	if !ok {
-		return
-	}
-
 	switch r.Method {
 	case http.MethodGet:
+		if _, ok := requirePermission(w, r, "admin.invites.read"); !ok {
+			return
+		}
 		rows, err := db.DB.Query(`
 			SELECT i.id, i.code, i.role, i.label, i.used, i.revoked, i.expires_at,
 				i.max_uses, i.uses, COALESCE(u.username, ''), i.created_at
@@ -247,6 +248,10 @@ func AdminInvitesHandler(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusOK, invites)
 
 	case http.MethodPost:
+		claims, ok := requirePermission(w, r, "admin.invites.manage")
+		if !ok {
+			return
+		}
 		var req struct {
 			Code      string `json:"code"`
 			Role      string `json:"role"`
@@ -265,10 +270,10 @@ func AdminInvitesHandler(w http.ResponseWriter, r *http.Request) {
 		req.ExpiresAt = strings.TrimSpace(req.ExpiresAt)
 
 		if req.Role == "" {
-			req.Role = auth.RoleMember
+			req.Role = defaultRoleName()
 		}
-		if !auth.ValidRole(req.Role) {
-			respondError(w, http.StatusBadRequest, "role must be one of: admin, member, viewer")
+		if !roleExists(req.Role) {
+			respondError(w, http.StatusBadRequest, "Unknown role: "+req.Role)
 			return
 		}
 		if req.MaxUses <= 0 {
@@ -320,7 +325,7 @@ func AdminInvitesHandler(w http.ResponseWriter, r *http.Request) {
 
 // AdminInviteHandler revokes a single invite code.
 func AdminInviteHandler(w http.ResponseWriter, r *http.Request) {
-	claims, ok := requireAdmin(w, r)
+	claims, ok := requirePermission(w, r, "admin.invites.manage")
 	if !ok {
 		return
 	}
@@ -354,7 +359,7 @@ func AdminAuditHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	if _, ok := requireAdmin(w, r); !ok {
+	if _, ok := requirePermission(w, r, "admin.audit.read"); !ok {
 		return
 	}
 
@@ -424,7 +429,7 @@ func AdminSystemHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	if _, ok := requireAdmin(w, r); !ok {
+	if _, ok := requirePermission(w, r, "admin.system.read"); !ok {
 		return
 	}
 
@@ -481,7 +486,7 @@ func AdminResourcesHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	if _, ok := requireAdmin(w, r); !ok {
+	if _, ok := requirePermission(w, r, "admin.resources.read"); !ok {
 		return
 	}
 
@@ -542,7 +547,7 @@ func reconcileProjectStatusByID(id int64, slug, status string) string {
 
 // AdminProjectHandler performs lifecycle actions or deletes any user's project.
 func AdminProjectHandler(w http.ResponseWriter, r *http.Request) {
-	claims, ok := requireAdmin(w, r)
+	claims, ok := requirePermission(w, r, "admin.resources.manage")
 	if !ok {
 		return
 	}
@@ -621,7 +626,7 @@ func AdminProjectHandler(w http.ResponseWriter, r *http.Request) {
 // AdminDatabaseHandler performs lifecycle actions or deletes any user's
 // database.
 func AdminDatabaseHandler(w http.ResponseWriter, r *http.Request) {
-	claims, ok := requireAdmin(w, r)
+	claims, ok := requirePermission(w, r, "admin.resources.manage")
 	if !ok {
 		return
 	}

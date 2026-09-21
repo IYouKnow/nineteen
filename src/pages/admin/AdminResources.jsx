@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { admin } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,7 +18,8 @@ function statusVariant(status) {
   return "secondary";
 }
 
-function ActionButtons({ onAction, onDelete, pending, showRestart = true }) {
+function ActionButtons({ onAction, onDelete, pending, showRestart = true, readOnly = false }) {
+  if (readOnly) return null;
   return (
     <div className="flex items-center justify-end gap-1">
       <Button variant="ghost" size="icon" className="h-8 w-8" disabled={pending} onClick={() => onAction("start")} title="Start">
@@ -48,6 +50,8 @@ function ActionButtons({ onAction, onDelete, pending, showRestart = true }) {
 
 export default function AdminResources() {
   const qc = useQueryClient();
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission("admin.resources.manage");
 
   const { data, isLoading } = useQuery({
     queryKey: ["admin-resources"],
@@ -129,6 +133,7 @@ export default function AdminResources() {
                         pending={projectAction.isPending || deleteProject.isPending}
                         onAction={(action) => projectAction.mutate({ id: p.id, action })}
                         onDelete={() => deleteProject.mutate(p.id)}
+                        readOnly={!canManage}
                       />
                     </TableCell>
                   </TableRow>
@@ -175,6 +180,7 @@ export default function AdminResources() {
                         pending={databaseAction.isPending || deleteDatabase.isPending}
                         onAction={(action) => databaseAction.mutate({ id: d.id, action })}
                         onDelete={() => deleteDatabase.mutate(d.id)}
+                        readOnly={!canManage}
                       />
                     </TableCell>
                   </TableRow>

@@ -42,31 +42,14 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// Built-in roles. Roles live in their own table; these constants are the names
-// the application knows how to enforce.
+// Built-in role names. Roles live in their own table and can be renamed or
+// extended; these are the names the application seeds on a fresh install and
+// falls back to when no superuser/default role is configured.
 const (
 	RoleAdmin  = "admin"
 	RoleMember = "member"
 	RoleViewer = "viewer"
 )
-
-// IsAdmin reports whether a role grants admin-panel access.
-func IsAdmin(role string) bool { return role == RoleAdmin }
-
-// CanWrite reports whether a role may perform mutating actions. Viewers are
-// read-only; an empty role (e.g. a token issued before roles existed) is
-// treated as a member so existing sessions keep working.
-func CanWrite(role string) bool { return role != RoleViewer }
-
-// ValidRole reports whether role is one the application can assign.
-func ValidRole(role string) bool {
-	switch role {
-	case RoleAdmin, RoleMember, RoleViewer:
-		return true
-	default:
-		return false
-	}
-}
 
 func HashPassword(password string) (string, error) {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)

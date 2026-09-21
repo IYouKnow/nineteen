@@ -6,6 +6,8 @@ import (
 	"log"
 	"os"
 
+	"nineteen-server/permissions"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -42,8 +44,18 @@ func runMigrations() {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT UNIQUE NOT NULL,
 			description TEXT DEFAULT '',
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			is_superuser BOOLEAN DEFAULT FALSE,
+			is_default BOOLEAN DEFAULT FALSE,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS role_permissions (
+			role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+			permission TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (role_id, permission)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_role_permissions_role ON role_permissions(role_id)`,
 		`CREATE TABLE IF NOT EXISTS invite_codes (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			code TEXT UNIQUE NOT NULL,
@@ -289,6 +301,9 @@ func runMigrations() {
 		{"invite_codes", "uses", `ALTER TABLE invite_codes ADD COLUMN uses INTEGER DEFAULT 0`},
 		{"invite_codes", "revoked", `ALTER TABLE invite_codes ADD COLUMN revoked BOOLEAN DEFAULT FALSE`},
 		{"invite_codes", "created_by", `ALTER TABLE invite_codes ADD COLUMN created_by INTEGER`},
+		{"roles", "is_superuser", `ALTER TABLE roles ADD COLUMN is_superuser BOOLEAN DEFAULT FALSE`},
+		{"roles", "is_default", `ALTER TABLE roles ADD COLUMN is_default BOOLEAN DEFAULT FALSE`},
+		{"roles", "updated_at", `ALTER TABLE roles ADD COLUMN updated_at DATETIME`},
 	}
 
 	for _, c := range columns {
@@ -326,12 +341,13 @@ func runMigrations() {
 	migrateProjectTriggers()
 
 	seedRoles()
+	seedRolePermissions()
 	promoteFirstUserToAdmin()
 }
 
 // seedRoles ensures the built-in roles exist. Roles are stored in their own
-// table (rather than an enum) so future roles can be added without a schema
-// change; the app only assigns the three built-ins.
+// table so additional roles can be created at runtime; the three built-ins are
+// only inserted when missing.
 func seedRoles() {
 	roles := []struct {
 		name string
@@ -349,6 +365,47 @@ func seedRoles() {
 			log.Fatalf("Failed to seed roles: %v", err)
 		}
 	}
+
+	// The admin role is the immutable superuser; member is the default role for
+	// new registrations. Flags are set idempotently so a rename survives.
+	if _, err := DB.Exec("UPDATE roles SET is_superuser = TRUE WHERE name = 'admin'"); err != nil {
+		log.Fatalf("Failed to seed roles: %v", err)
+	}
+	if _, err := DB.Exec(
+		"UPDATE roles SET is_default = TRUE WHERE name = 'member' AND NOT EXISTS (SELECT 1 FROM roles WHERE is_default = TRUE)",
+	); err != nil {
+		log.Fatalf("Failed to seed roles: %v", err)
+	}
+}
+
+// seedRolePermissions gives the built-in member and viewer roles sensible
+// defaults the first time the permission system is installed (empty table).
+// The admin role is a superuser and needs no rows. Existing installs therefore
+// keep their current behaviour; later edits are never overwritten.
+func seedRolePermissions() {
+	var count int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM role_permissions").Scan(&count); err != nil {
+		log.Fatalf("Migration failed: %v", err)
+	}
+	if count > 0 {
+		return
+	}
+
+	seed := func(role string, perms []string) {
+		var id int64
+		if err := DB.QueryRow("SELECT id FROM roles WHERE name = ?", role).Scan(&id); err != nil {
+			return
+		}
+		for _, p := range perms {
+			if _, err := DB.Exec(
+				"INSERT OR IGNORE INTO role_permissions (role_id, permission) VALUES (?, ?)", id, p,
+			); err != nil {
+				log.Fatalf("Failed to seed role permissions: %v", err)
+			}
+		}
+	}
+	seed("member", permissions.MemberDefaults())
+	seed("viewer", permissions.ViewerDefaults())
 }
 
 // promoteFirstUserToAdmin guarantees the instance always has at least one admin.

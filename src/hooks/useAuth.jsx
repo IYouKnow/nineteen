@@ -6,6 +6,7 @@ const AuthContext = createContext(null);
 const API_URL = import.meta.env.VITE_API_URL || "";
 const AUTH_TOKEN_KEY = "nineteen_token";
 const AUTH_USER_KEY = "nineteen_user";
+const AUTH_PERMS_KEY = "nineteen_permissions";
 
 function getStoredToken() {
   try {
@@ -24,15 +25,69 @@ function getStoredUser() {
   }
 }
 
+function getStoredPermissions() {
+  try {
+    const raw = localStorage.getItem(AUTH_PERMS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// Covers checks a granted permission against a required key, honouring the
+// global "*" and prefix wildcards such as "projects.*".
+export function permissionCovers(granted, required) {
+  if (granted === "*" || granted === required) return true;
+  if (granted.endsWith(".*")) {
+    const prefix = granted.slice(0, -2);
+    return required === prefix || required.startsWith(prefix + ".");
+  }
+  return false;
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(getStoredUser);
   const [token, setToken] = useState(getStoredToken);
+  const [permissions, setPermissions] = useState(getStoredPermissions);
+  const [isSuperuser, setIsSuperuser] = useState(
+    () => localStorage.getItem("nineteen_superuser") === "true"
+  );
   const [loading, setLoading] = useState(true);
 
   const isAuthenticated = !!token && !!user;
   const role = user?.role || "member";
-  const isAdmin = role === "admin";
-  const canWrite = role !== "viewer";
+
+  const hasPermission = useCallback(
+    (key) => {
+      if (isSuperuser) return true;
+      return permissions.some((p) => permissionCovers(p, key));
+    },
+    [permissions, isSuperuser]
+  );
+
+  // Whether the user can see the Admin section at all.
+  const canAccessAdmin =
+    isSuperuser || permissions.some((p) => p === "*" || p.startsWith("admin"));
+
+  // Coarse "can do anything mutating" flag used for the read-only banner.
+  const canWrite =
+    isSuperuser ||
+    permissions.some((p) => {
+      if (p === "*" || p.endsWith(".*")) return true;
+      return /\.(create|update|delete|manage|deploy|run)$/.test(p);
+    });
+
+  const isAdmin = isSuperuser;
+
+  const applyAuth = useCallback((data) => {
+    const perms = Array.isArray(data.permissions) ? data.permissions : [];
+    const superuser = !!data.is_superuser;
+    localStorage.setItem(AUTH_PERMS_KEY, JSON.stringify(perms));
+    localStorage.setItem("nineteen_superuser", superuser ? "true" : "false");
+    setPermissions(perms);
+    setIsSuperuser(superuser);
+  }, []);
 
   useEffect(() => {
     const storedToken = getStoredToken();
@@ -61,15 +116,20 @@ export function AuthProvider({ children }) {
         if (cancelled) return;
         setUser(userData);
         setToken(storedToken);
+        applyAuth(userData);
       })
       .catch((err) => {
         if (cancelled) return;
         if (err && err.definitive) {
           localStorage.removeItem(AUTH_TOKEN_KEY);
           localStorage.removeItem(AUTH_USER_KEY);
+          localStorage.removeItem(AUTH_PERMS_KEY);
+          localStorage.removeItem("nineteen_superuser");
           queryClientInstance.clear();
           setToken(null);
           setUser(null);
+          setPermissions([]);
+          setIsSuperuser(false);
         }
         // Otherwise keep the stored session; the user stays signed in and the
         // next successful /me call refreshes it.
@@ -81,7 +141,7 @@ export function AuthProvider({ children }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applyAuth]);
 
   const login = useCallback(async (username, password) => {
     const res = await fetch(`${API_URL}/api/auth/login`, {
@@ -101,8 +161,9 @@ export function AuthProvider({ children }) {
     queryClientInstance.clear();
     setToken(data.token);
     setUser(data.user);
+    applyAuth(data);
     return { success: true };
-  }, []);
+  }, [applyAuth]);
 
   const register = useCallback(async (inviteCode, username, email, password, displayName) => {
     const res = await fetch(`${API_URL}/api/auth/register`, {
@@ -128,19 +189,40 @@ export function AuthProvider({ children }) {
     queryClientInstance.clear();
     setToken(data.token);
     setUser(data.user);
+    applyAuth(data);
     return { success: true };
-  }, []);
+  }, [applyAuth]);
 
   const logout = useCallback(() => {
     localStorage.removeItem(AUTH_TOKEN_KEY);
     localStorage.removeItem(AUTH_USER_KEY);
+    localStorage.removeItem(AUTH_PERMS_KEY);
+    localStorage.removeItem("nineteen_superuser");
     queryClientInstance.clear();
     setToken(null);
     setUser(null);
+    setPermissions([]);
+    setIsSuperuser(false);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated, loading, login, register, logout, role, isAdmin, canWrite }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        isAuthenticated,
+        loading,
+        login,
+        register,
+        logout,
+        role,
+        isAdmin,
+        isSuperuser,
+        permissions,
+        hasPermission,
+        canAccessAdmin,
+        canWrite,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

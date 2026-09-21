@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"nineteen-server/db"
 	"nineteen-server/services"
 )
 
@@ -29,7 +28,7 @@ func UpdateHandler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		getUpdateHandler(w, claims)
 	case http.MethodPost:
-		if !isOwner(claims.UserID) {
+		if !hasPermission(claims.UserID, "updates.run") {
 			respondError(w, http.StatusForbidden, "Only the instance owner can update Nineteen")
 			return
 		}
@@ -45,7 +44,7 @@ func getUpdateHandler(w http.ResponseWriter, claims *Claims) {
 		return
 	}
 	st, err := UpdateSvc.CheckForUpdate()
-	st.IsOwner = isOwner(claims.UserID)
+	st.IsOwner = hasPermission(claims.UserID, "updates.run")
 	if err != nil {
 		// Report the status anyway so the UI can show the error message.
 		respondJSON(w, http.StatusOK, st)
@@ -80,7 +79,7 @@ func UpdateStatusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := UpdateSvc.GetState()
-	st.IsOwner = isOwner(claims.UserID)
+	st.IsOwner = hasPermission(claims.UserID, "updates.run")
 	respondJSON(w, http.StatusOK, st)
 }
 
@@ -95,7 +94,7 @@ func UpdateRollbackHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
 		return
 	}
-	if !isOwner(claims.UserID) {
+	if !hasPermission(claims.UserID, "updates.run") {
 		respondError(w, http.StatusForbidden, "Only the instance owner can roll back")
 		return
 	}
@@ -187,12 +186,4 @@ func UpdateLogsStreamHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-}
-
-// isOwner reports whether the given user is the first registered user (the
-// instance owner / admin).
-func isOwner(userID int64) bool {
-	var first int64
-	err := db.DB.QueryRow("SELECT id FROM users ORDER BY id ASC LIMIT 1").Scan(&first)
-	return err == nil && first == userID
 }

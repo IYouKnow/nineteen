@@ -295,6 +295,15 @@ export const admin = {
   updateUser: (id, patch) =>
     doFetch(`/api/admin/users/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
   deleteUser: (id) => doFetch(`/api/admin/users/${id}`, { method: "DELETE" }),
+  roles: () => doFetch("/api/admin/roles"),
+  createRole: (payload) =>
+    doFetch("/api/admin/roles", { method: "POST", body: JSON.stringify(payload) }),
+  updateRole: (id, patch) =>
+    doFetch(`/api/admin/roles/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  deleteRole: (id, replacementRoleId) => {
+    const qs = replacementRoleId ? `?replacement_role_id=${replacementRoleId}` : "";
+    return doFetch(`/api/admin/roles/${id}${qs}`, { method: "DELETE" });
+  },
   invites: () => doFetch("/api/admin/invites"),
   createInvite: (payload) =>
     doFetch("/api/admin/invites", { method: "POST", body: JSON.stringify(payload) }),
@@ -315,4 +324,8 @@ export const admin = {
   databaseAction: (id, action) =>
     doFetch(`/api/admin/databases/${id}`, { method: "POST", body: JSON.stringify({ action }) }),
   deleteDatabase: (id) => doFetch(`/api/admin/databases/${id}`, { method: "DELETE" }),
+};
+
+export const permissions = {
+  catalog: () => doFetch("/api/permissions"),
 };

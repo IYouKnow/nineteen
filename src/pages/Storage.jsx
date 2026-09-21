@@ -39,7 +39,8 @@ export default function Storage() {
   const [filter, setFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [view, setView] = useState("grid");
-  const { canWrite } = useAuth();
+  const { hasPermission } = useAuth();
+  const canCreate = hasPermission("storage.create");
 
   useEffect(() => {
     setType(urlType);
@@ -109,7 +110,7 @@ export default function Storage() {
             {volumes.length === 1 ? "" : "s"} · region fra1
           </p>
         </div>
-        {canWrite && (
+        {canCreate && (
           <Button asChild className="gap-2">
             <Link to={isBucket ? "/storage/buckets/new" : "/storage/volumes/new"}>
               <Plus className="h-4 w-4" /> New {isBucket ? "Bucket" : "Volume"}
@@ -231,7 +232,7 @@ export default function Storage() {
                 : "Try adjusting your search or filters."
             }
             action={
-              noFilters && canWrite ? (
+              noFilters && canCreate ? (
                 <Button asChild className="gap-2">
                   <Link to={isBucket ? "/storage/buckets/new" : "/storage/volumes/new"}>
                     <Plus className="h-4 w-4" /> New {isBucket ? "Bucket" : "Volume"}

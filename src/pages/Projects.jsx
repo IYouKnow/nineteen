@@ -93,7 +93,8 @@ export default function Projects() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [view, setView] = useState("grid");
-  const { canWrite } = useAuth();
+  const { hasPermission } = useAuth();
+  const canCreate = hasPermission("projects.create");
   const [searchParams] = useSearchParams();
   const urlFilter = searchParams.get("filter") || "all";
 
@@ -132,7 +133,7 @@ export default function Projects() {
             {(projects || []).length} project{(projects || []).length === 1 ? "" : "s"} deployed to fra1
           </p>
         </div>
-        {canWrite && (
+        {canCreate && (
           <Button asChild className="gap-2">
             <Link to="/projects/new">
               <Plus className="h-4 w-4" />
@@ -218,7 +219,7 @@ export default function Projects() {
                 : "Import a repository from GitHub to deploy your first project."
             }
             action={
-              !query && filter === "all" && canWrite ? (
+              !query && filter === "all" && canCreate ? (
                 <Button asChild className="gap-2">
                   <Link to="/projects/new">
                     <Plus className="h-4 w-4" />

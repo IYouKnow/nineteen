@@ -15,16 +15,23 @@ import {
 import ConfirmDialog from "@/components/dev/ConfirmDialog";
 import { Trash2, ShieldCheck, UserX, UserCheck } from "lucide-react";
 
-const ROLES = ["admin", "member", "viewer"];
+const ROLE_FALLBACK = ["admin", "member", "viewer"];
 
 export default function AdminUsers() {
   const qc = useQueryClient();
-  const { user: me } = useAuth();
+  const { user: me, hasPermission } = useAuth();
+  const canManage = hasPermission("admin.users.manage");
 
   const { data: users = [], isLoading } = useQuery({
     queryKey: ["admin-users"],
     queryFn: () => admin.users(),
   });
+
+  const { data: roles = [] } = useQuery({
+    queryKey: ["admin-roles"],
+    queryFn: () => admin.roles(),
+  });
+  const roleNames = roles.length ? roles.map((r) => r.name) : ROLE_FALLBACK;
 
   const updateUser = useMutation({
     mutationFn: ({ id, patch }) => admin.updateUser(id, patch),
@@ -88,14 +95,14 @@ export default function AdminUsers() {
                       <TableCell>
                         <Select
                           value={u.role}
-                          disabled={isSelf || updateUser.isPending}
+                          disabled={isSelf || !canManage || updateUser.isPending}
                           onValueChange={(role) => updateUser.mutate({ id: u.id, patch: { role } })}
                         >
                           <SelectTrigger className="h-8 w-[120px]">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {ROLES.map((r) => (
+                            {roleNames.map((r) => (
                               <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>
                             ))}
                           </SelectContent>
@@ -117,7 +124,7 @@ export default function AdminUsers() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            disabled={isSelf || updateUser.isPending}
+                            disabled={isSelf || !canManage || updateUser.isPending}
                             onClick={() =>
                               updateUser.mutate({
                                 id: u.id,
@@ -138,7 +145,7 @@ export default function AdminUsers() {
                                 variant="ghost"
                                 size="icon"
                                 className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                                disabled={isSelf}
+                                disabled={isSelf || !canManage}
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>

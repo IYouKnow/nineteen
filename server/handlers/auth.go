@@ -12,6 +12,7 @@ import (
 	"nineteen-server/auth"
 	"nineteen-server/db"
 	"nineteen-server/models"
+	"nineteen-server/permissions"
 )
 
 type RegisterRequest struct {
@@ -28,12 +29,21 @@ type LoginRequest struct {
 }
 
 type AuthResponse struct {
-	User  *models.User `json:"user"`
-	Token string       `json:"token"`
+	User        *models.User `json:"user"`
+	Token       string       `json:"token"`
+	Permissions []string     `json:"permissions"`
+	IsSuperuser bool         `json:"is_superuser"`
 }
 
 type ErrorResponse struct {
 	Error string `json:"error"`
+}
+
+// meResponse is the current user plus their resolved access, used by /me.
+type meResponse struct {
+	models.User
+	Permissions []string `json:"permissions"`
+	IsSuperuser bool     `json:"is_superuser"`
 }
 
 func respondJSON(w http.ResponseWriter, status int, data interface{}) {
@@ -83,36 +93,82 @@ func logAudit(r *http.Request, userID int64, username, action, targetType, targe
 	)
 }
 
-// userRole looks the current role up from the database so a stale token (e.g.
-// after an admin demotes a user) cannot retain privileges.
-func userRole(userID int64) string {
-	var role string
-	if err := db.DB.QueryRow("SELECT role FROM users WHERE id = ?", userID).Scan(&role); err != nil {
-		return ""
-	}
-	return role
+// isSuperuser reports whether the user's role is the all-powerful superuser.
+func isSuperuser(userID int64) bool {
+	var super bool
+	db.DB.QueryRow(
+		`SELECT r.is_superuser FROM users u JOIN roles r ON r.name = u.role WHERE u.id = ?`, userID,
+	).Scan(&super)
+	return super
 }
 
-// requireAdmin extracts the caller and confirms they are an admin, writing an
+// rolePermissions resolves a user's effective permissions from their role.
+// Superusers get the global wildcard.
+func rolePermissions(userID int64) []string {
+	var roleID int64
+	var super bool
+	err := db.DB.QueryRow(
+		`SELECT r.id, r.is_superuser FROM users u JOIN roles r ON r.name = u.role WHERE u.id = ?`, userID,
+	).Scan(&roleID, &super)
+	if err != nil {
+		return nil
+	}
+	if super {
+		return []string{"*"}
+	}
+
+	rows, err := db.DB.Query("SELECT permission FROM role_permissions WHERE role_id = ?", roleID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var perms []string
+	for rows.Next() {
+		var p string
+		if rows.Scan(&p) == nil {
+			perms = append(perms, p)
+		}
+	}
+	return perms
+}
+
+// hasPermission reports whether a user is granted a permission (directly, via a
+// wildcard, or as a superuser).
+func hasPermission(userID int64, perm string) bool {
+	return permissions.Allows(rolePermissions(userID), perm)
+}
+
+// requirePermission extracts the caller and confirms they hold perm, writing an
 // error response and returning ok=false otherwise.
-func requireAdmin(w http.ResponseWriter, r *http.Request) (*Claims, bool) {
+func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (*Claims, bool) {
 	claims, err := extractUser(r)
 	if err != nil {
 		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
 		return nil, false
 	}
-	if !auth.IsAdmin(userRole(claims.UserID)) {
-		respondError(w, http.StatusForbidden, "Admin access required")
+	if !hasPermission(claims.UserID, perm) {
+		respondError(w, http.StatusForbidden, "You don't have permission to do that")
 		return nil, false
 	}
 	return claims, true
 }
 
+// activeAdminCount returns how many enabled superusers remain.
+func activeAdminCount() int {
+	var n int
+	db.DB.QueryRow(
+		`SELECT COUNT(*) FROM users u JOIN roles r ON r.name = u.role
+		 WHERE r.is_superuser = TRUE AND u.status = 'active'`,
+	).Scan(&n)
+	return n
+}
+
 // AuthFromRequest exposes token extraction to the server's middleware.
 func AuthFromRequest(r *http.Request) (*Claims, error) { return extractUser(r) }
 
-// CurrentUserRole returns the live database role for a user id.
-func CurrentUserRole(userID int64) string { return userRole(userID) }
+// HasPermission exposes permission checks to the server's middleware.
+func HasPermission(userID int64, perm string) bool { return hasPermission(userID, perm) }
 
 // LogAudit exposes audit logging to the server's middleware.
 func LogAudit(r *http.Request, userID int64, username, action, targetType, targetID, details string) {
@@ -209,7 +265,7 @@ func validateInvite(code string) (inviteInfo, string) {
 		}
 	}
 	if info.Role == "" {
-		info.Role = auth.RoleMember
+		info.Role = defaultRoleName()
 	}
 	return info, ""
 }
@@ -261,7 +317,9 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 
 	role := info.Role
 	if userCount == 0 {
-		role = auth.RoleAdmin
+		role = superuserRoleName()
+	} else if !roleExists(role) {
+		role = defaultRoleName()
 	}
 
 	// Hash password
@@ -315,7 +373,12 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	logAudit(r, userID, req.Username, "user.register", "user", strconv.FormatInt(userID, 10),
 		"role="+role)
 
-	respondJSON(w, http.StatusCreated, AuthResponse{User: user, Token: token})
+	respondJSON(w, http.StatusCreated, AuthResponse{
+		User:        user,
+		Token:       token,
+		Permissions: rolePermissions(userID),
+		IsSuperuser: isSuperuser(userID),
+	})
 }
 
 func LoginHandler(w http.ResponseWriter, r *http.Request) {
@@ -373,7 +436,12 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	logAudit(r, user.ID, user.Username, "user.login", "user", strconv.FormatInt(user.ID, 10), "")
 
-	respondJSON(w, http.StatusOK, AuthResponse{User: &user, Token: token})
+	respondJSON(w, http.StatusOK, AuthResponse{
+		User:        &user,
+		Token:       token,
+		Permissions: rolePermissions(user.ID),
+		IsSuperuser: isSuperuser(user.ID),
+	})
 }
 
 func MeHandler(w http.ResponseWriter, r *http.Request) {
@@ -412,7 +480,11 @@ func getMeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, user)
+	respondJSON(w, http.StatusOK, meResponse{
+		User:        user,
+		Permissions: rolePermissions(claims.UserID),
+		IsSuperuser: isSuperuser(claims.UserID),
+	})
 }
 
 type UpdateProfileRequest struct {
@@ -561,9 +633,7 @@ func DeleteAccountHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Soft-delete: keep the account and its data, but block sign-in. The
 	// instance must always retain one active admin.
-	var role, status string
-	db.DB.QueryRow("SELECT role, status FROM users WHERE id = ?", claims.UserID).Scan(&role, &status)
-	if auth.IsAdmin(role) && activeAdminCount() <= 1 {
+	if isSuperuser(claims.UserID) && activeAdminCount() <= 1 {
 		respondError(w, http.StatusConflict, "You are the only admin — promote another admin before deleting your account")
 		return
 	}
@@ -579,11 +649,4 @@ func DeleteAccountHandler(w http.ResponseWriter, r *http.Request) {
 	logAudit(r, claims.UserID, claims.Username, "user.self_delete", "user", strconv.FormatInt(claims.UserID, 10), "soft-delete")
 
 	respondJSON(w, http.StatusOK, map[string]string{"message": "Account deleted"})
-}
-
-// activeAdminCount returns how many enabled admins remain.
-func activeAdminCount() int {
-	var n int
-	db.DB.QueryRow("SELECT COUNT(*) FROM users WHERE role = ? AND status = 'active'", auth.RoleAdmin).Scan(&n)
-	return n
 }

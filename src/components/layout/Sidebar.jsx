@@ -33,7 +33,8 @@ function NavItem({ to, label, icon: Icon, end }) {
 
 export default function Sidebar({ mobileOpen, onClose }) {
   const navigate = useNavigate();
-  const { isAdmin, canWrite } = useAuth();
+  const { canAccessAdmin, hasPermission } = useAuth();
+  const canCreateProject = hasPermission("projects.create");
   return (
     <>
       {mobileOpen && (
@@ -74,7 +75,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
             System
           </p>
           <NavItem to="/settings" label="Settings" icon={Settings} end={false} />
-          {isAdmin && <NavItem to="/admin" label="Admin" icon={ShieldCheck} end={false} />}
+          {canAccessAdmin && <NavItem to="/admin" label="Admin" icon={ShieldCheck} end={false} />}
           <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm text-sidebar-foreground">
             <Server className="h-4 w-4 shrink-0" />
             <span>Activity</span>
@@ -84,7 +85,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
           </div>
         </nav>
 
-        {canWrite && (
+        {canCreateProject && (
           <div className="p-3">
             <Button
               onClick={() => navigate("/projects/new")}

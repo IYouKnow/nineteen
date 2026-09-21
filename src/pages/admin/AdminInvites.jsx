@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { admin } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,7 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Plus, Ticket, Trash2, Copy, CheckCircle2 } from "lucide-react";
 
-const ROLES = ["member", "viewer", "admin"];
+const ROLE_FALLBACK = ["member", "viewer", "admin"];
 
 function inviteState(inv) {
   if (inv.revoked) return { label: "revoked", variant: "destructive" };
@@ -32,6 +33,8 @@ function inviteState(inv) {
 
 export default function AdminInvites() {
   const qc = useQueryClient();
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission("admin.invites.manage");
   const [open, setOpen] = useState(false);
   const [created, setCreated] = useState(null);
   const [form, setForm] = useState({ role: "member", label: "", max_uses: 1, expires_at: "" });
@@ -40,6 +43,12 @@ export default function AdminInvites() {
     queryKey: ["admin-invites"],
     queryFn: () => admin.invites(),
   });
+
+  const { data: roles = [] } = useQuery({
+    queryKey: ["admin-roles"],
+    queryFn: () => admin.roles(),
+  });
+  const roleNames = roles.length ? roles.map((r) => r.name) : ROLE_FALLBACK;
 
   const createInvite = useMutation({
     mutationFn: (payload) => admin.createInvite(payload),
@@ -101,9 +110,11 @@ export default function AdminInvites() {
                 {invites.length} invite code{invites.length === 1 ? "" : "s"}
               </p>
             </div>
-            <Button size="sm" className="gap-1.5" onClick={() => setOpen(true)}>
-              <Plus className="h-3.5 w-3.5" /> New Invite
-            </Button>
+            {canManage && (
+              <Button size="sm" className="gap-1.5" onClick={() => setOpen(true)}>
+                <Plus className="h-3.5 w-3.5" /> New Invite
+              </Button>
+            )}
           </div>
 
           {isLoading ? (
@@ -160,7 +171,7 @@ export default function AdminInvites() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                          disabled={inv.revoked || revokeInvite.isPending}
+                          disabled={!canManage || inv.revoked || revokeInvite.isPending}
                           onClick={() => revokeInvite.mutate(inv.id)}
                           title="Revoke"
                         >
@@ -187,7 +198,7 @@ export default function AdminInvites() {
               <Select value={form.role} onValueChange={(role) => setForm((f) => ({ ...f, role }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {ROLES.map((r) => (
+                  {roleNames.map((r) => (
                     <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>
                   ))}
                 </SelectContent>

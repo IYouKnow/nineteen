@@ -29,7 +29,8 @@ export default function Databases() {
   const [filter, setFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [view, setView] = useState("grid");
-  const { canWrite } = useAuth();
+  const { hasPermission } = useAuth();
+  const canCreate = hasPermission("databases.create");
   const [searchParams] = useSearchParams();
   const urlFilter = searchParams.get("filter");
 
@@ -90,7 +91,7 @@ export default function Databases() {
             {connections.length} connection{connections.length === 1 ? "" : "s"} · region fra1
           </p>
         </div>
-        {canWrite && (
+        {canCreate && (
           <Button asChild className="gap-2">
             <Link to="/databases/new">
               <Plus className="h-4 w-4" /> New Database
@@ -193,7 +194,7 @@ export default function Databases() {
                 : "Try adjusting your search or filters."
             }
             action={
-              noFilters && canWrite ? (
+              noFilters && canCreate ? (
                 <Button asChild className="gap-2">
                   <Link to="/databases/new">
                     <Plus className="h-4 w-4" /> New Database
