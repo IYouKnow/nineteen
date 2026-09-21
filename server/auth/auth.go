@@ -38,7 +38,34 @@ type Claims struct {
 	UserID   int64  `json:"user_id"`
 	Username string `json:"username"`
 	Email    string `json:"email"`
+	Role     string `json:"role"`
 	jwt.RegisteredClaims
+}
+
+// Built-in roles. Roles live in their own table; these constants are the names
+// the application knows how to enforce.
+const (
+	RoleAdmin  = "admin"
+	RoleMember = "member"
+	RoleViewer = "viewer"
+)
+
+// IsAdmin reports whether a role grants admin-panel access.
+func IsAdmin(role string) bool { return role == RoleAdmin }
+
+// CanWrite reports whether a role may perform mutating actions. Viewers are
+// read-only; an empty role (e.g. a token issued before roles existed) is
+// treated as a member so existing sessions keep working.
+func CanWrite(role string) bool { return role != RoleViewer }
+
+// ValidRole reports whether role is one the application can assign.
+func ValidRole(role string) bool {
+	switch role {
+	case RoleAdmin, RoleMember, RoleViewer:
+		return true
+	default:
+		return false
+	}
 }
 
 func HashPassword(password string) (string, error) {
@@ -51,11 +78,12 @@ func CheckPassword(password, hash string) bool {
 	return err == nil
 }
 
-func GenerateToken(userID int64, username, email string) (string, error) {
+func GenerateToken(userID int64, username, email, role string) (string, error) {
 	claims := Claims{
 		UserID:   userID,
 		Username: username,
 		Email:    email,
+		Role:     role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(72 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

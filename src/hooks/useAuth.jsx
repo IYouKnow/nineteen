@@ -30,6 +30,9 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const isAuthenticated = !!token && !!user;
+  const role = user?.role || "member";
+  const isAdmin = role === "admin";
+  const canWrite = role !== "viewer";
 
   useEffect(() => {
     const storedToken = getStoredToken();
@@ -137,7 +140,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, isAuthenticated, loading, login, register, logout, role, isAdmin, canWrite }}>
       {children}
     </AuthContext.Provider>
   );

@@ -15,6 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { timeAgo } from "@/lib/format";
 import { getFramework } from "@/lib/devStatus";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
 
 const FILTERS = [
   { id: "all", label: "All" },
@@ -92,6 +93,7 @@ export default function Projects() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [view, setView] = useState("grid");
+  const { canWrite } = useAuth();
   const [searchParams] = useSearchParams();
   const urlFilter = searchParams.get("filter") || "all";
 
@@ -130,12 +132,14 @@ export default function Projects() {
             {(projects || []).length} project{(projects || []).length === 1 ? "" : "s"} deployed to fra1
           </p>
         </div>
-        <Button asChild className="gap-2">
-          <Link to="/projects/new">
-            <Plus className="h-4 w-4" />
-            New Project
-          </Link>
-        </Button>
+        {canWrite && (
+          <Button asChild className="gap-2">
+            <Link to="/projects/new">
+              <Plus className="h-4 w-4" />
+              New Project
+            </Link>
+          </Button>
+        )}
       </div>
 
       <div className="mt-6 flex flex-wrap items-center gap-3">
@@ -214,7 +218,7 @@ export default function Projects() {
                 : "Import a repository from GitHub to deploy your first project."
             }
             action={
-              !query && filter === "all" ? (
+              !query && filter === "all" && canWrite ? (
                 <Button asChild className="gap-2">
                   <Link to="/projects/new">
                     <Plus className="h-4 w-4" />

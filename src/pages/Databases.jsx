@@ -14,6 +14,7 @@ import DatabaseCard from "@/components/db/DatabaseCard";
 import DatabaseRow from "@/components/db/DatabaseRow";
 import { DB_TYPE_LIST } from "@/lib/databases";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
 
 const STATUS_FILTERS = [
   { id: "all", label: "All" },
@@ -28,6 +29,7 @@ export default function Databases() {
   const [filter, setFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [view, setView] = useState("grid");
+  const { canWrite } = useAuth();
   const [searchParams] = useSearchParams();
   const urlFilter = searchParams.get("filter");
 
@@ -88,11 +90,13 @@ export default function Databases() {
             {connections.length} connection{connections.length === 1 ? "" : "s"} · region fra1
           </p>
         </div>
-        <Button asChild className="gap-2">
-          <Link to="/databases/new">
-            <Plus className="h-4 w-4" /> New Database
-          </Link>
-        </Button>
+        {canWrite && (
+          <Button asChild className="gap-2">
+            <Link to="/databases/new">
+              <Plus className="h-4 w-4" /> New Database
+            </Link>
+          </Button>
+        )}
       </div>
 
       <div className="mt-6 flex flex-wrap items-center gap-3">
@@ -189,7 +193,7 @@ export default function Databases() {
                 : "Try adjusting your search or filters."
             }
             action={
-              noFilters ? (
+              noFilters && canWrite ? (
                 <Button asChild className="gap-2">
                   <Link to="/databases/new">
                     <Plus className="h-4 w-4" /> New Database

@@ -289,3 +289,30 @@ export const update = {
     return `${API_URL}/api/update/logs/stream?token=${encodeURIComponent(token)}`;
   },
 };
+
+export const admin = {
+  users: () => doFetch("/api/admin/users"),
+  updateUser: (id, patch) =>
+    doFetch(`/api/admin/users/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  deleteUser: (id) => doFetch(`/api/admin/users/${id}`, { method: "DELETE" }),
+  invites: () => doFetch("/api/admin/invites"),
+  createInvite: (payload) =>
+    doFetch("/api/admin/invites", { method: "POST", body: JSON.stringify(payload) }),
+  revokeInvite: (id) => doFetch(`/api/admin/invites/${id}`, { method: "DELETE" }),
+  audit: ({ limit = 100, offset = 0, action, user_id } = {}) => {
+    const params = new URLSearchParams();
+    params.set("limit", String(limit));
+    if (offset) params.set("offset", String(offset));
+    if (action) params.set("action", action);
+    if (user_id) params.set("user_id", String(user_id));
+    return doFetch(`/api/admin/audit?${params.toString()}`);
+  },
+  system: () => doFetch("/api/admin/system"),
+  resources: () => doFetch("/api/admin/resources"),
+  projectAction: (id, action) =>
+    doFetch(`/api/admin/projects/${id}`, { method: "POST", body: JSON.stringify({ action }) }),
+  deleteProject: (id) => doFetch(`/api/admin/projects/${id}`, { method: "DELETE" }),
+  databaseAction: (id, action) =>
+    doFetch(`/api/admin/databases/${id}`, { method: "POST", body: JSON.stringify({ action }) }),
+  deleteDatabase: (id) => doFetch(`/api/admin/databases/${id}`, { method: "DELETE" }),
+};

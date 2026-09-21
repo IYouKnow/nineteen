@@ -3,8 +3,11 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"nineteen-server/auth"
 	"nineteen-server/db"
@@ -54,6 +57,68 @@ func extractUser(r *http.Request) (*Claims, error) {
 
 type Claims = auth.Claims
 
+// clientIP returns the best-effort originating IP for audit records, honouring
+// a reverse proxy's X-Forwarded-For when present.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if i := strings.IndexByte(xff, ','); i >= 0 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// logAudit records a single audit entry. Failures are intentionally ignored so
+// auditing can never break the request it is describing.
+func logAudit(r *http.Request, userID int64, username, action, targetType, targetID, details string) {
+	db.DB.Exec(
+		`INSERT INTO audit_logs (user_id, username, action, target_type, target_id, details, ip)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		userID, username, action, targetType, targetID, details, clientIP(r),
+	)
+}
+
+// userRole looks the current role up from the database so a stale token (e.g.
+// after an admin demotes a user) cannot retain privileges.
+func userRole(userID int64) string {
+	var role string
+	if err := db.DB.QueryRow("SELECT role FROM users WHERE id = ?", userID).Scan(&role); err != nil {
+		return ""
+	}
+	return role
+}
+
+// requireAdmin extracts the caller and confirms they are an admin, writing an
+// error response and returning ok=false otherwise.
+func requireAdmin(w http.ResponseWriter, r *http.Request) (*Claims, bool) {
+	claims, err := extractUser(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return nil, false
+	}
+	if !auth.IsAdmin(userRole(claims.UserID)) {
+		respondError(w, http.StatusForbidden, "Admin access required")
+		return nil, false
+	}
+	return claims, true
+}
+
+// AuthFromRequest exposes token extraction to the server's middleware.
+func AuthFromRequest(r *http.Request) (*Claims, error) { return extractUser(r) }
+
+// CurrentUserRole returns the live database role for a user id.
+func CurrentUserRole(userID int64) string { return userRole(userID) }
+
+// LogAudit exposes audit logging to the server's middleware.
+func LogAudit(r *http.Request, userID int64, username, action, targetType, targetID, details string) {
+	logAudit(r, userID, username, action, targetType, targetID, details)
+}
+
 func HasUsersHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -90,22 +155,63 @@ func ValidateInviteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var used bool
-	err := db.DB.QueryRow("SELECT used FROM invite_codes WHERE code = ?", req.Code).Scan(&used)
-	if err == sql.ErrNoRows {
-		respondError(w, http.StatusForbidden, "Invalid invite code")
-		return
-	}
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Database error")
-		return
-	}
-	if used {
-		respondError(w, http.StatusForbidden, "Invite code has already been used")
+	info, errMsg := validateInvite(req.Code)
+	if errMsg != "" {
+		status := http.StatusForbidden
+		if errMsg == "Database error" {
+			status = http.StatusInternalServerError
+		}
+		respondError(w, status, errMsg)
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]bool{"valid": true})
+	respondJSON(w, http.StatusOK, map[string]interface{}{"valid": true, "role": info.Role})
+}
+
+// inviteInfo is the subset of an invite code the registration flow needs.
+type inviteInfo struct {
+	ID      int64
+	Role    string
+	MaxUses int
+	Uses    int
+}
+
+// validateInvite resolves a usable invite code, returning a human-readable
+// reason when the code is missing, revoked, exhausted or expired.
+func validateInvite(code string) (inviteInfo, string) {
+	var info inviteInfo
+	var used, revoked bool
+	var expiresAt sql.NullString
+	err := db.DB.QueryRow(
+		`SELECT id, used, revoked, expires_at, max_uses, uses, role FROM invite_codes WHERE code = ?`,
+		code,
+	).Scan(&info.ID, &used, &revoked, &expiresAt, &info.MaxUses, &info.Uses, &info.Role)
+	if err == sql.ErrNoRows {
+		return info, "Invalid invite code"
+	}
+	if err != nil {
+		return info, "Database error"
+	}
+	if revoked {
+		return info, "Invite code has been revoked"
+	}
+	if used || (info.MaxUses > 0 && info.Uses >= info.MaxUses) {
+		return info, "Invite code has already been used"
+	}
+	if expiresAt.Valid && expiresAt.String != "" {
+		for _, layout := range []string{"2006-01-02 15:04:05", time.RFC3339} {
+			if t, perr := time.Parse(layout, expiresAt.String); perr == nil {
+				if time.Now().After(t) {
+					return info, "Invite code has expired"
+				}
+				break
+			}
+		}
+	}
+	if info.Role == "" {
+		info.Role = auth.RoleMember
+	}
+	return info, ""
 }
 
 func RegisterHandler(w http.ResponseWriter, r *http.Request) {
@@ -135,21 +241,27 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate invite code
-	var codeID int64
-	var used bool
-	err := db.DB.QueryRow("SELECT id, used FROM invite_codes WHERE code = ?", req.InviteCode).Scan(&codeID, &used)
-	if err == sql.ErrNoRows {
-		respondError(w, http.StatusForbidden, "Invalid invite code")
-		return
-	}
-	if err != nil {
+	// The very first account on the instance becomes the admin regardless of
+	// the invite's configured role.
+	var userCount int
+	if err := db.DB.QueryRow("SELECT COUNT(*) FROM users").Scan(&userCount); err != nil {
 		respondError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
-	if used {
-		respondError(w, http.StatusForbidden, "Invite code has already been used")
+
+	info, errMsg := validateInvite(req.InviteCode)
+	if errMsg != "" {
+		status := http.StatusForbidden
+		if errMsg == "Database error" {
+			status = http.StatusInternalServerError
+		}
+		respondError(w, status, errMsg)
 		return
+	}
+
+	role := info.Role
+	if userCount == 0 {
+		role = auth.RoleAdmin
 	}
 
 	// Hash password
@@ -161,8 +273,8 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Insert user
 	result, err := db.DB.Exec(
-		"INSERT INTO users (username, email, password_hash, display_name) VALUES (?, ?, ?, ?)",
-		req.Username, req.Email, hash, req.DisplayName,
+		"INSERT INTO users (username, email, password_hash, display_name, role, status) VALUES (?, ?, ?, ?, ?, 'active')",
+		req.Username, req.Email, hash, req.DisplayName, role,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
@@ -175,11 +287,17 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 
 	userID, _ := result.LastInsertId()
 
-	// Mark invite code as used
-	db.DB.Exec("UPDATE invite_codes SET used = TRUE, used_by = ? WHERE id = ?", userID, codeID)
+	// Consume one use of the invite code, marking it fully used once its
+	// allowance is exhausted.
+	db.DB.Exec(
+		`UPDATE invite_codes SET uses = uses + 1,
+			used = CASE WHEN max_uses > 0 AND uses + 1 >= max_uses THEN TRUE ELSE used END,
+			used_by = ? WHERE id = ?`,
+		userID, info.ID,
+	)
 
 	// Generate JWT
-	token, err := auth.GenerateToken(userID, req.Username, req.Email)
+	token, err := auth.GenerateToken(userID, req.Username, req.Email, role)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to generate token")
 		return
@@ -190,7 +308,12 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		Username:    req.Username,
 		Email:       req.Email,
 		DisplayName: req.DisplayName,
+		Role:        role,
+		Status:      "active",
 	}
+
+	logAudit(r, userID, req.Username, "user.register", "user", strconv.FormatInt(userID, 10),
+		"role="+role)
 
 	respondJSON(w, http.StatusCreated, AuthResponse{User: user, Token: token})
 }
@@ -216,11 +339,12 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	var user models.User
 	err := db.DB.QueryRow(
-		"SELECT id, username, email, password_hash, display_name, created_at, updated_at FROM users WHERE username = ?",
+		"SELECT id, username, email, password_hash, display_name, role, status, created_at, updated_at FROM users WHERE username = ?",
 		req.Username,
-	).Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.DisplayName, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.DisplayName, &user.Role, &user.Status, &user.CreatedAt, &user.UpdatedAt)
 
 	if err == sql.ErrNoRows {
+		logAudit(r, 0, req.Username, "user.login_failed", "user", "", "invalid credentials")
 		respondError(w, http.StatusUnauthorized, "Invalid username or password")
 		return
 	}
@@ -230,15 +354,24 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !auth.CheckPassword(req.Password, user.PasswordHash) {
+		logAudit(r, user.ID, user.Username, "user.login_failed", "user", strconv.FormatInt(user.ID, 10), "invalid credentials")
 		respondError(w, http.StatusUnauthorized, "Invalid username or password")
 		return
 	}
 
-	token, err := auth.GenerateToken(user.ID, user.Username, user.Email)
+	if user.Status == "disabled" {
+		logAudit(r, user.ID, user.Username, "user.login_blocked", "user", strconv.FormatInt(user.ID, 10), "account disabled")
+		respondError(w, http.StatusForbidden, "This account has been disabled")
+		return
+	}
+
+	token, err := auth.GenerateToken(user.ID, user.Username, user.Email, user.Role)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to generate token")
 		return
 	}
+
+	logAudit(r, user.ID, user.Username, "user.login", "user", strconv.FormatInt(user.ID, 10), "")
 
 	respondJSON(w, http.StatusOK, AuthResponse{User: &user, Token: token})
 }
@@ -266,9 +399,9 @@ func getMeHandler(w http.ResponseWriter, r *http.Request) {
 
 	var user models.User
 	err = db.DB.QueryRow(
-		"SELECT id, username, email, display_name, created_at, updated_at FROM users WHERE id = ?",
+		"SELECT id, username, email, display_name, role, status, created_at, updated_at FROM users WHERE id = ?",
 		claims.UserID,
-	).Scan(&user.ID, &user.Username, &user.Email, &user.DisplayName, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Username, &user.Email, &user.DisplayName, &user.Role, &user.Status, &user.CreatedAt, &user.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		respondError(w, http.StatusNotFound, "User not found")
@@ -329,9 +462,9 @@ func UpdateProfileHandler(w http.ResponseWriter, r *http.Request) {
 
 	var user models.User
 	db.DB.QueryRow(
-		"SELECT id, username, email, display_name, created_at, updated_at FROM users WHERE id = ?",
+		"SELECT id, username, email, display_name, role, status, created_at, updated_at FROM users WHERE id = ?",
 		claims.UserID,
-	).Scan(&user.ID, &user.Username, &user.Email, &user.DisplayName, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Username, &user.Email, &user.DisplayName, &user.Role, &user.Status, &user.CreatedAt, &user.UpdatedAt)
 
 	respondJSON(w, http.StatusOK, user)
 }
@@ -426,7 +559,31 @@ func DeleteAccountHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db.DB.Exec("DELETE FROM users WHERE id = ?", claims.UserID)
+	// Soft-delete: keep the account and its data, but block sign-in. The
+	// instance must always retain one active admin.
+	var role, status string
+	db.DB.QueryRow("SELECT role, status FROM users WHERE id = ?", claims.UserID).Scan(&role, &status)
+	if auth.IsAdmin(role) && activeAdminCount() <= 1 {
+		respondError(w, http.StatusConflict, "You are the only admin — promote another admin before deleting your account")
+		return
+	}
+
+	if _, err := db.DB.Exec(
+		"UPDATE users SET status = 'disabled', deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		claims.UserID,
+	); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to delete account")
+		return
+	}
+
+	logAudit(r, claims.UserID, claims.Username, "user.self_delete", "user", strconv.FormatInt(claims.UserID, 10), "soft-delete")
 
 	respondJSON(w, http.StatusOK, map[string]string{"message": "Account deleted"})
+}
+
+// activeAdminCount returns how many enabled admins remain.
+func activeAdminCount() int {
+	var n int
+	db.DB.QueryRow("SELECT COUNT(*) FROM users WHERE role = ? AND status = 'active'", auth.RoleAdmin).Scan(&n)
+	return n
 }

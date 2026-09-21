@@ -38,13 +38,39 @@ func runMigrations() {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS roles (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT UNIQUE NOT NULL,
+			description TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 		`CREATE TABLE IF NOT EXISTS invite_codes (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			code TEXT UNIQUE NOT NULL,
 			used BOOLEAN DEFAULT FALSE,
 			used_by INTEGER REFERENCES users(id),
+			role TEXT DEFAULT 'member',
+			label TEXT DEFAULT '',
+			expires_at DATETIME,
+			max_uses INTEGER DEFAULT 1,
+			uses INTEGER DEFAULT 0,
+			revoked BOOLEAN DEFAULT FALSE,
+			created_by INTEGER,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS audit_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER,
+			username TEXT DEFAULT '',
+			action TEXT NOT NULL,
+			target_type TEXT DEFAULT '',
+			target_id TEXT DEFAULT '',
+			details TEXT DEFAULT '',
+			ip TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(id)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs(user_id)`,
 		`CREATE TABLE IF NOT EXISTS settings (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -253,6 +279,16 @@ func runMigrations() {
 		{"projects", "provider", `ALTER TABLE projects ADD COLUMN provider TEXT DEFAULT 'github'`},
 		{"projects", "integration_id", `ALTER TABLE projects ADD COLUMN integration_id INTEGER`},
 		{"deploy_events", "trigger_id", `ALTER TABLE deploy_events ADD COLUMN trigger_id INTEGER`},
+		{"users", "role", `ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'member'`},
+		{"users", "status", `ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'`},
+		{"users", "deleted_at", `ALTER TABLE users ADD COLUMN deleted_at DATETIME`},
+		{"invite_codes", "role", `ALTER TABLE invite_codes ADD COLUMN role TEXT DEFAULT 'member'`},
+		{"invite_codes", "label", `ALTER TABLE invite_codes ADD COLUMN label TEXT DEFAULT ''`},
+		{"invite_codes", "expires_at", `ALTER TABLE invite_codes ADD COLUMN expires_at DATETIME`},
+		{"invite_codes", "max_uses", `ALTER TABLE invite_codes ADD COLUMN max_uses INTEGER DEFAULT 1`},
+		{"invite_codes", "uses", `ALTER TABLE invite_codes ADD COLUMN uses INTEGER DEFAULT 0`},
+		{"invite_codes", "revoked", `ALTER TABLE invite_codes ADD COLUMN revoked BOOLEAN DEFAULT FALSE`},
+		{"invite_codes", "created_by", `ALTER TABLE invite_codes ADD COLUMN created_by INTEGER`},
 	}
 
 	for _, c := range columns {
@@ -288,6 +324,55 @@ func runMigrations() {
 	// move the webhook to the project-level project_webhooks table. A project
 	// with no trigger rows now means "manual deployments only".
 	migrateProjectTriggers()
+
+	seedRoles()
+	promoteFirstUserToAdmin()
+}
+
+// seedRoles ensures the built-in roles exist. Roles are stored in their own
+// table (rather than an enum) so future roles can be added without a schema
+// change; the app only assigns the three built-ins.
+func seedRoles() {
+	roles := []struct {
+		name string
+		desc string
+	}{
+		{"admin", "Full access including the admin panel"},
+		{"member", "Full access to their own resources"},
+		{"viewer", "Read-only access"},
+	}
+	for _, role := range roles {
+		if _, err := DB.Exec(
+			"INSERT OR IGNORE INTO roles (name, description) VALUES (?, ?)",
+			role.name, role.desc,
+		); err != nil {
+			log.Fatalf("Failed to seed roles: %v", err)
+		}
+	}
+}
+
+// promoteFirstUserToAdmin guarantees the instance always has at least one admin.
+// On a fresh install the first registered user is promoted at registration; on
+// an existing install (created before roles existed) the oldest user is
+// promoted here so the instance is never locked out of the admin panel.
+func promoteFirstUserToAdmin() {
+	var admins int
+	if err := DB.QueryRow("SELECT COUNT(*) FROM users WHERE role = 'admin'").Scan(&admins); err != nil {
+		log.Fatalf("Migration failed: %v", err)
+	}
+	if admins > 0 {
+		return
+	}
+
+	var id int64
+	if err := DB.QueryRow("SELECT id FROM users ORDER BY id ASC LIMIT 1").Scan(&id); err != nil {
+		// No users yet — the first registration will become admin.
+		return
+	}
+	if _, err := DB.Exec("UPDATE users SET role = 'admin' WHERE id = ?", id); err != nil {
+		log.Fatalf("Migration failed: %v", err)
+	}
+	log.Printf("Promoted user %d to admin (first user)", id)
 }
 
 // migrateProjectTriggers upgrades the original one-trigger-per-project schema to

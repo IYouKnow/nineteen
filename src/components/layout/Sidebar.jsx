@@ -1,7 +1,8 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { Boxes, LayoutDashboard, FolderGit2, Database, HardDrive, Plus, X, Server, Settings } from "lucide-react";
+import { Boxes, LayoutDashboard, FolderGit2, Database, HardDrive, Plus, X, Server, Settings, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/hooks/useAuth";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
@@ -32,6 +33,7 @@ function NavItem({ to, label, icon: Icon, end }) {
 
 export default function Sidebar({ mobileOpen, onClose }) {
   const navigate = useNavigate();
+  const { isAdmin, canWrite } = useAuth();
   return (
     <>
       {mobileOpen && (
@@ -72,6 +74,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
             System
           </p>
           <NavItem to="/settings" label="Settings" icon={Settings} end={false} />
+          {isAdmin && <NavItem to="/admin" label="Admin" icon={ShieldCheck} end={false} />}
           <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm text-sidebar-foreground">
             <Server className="h-4 w-4 shrink-0" />
             <span>Activity</span>
@@ -81,15 +84,17 @@ export default function Sidebar({ mobileOpen, onClose }) {
           </div>
         </nav>
 
-        <div className="p-3">
-          <Button
-            onClick={() => navigate("/projects/new")}
-            className="w-full justify-start gap-2 bg-foreground text-background hover:bg-foreground/90"
-          >
-            <Plus className="h-4 w-4" />
-            New Project
-          </Button>
-        </div>
+        {canWrite && (
+          <div className="p-3">
+            <Button
+              onClick={() => navigate("/projects/new")}
+              className="w-full justify-start gap-2 bg-foreground text-background hover:bg-foreground/90"
+            >
+              <Plus className="h-4 w-4" />
+              New Project
+            </Button>
+          </div>
+        )}
 
         <div className="space-y-3 border-t border-sidebar-border p-3">
           <div className="flex items-center gap-2.5 rounded-md border border-sidebar-border bg-muted/20 px-2.5 py-2 text-xs">

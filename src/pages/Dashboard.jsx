@@ -18,6 +18,7 @@ import StatusDot from "@/components/dev/StatusDot";
 import FrameworkIcon from "@/components/dev/FrameworkIcon";
 import EmptyState from "@/components/dev/EmptyState";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/hooks/useAuth";
 import { Skeleton } from "@/components/ui/skeleton";
 import { timeAgo, formatDuration, shortSha } from "@/lib/format";
 import { getFramework } from "@/lib/devStatus";
@@ -85,6 +86,7 @@ function DeploymentRow({ deployment }) {
 }
 
 export default function Dashboard() {
+  const { canWrite } = useAuth();
   const { data: projects, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["projects"],
     queryFn: () => api.projects.list(),
@@ -124,12 +126,14 @@ export default function Dashboard() {
               Monitor your projects, deployments and cluster health.
             </p>
           </div>
-          <Button asChild className="gap-2">
-            <Link to="/projects/new">
-              <Plus className="h-4 w-4" />
-              New Project
-            </Link>
-          </Button>
+          {canWrite && (
+            <Button asChild className="gap-2">
+              <Link to="/projects/new">
+                <Plus className="h-4 w-4" />
+                New Project
+              </Link>
+            </Button>
+          )}
         </div>
 
         <div className="mt-7 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -204,12 +208,14 @@ export default function Dashboard() {
               title="No projects yet"
               description="Import a repository from GitHub to deploy your first project."
               action={
-                <Button asChild className="gap-2">
-                  <Link to="/projects/new">
-                    <Plus className="h-4 w-4" />
-                    New Project
-                  </Link>
-                </Button>
+                canWrite ? (
+                  <Button asChild className="gap-2">
+                    <Link to="/projects/new">
+                      <Plus className="h-4 w-4" />
+                      New Project
+                    </Link>
+                  </Button>
+                ) : null
               }
             />
           ) : (

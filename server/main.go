@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/joho/godotenv"
+	"nineteen-server/auth"
 	"nineteen-server/db"
 	"nineteen-server/handlers"
 	"nineteen-server/services"
@@ -29,6 +30,69 @@ func corsMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		next.ServeHTTP(w, r)
+	})
+}
+
+// viewerGuard blocks mutating requests from read-only (viewer) accounts. The
+// role is read from the database so a stale token cannot retain write access.
+// Unauthenticated/self-service and webhook endpoints are exempt; handlers still
+// enforce their own auth.
+func viewerGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		p := r.URL.Path
+		if !strings.HasPrefix(p, "/api/") ||
+			strings.HasPrefix(p, "/api/auth/") ||
+			strings.HasPrefix(p, "/api/admin/") ||
+			strings.HasPrefix(p, "/api/webhooks/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		claims, err := handlers.AuthFromRequest(r)
+		if err != nil {
+			// No token: let the handler return its own 401.
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !auth.CanWrite(handlers.CurrentUserRole(claims.UserID)) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":"Your account is read-only"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// auditMiddleware records every mutating API request that isn't already logged
+// with richer detail by the auth/admin handlers.
+func auditMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		p := r.URL.Path
+		if !strings.HasPrefix(p, "/api/") ||
+			strings.HasPrefix(p, "/api/auth/") ||
+			strings.HasPrefix(p, "/api/admin/") ||
+			strings.HasPrefix(p, "/api/webhooks/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if claims, err := handlers.AuthFromRequest(r); err == nil {
+			handlers.LogAudit(r, claims.UserID, claims.Username, "http."+r.Method, "path", p, "")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -64,6 +128,15 @@ func main() {
 	mux.HandleFunc("/api/auth/login", handlers.LoginHandler)
 	mux.HandleFunc("/api/auth/me", handlers.MeHandler)
 	mux.HandleFunc("/api/auth/change-password", handlers.ChangePasswordHandler)
+	mux.HandleFunc("/api/admin/users", handlers.AdminUsersHandler)
+	mux.HandleFunc("/api/admin/users/{id}", handlers.AdminUserHandler)
+	mux.HandleFunc("/api/admin/invites", handlers.AdminInvitesHandler)
+	mux.HandleFunc("/api/admin/invites/{id}", handlers.AdminInviteHandler)
+	mux.HandleFunc("/api/admin/audit", handlers.AdminAuditHandler)
+	mux.HandleFunc("/api/admin/system", handlers.AdminSystemHandler)
+	mux.HandleFunc("/api/admin/resources", handlers.AdminResourcesHandler)
+	mux.HandleFunc("/api/admin/projects/{id}", handlers.AdminProjectHandler)
+	mux.HandleFunc("/api/admin/databases/{id}", handlers.AdminDatabaseHandler)
 	mux.HandleFunc("/api/settings", handlers.SettingsHandler)
 	mux.HandleFunc("/api/settings/api-keys", handlers.ApiKeysHandler)
 	mux.HandleFunc("/api/settings/api-keys/", handlers.ApiKeyDeleteHandler)
@@ -130,7 +203,7 @@ func main() {
 	}
 	server := &http.Server{
 		Addr:    addr,
-		Handler: corsMiddleware(mux),
+		Handler: corsMiddleware(auditMiddleware(viewerGuard(mux))),
 	}
 
 	go func() {

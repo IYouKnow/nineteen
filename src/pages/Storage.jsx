@@ -15,6 +15,7 @@ import VolumeCard from "@/components/storage/VolumeCard";
 import VolumeRow from "@/components/storage/VolumeRow";
 import { BUCKET_PROVIDER_LIST, VOLUME_TYPE_LIST } from "@/lib/storage";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
 
 const STATUS_FILTERS = [
   { id: "all", label: "All" },
@@ -38,6 +39,7 @@ export default function Storage() {
   const [filter, setFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [view, setView] = useState("grid");
+  const { canWrite } = useAuth();
 
   useEffect(() => {
     setType(urlType);
@@ -107,11 +109,13 @@ export default function Storage() {
             {volumes.length === 1 ? "" : "s"} · region fra1
           </p>
         </div>
-        <Button asChild className="gap-2">
-          <Link to={isBucket ? "/storage/buckets/new" : "/storage/volumes/new"}>
-            <Plus className="h-4 w-4" /> New {isBucket ? "Bucket" : "Volume"}
-          </Link>
-        </Button>
+        {canWrite && (
+          <Button asChild className="gap-2">
+            <Link to={isBucket ? "/storage/buckets/new" : "/storage/volumes/new"}>
+              <Plus className="h-4 w-4" /> New {isBucket ? "Bucket" : "Volume"}
+            </Link>
+          </Button>
+        )}
       </div>
 
       <div className="mt-6 flex flex-wrap items-center gap-3">
@@ -227,7 +231,7 @@ export default function Storage() {
                 : "Try adjusting your search or filters."
             }
             action={
-              noFilters ? (
+              noFilters && canWrite ? (
                 <Button asChild className="gap-2">
                   <Link to={isBucket ? "/storage/buckets/new" : "/storage/volumes/new"}>
                     <Plus className="h-4 w-4" /> New {isBucket ? "Bucket" : "Volume"}
