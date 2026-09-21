@@ -18,7 +18,7 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
-import { Plus, Ticket, Trash2, Copy, CheckCircle2 } from "lucide-react";
+import { Plus, Ticket, Trash2, Copy, CheckCircle2, Link2 } from "lucide-react";
 
 const ROLE_FALLBACK = ["member", "viewer", "admin"];
 
@@ -78,6 +78,14 @@ export default function AdminInvites() {
     );
   }
 
+  function copyInviteLink(code) {
+    const url = `${window.location.origin}/login?invite=${encodeURIComponent(code)}`;
+    navigator.clipboard?.writeText(url).then(
+      () => toast.success("Invite link copied"),
+      () => toast.error("Could not copy")
+    );
+  }
+
   return (
     <div className="space-y-6">
       {created && (
@@ -93,6 +101,9 @@ export default function AdminInvites() {
                 <code className="rounded bg-muted px-2 py-1 font-mono text-xs">{created}</code>
                 <Button variant="outline" size="sm" className="gap-1.5" onClick={() => copyCode(created)}>
                   <Copy className="h-3.5 w-3.5" /> Copy
+                </Button>
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => copyInviteLink(created)}>
+                  <Link2 className="h-3.5 w-3.5" /> Copy link
                 </Button>
               </div>
             </div>
@@ -153,6 +164,13 @@ export default function AdminInvites() {
                             title="Copy code"
                           >
                             <Copy className="h-3 w-3" />
+                          </button>
+                          <button
+                            onClick={() => copyInviteLink(inv.code)}
+                            className="text-muted-foreground hover:text-foreground cursor-pointer"
+                            title="Copy invite link"
+                          >
+                            <Link2 className="h-3 w-3" />
                           </button>
                         </div>
                         {inv.label && <div className="mt-0.5 text-xs text-muted-foreground">{inv.label}</div>}

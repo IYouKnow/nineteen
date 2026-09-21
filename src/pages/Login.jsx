@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const { login, register } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
     let cancelled = false;
@@ -33,8 +34,35 @@ export default function Login() {
         if (!res.ok) throw new Error(`Server error ${res.status}`);
         const data = await res.json();
         if (cancelled) return;
-        setHasUsers(!!data.has_users);
-        setStep(data.has_users ? "login" : "code");
+        const users = !!data.has_users;
+        setHasUsers(users);
+
+        // A shareable invite link (/login?invite=CODE) jumps straight to the
+        // account form once the code is confirmed valid.
+        const invite = (searchParams.get("invite") || "").trim();
+        if (invite) {
+          setInviteCode(invite);
+          try {
+            const vr = await fetch(`${API_URL}/api/auth/validate-invite`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ code: invite }),
+            });
+            const vd = await vr.json();
+            if (cancelled) return;
+            if (vr.ok) {
+              setStep("create");
+              return;
+            }
+            toast.error("Invalid invite code", { description: vd.error });
+          } catch {
+            // Fall through to the manual invite step.
+          }
+          setStep("code");
+          return;
+        }
+
+        setStep(users ? "login" : "code");
       } catch {
         // A failed request is NOT the same as "no users". Showing the invite
         // flow here would wrongly push existing users into registration.
@@ -45,7 +73,7 @@ export default function Login() {
     return () => {
       cancelled = true;
     };
-  }, [reloadKey]);
+  }, [reloadKey, searchParams]);
 
   const handleValidateCode = async (e) => {
     e.preventDefault();
@@ -130,7 +158,11 @@ export default function Login() {
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
           <CardTitle className="text-xl font-bold">Nineteen</CardTitle>
-          {step === "code" && <CardDescription>Enter your invite code to get started</CardDescription>}
+          {step === "code" && (
+            <CardDescription>
+              {hasUsers ? "Enter your invite code to create an account" : "Enter your invite code to get started"}
+            </CardDescription>
+          )}
           {step === "create" && <CardDescription>Create your account</CardDescription>}
           {step === "login" && <CardDescription>Sign in to your account</CardDescription>}
         </CardHeader>
@@ -150,9 +182,18 @@ export default function Login() {
                   autoFocus
                 />
               </div>
-              <Button type="submit" className="w-full">
-                Continue
+              <Button type="submit" className="w-full" disabled={loading}>
+                {loading ? "Checking…" : "Continue"}
               </Button>
+              {hasUsers && (
+                <button
+                  type="button"
+                  onClick={() => setStep("login")}
+                  className="w-full text-center text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Back to sign in
+                </button>
+              )}
             </form>
           )}
 
@@ -212,6 +253,13 @@ export default function Login() {
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? "Creating account…" : "Create account"}
               </Button>
+              <button
+                type="button"
+                onClick={() => setStep(hasUsers ? "login" : "code")}
+                className="w-full text-center text-xs text-muted-foreground hover:text-foreground"
+              >
+                {hasUsers ? "Back to sign in" : "Back"}
+              </button>
             </form>
           )}
 
@@ -246,6 +294,16 @@ export default function Login() {
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? "Signing in…" : "Sign in"}
               </Button>
+              <div className="pt-1 text-center text-xs text-muted-foreground">
+                Have an invite code?{" "}
+                <button
+                  type="button"
+                  onClick={() => setStep("code")}
+                  className="font-medium text-foreground hover:underline"
+                >
+                  Create an account
+                </button>
+              </div>
             </form>
           )}
         </CardContent>
