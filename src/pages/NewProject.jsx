@@ -10,8 +10,10 @@ import { Button } from "@/components/ui/button";
 import { buildRepository, sourceReady, TEMPLATES } from "@/lib/newProject";
 import Stepper from "@/components/newproject/Stepper";
 import SourceStep from "@/components/newproject/steps/SourceStep";
+import VersionStep from "@/components/newproject/steps/VersionStep";
 import BuildStep from "@/components/newproject/steps/BuildStep";
 import InfrastructureStep from "@/components/newproject/steps/InfrastructureStep";
+import StrategyStep from "@/components/newproject/steps/StrategyStep";
 import ConfigurationStep from "@/components/newproject/steps/ConfigurationStep";
 import ReviewStep from "@/components/newproject/steps/ReviewStep";
 
@@ -37,10 +39,18 @@ export default function NewProject() {
     branch: "main",
     framework: "node",
     port: "",
-    autoDeploy: true,
     dockerMode: "dockerfile",
     dockerfilePath: "",
     composePath: "",
+    deployType: "branch",
+    deployRef: "",
+    strategy: {
+      type: "manual",
+      branch: "",
+      tag_mode: "pattern",
+      tag_pattern: "v*",
+      pre_release: false,
+    },
   });
   const [creating, setCreating] = useState(false);
   const prefilledRef = useRef(false);
@@ -48,7 +58,7 @@ export default function NewProject() {
 
   // Repositories we can scan for build files (GitHub/Gitea source, or a public
   // github.com URL).
-  const scanTarget = useMemo(() => {
+  const repoSource = useMemo(() => {
     if ((source.type === "github" || source.type === "gitea") && source.repo?.full_name) {
       return {
         repo: source.repo.full_name,
@@ -66,6 +76,27 @@ export default function NewProject() {
     return null;
   }, [source]);
 
+  // Deployable versions of the selected repository (releases and git tags).
+  // Used to offer deploying a tagged version instead of building the branch.
+  const { data: versions = [], isLoading: versionsLoading, isError: versionsError } = useQuery({
+    queryKey: ["repo-versions", repoSource?.repo, repoSource?.provider, repoSource?.integrationId],
+    queryFn: () =>
+      api.integrations.versions(repoSource.repo, repoSource.provider, repoSource.integrationId),
+    enabled: !!repoSource,
+    staleTime: 60000,
+    retry: false,
+  });
+
+  // The ref the build-file scan runs against: the release tag when deploying a
+  // release, otherwise the repository branch.
+  const effectiveBranch =
+    config.deployType === "release" && config.deployRef ? config.deployRef : repoSource?.branch || "";
+
+  const scanTarget = useMemo(
+    () => (repoSource ? { ...repoSource, branch: effectiveBranch } : null),
+    [repoSource, effectiveBranch]
+  );
+
   const { data: scan, isLoading: scanLoading, isError: scanError } = useQuery({
     queryKey: ["repo-scan", scanTarget?.repo, scanTarget?.branch, scanTarget?.provider, scanTarget?.integrationId],
     queryFn: () =>
@@ -82,26 +113,31 @@ export default function NewProject() {
 
   const scannable = !!scanTarget;
   const scanRepo = scanTarget?.repo || "";
+  const repository = buildRepository(source);
+  const hasRepo = source.type !== "template" && !!repository;
+  const isRelease = config.deployType === "release" && !!config.deployRef;
 
   const STEPS = useMemo(() => {
     const steps = [{ id: "source", label: "Source" }];
+    if (scannable) steps.push({ id: "version", label: "Version" });
     if (scannable) steps.push({ id: "build", label: "Build" });
+    steps.push({ id: "infra", label: "Infrastructure" });
+    if (hasRepo) steps.push({ id: "strategy", label: "Strategy" });
     steps.push(
-      { id: "infra", label: "Infrastructure" },
       { id: "config", label: "Configuration" },
       { id: "review", label: "Review" }
     );
     return steps;
-  }, [scannable]);
+  }, [scannable, hasRepo]);
 
   const stepIndex = Math.max(0, STEPS.findIndex((s) => s.id === stepId));
   const activeStep = STEPS[stepIndex].id;
 
-  // Reset build selections when the target repository changes.
+  // Reset build selections when the target repository or ref changes.
   useEffect(() => {
     setConfig((c) => ({ ...c, dockerMode: "dockerfile", dockerfilePath: "", composePath: "", port: "" }));
     prefilledRef.current = false;
-  }, [scanRepo]);
+  }, [scanRepo, effectiveBranch]);
 
   // Preselect the best build file once a scan lands.
   useEffect(() => {
@@ -159,6 +195,8 @@ export default function NewProject() {
   const canContinue =
     activeStep === "source"
       ? sourceReady(source)
+      : activeStep === "version"
+      ? config.deployType !== "release" || !!config.deployRef
       : activeStep === "build"
       ? buildReady()
       : activeStep === "config"
@@ -168,7 +206,6 @@ export default function NewProject() {
   const goNext = () => setStepId(STEPS[Math.min(stepIndex + 1, STEPS.length - 1)].id);
   const goBack = () => setStepId(STEPS[Math.max(stepIndex - 1, 0)].id);
 
-  const repository = buildRepository(source);
   const template = source.type === "template" ? TEMPLATES.find((t) => t.id === source.template) : null;
   const sourceLabel = template
     ? `Template · ${template.label}`
@@ -187,8 +224,10 @@ export default function NewProject() {
     setCreating(true);
     try {
       const slug = config.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-      const repoSource = source.type === "github" || source.type === "gitea";
-      const framework = repoSource && source.repo ? source.repo.framework : config.framework;
+      const repoProvider = source.type === "github" || source.type === "gitea";
+      const framework = repoProvider && source.repo ? source.repo.framework : config.framework;
+      const strategyType = config.strategy?.type || "manual";
+      const wantsStrategy = strategyType !== "manual";
       const project = await api.projects.create({
         name: config.name,
         slug,
@@ -206,15 +245,33 @@ export default function NewProject() {
             : "git",
         integration_id: source.integrationId ?? null,
         domain: `${slug}.fra1.nineteen.app`,
-        auto_deploy: config.autoDeploy,
+        auto_deploy: false,
         last_deployed_at: new Date().toISOString(),
         port: resolveProjectPort(config),
         build_strategy: scannable ? config.dockerMode : "detect",
         dockerfile_path: scannable && config.dockerMode === "dockerfile" ? config.dockerfilePath : "",
         compose_path: scannable && config.dockerMode === "compose" ? config.composePath : "",
+        deploy_type: isRelease ? "release" : "branch",
+        deploy_ref: isRelease ? config.deployRef : "",
       });
+      // Create the chosen automatic deployment strategy. Non-fatal: a failed
+      // webhook registration must not block the initial deployment.
+      if (wantsStrategy) {
+        try {
+          await api.projects.triggers.create(project.id, {
+            strategy: strategyType,
+            branch: config.strategy?.branch || config.branch,
+            tag_mode: config.strategy?.tag_mode || "pattern",
+            tag_pattern: config.strategy?.tag_pattern || "v*",
+            pre_release: !!config.strategy?.pre_release,
+            enabled: true,
+          });
+        } catch (e) {
+          console.error("Failed to create deployment strategy", e);
+        }
+      }
       const deployment = await api.deployments.create(project.id, {
-        commit_message: "Initial production deployment",
+        commit_message: isRelease ? `Release ${config.deployRef}` : "Initial production deployment",
         branch: config.branch,
         author: "you",
         trigger: "manual",
@@ -250,6 +307,17 @@ export default function NewProject() {
 
         <div className="px-6 py-6">
           {activeStep === "source" && <SourceStep source={source} setSource={setSource} />}
+          {activeStep === "version" && (
+            <VersionStep
+              config={config}
+              setConfig={setConfig}
+              versions={versions}
+              loading={versionsLoading}
+              error={versionsError}
+              repoLabel={scanRepo}
+              branch={repoSource?.branch}
+            />
+          )}
           {activeStep === "build" && (
             <BuildStep
               config={config}
@@ -262,6 +330,9 @@ export default function NewProject() {
           )}
           {activeStep === "infra" && (
             <InfrastructureStep services={services} setServices={setServices} />
+          )}
+          {activeStep === "strategy" && (
+            <StrategyStep config={config} setConfig={setConfig} branch={config.branch} />
           )}
           {activeStep === "config" && (
             <ConfigurationStep

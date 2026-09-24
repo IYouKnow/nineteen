@@ -21,10 +21,30 @@ type Project struct {
 	BuildStrategy string    `json:"build_strategy"`
 	DockerfilePath string   `json:"dockerfile_path"`
 	ComposePath   string    `json:"compose_path"`
+	DeployType    string    `json:"deploy_type"`
+	DeployRef     string    `json:"deploy_ref"`
 	Port          *int      `json:"port"`
 	LastDeployedAt *string  `json:"last_deployed_at"`
 	CreatedDate   string    `json:"created_date"`
 	UpdatedDate   string    `json:"updated_date"`
+
+	// Access is the caller's effective role on this project: "owner",
+	// "manager", "editor" or "viewer". IsOwner is true only for the creator.
+	// Neither is stored; they are resolved per request.
+	Access  string `json:"access,omitempty"`
+	IsOwner bool   `json:"is_owner"`
+}
+
+// ProjectMember is a user's shared access to a project. The owner is not
+// stored here — ownership is implicit via Project.UserID.
+type ProjectMember struct {
+	UserID      int64  `json:"user_id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+	Email       string `json:"email"`
+	Role        string `json:"role"`
+	AddedBy     int64  `json:"added_by"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // ProjectVolume maps a folder inside a project's persistent directory to a path

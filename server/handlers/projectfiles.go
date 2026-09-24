@@ -15,9 +15,9 @@ import (
 // maxUploadBytes caps a single upload request body.
 const maxUploadBytes = 256 << 20 // 256 MiB
 
-// projectForFiles authenticates the request and confirms the project belongs to
-// the caller. It writes the error response itself and returns ok=false on
-// failure.
+// projectForFiles authenticates the request and confirms the caller can access
+// the project (as owner or member). It writes the error response itself and
+// returns ok=false on failure.
 func projectForFiles(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	claims, err := extractUser(r)
 	if err != nil {
@@ -29,7 +29,7 @@ func projectForFiles(w http.ResponseWriter, r *http.Request) (int64, bool) {
 		respondError(w, http.StatusBadRequest, "Invalid project ID")
 		return 0, false
 	}
-	if _, err := getProject(claims.UserID, projectID); err != nil {
+	if _, err := getProjectForUser(claims.UserID, projectID); err != nil {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return 0, false
 	}

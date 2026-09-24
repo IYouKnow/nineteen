@@ -22,6 +22,8 @@ import (
 type repoClient interface {
 	GetRepoTree(fullName, ref string) ([]string, bool, error)
 	GetRepoFile(fullName, ref, path string) ([]byte, error)
+	ListReleases(fullName string, limit int) ([]services.RepoVersion, error)
+	ListTags(fullName string, limit int) ([]services.RepoVersion, error)
 }
 
 // giteaBaseURLFromConfig extracts the instance base URL from an integration's
@@ -870,6 +872,82 @@ func IntegrationScanHandler(w http.ResponseWriter, r *http.Request) {
 		ComposeFiles: composeFiles,
 		Port:         port,
 	})
+}
+
+// IntegrationVersionsHandler lists a repository's deployable versions —
+// published releases plus plain git tags — newest first, so the project wizard
+// can offer deploying a released/tagged version instead of building the
+// repository's default branch. A tag that backs a release is returned once,
+// marked is_release. Private repos use the matching integration token; public
+// GitHub repos work without one.
+func IntegrationVersionsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	claims, err := extractUser(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
+	}
+
+	repo := strings.TrimSpace(r.URL.Query().Get("repo"))
+	if repo == "" || !repoNameRe.MatchString(repo) {
+		respondError(w, http.StatusBadRequest, "repo query param must be owner/name")
+		return
+	}
+
+	provider := strings.TrimSpace(r.URL.Query().Get("provider"))
+	if provider == "" {
+		provider = "github"
+	}
+	integrationID := strings.TrimSpace(r.URL.Query().Get("integration"))
+
+	token, cfg, ierr := resolveRepoIntegration(claims.UserID, provider, integrationID)
+	client, cerr := newRepoClient(provider, token, cfg)
+	if ierr != nil || cerr != nil {
+		if provider != "github" {
+			respondError(w, http.StatusBadRequest, "No "+provider+" integration available to read the repository")
+			return
+		}
+		client = services.NewGitHubClient("")
+	}
+
+	// Releases and tags are fetched independently: a repo may have tags without
+	// releases, or releases without any other tags. Only fail when both fail.
+	releases, relErr := client.ListReleases(repo, 50)
+	tags, tagErr := client.ListTags(repo, 50)
+	if relErr != nil && tagErr != nil {
+		respondError(w, http.StatusBadGateway, "Failed to list versions: "+relErr.Error())
+		return
+	}
+
+	versions := mergeRepoVersions(releases, tags)
+	respondJSON(w, http.StatusOK, versions)
+}
+
+// mergeRepoVersions combines releases and tags into one newest-first list,
+// keeping a single entry per tag (the release, when one exists) so the picker
+// has no duplicates.
+func mergeRepoVersions(releases, tags []services.RepoVersion) []services.RepoVersion {
+	out := make([]services.RepoVersion, 0, len(releases)+len(tags))
+	seen := make(map[string]bool, len(releases))
+	for _, r := range releases {
+		if r.TagName == "" || seen[r.TagName] {
+			continue
+		}
+		seen[r.TagName] = true
+		out = append(out, r)
+	}
+	for _, t := range tags {
+		if t.TagName == "" || seen[t.TagName] {
+			continue
+		}
+		seen[t.TagName] = true
+		out = append(out, t)
+	}
+	return out
 }
 
 // IntegrationPortHandler fetches a single repository file (typically a

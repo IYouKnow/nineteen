@@ -1,6 +1,7 @@
-import { Check, GitBranch, Layers, Rocket, Globe, Server, Ship, HardDrive } from "lucide-react";
+import { GitBranch, Layers, Rocket, Globe, Server, Ship, HardDrive, Tag, Zap } from "lucide-react";
 import { DATABASES, SOURCES, TEMPLATES } from "@/lib/newProject";
 import { getFramework, projectAddress } from "@/lib/devStatus";
+import { strategySummary } from "@/lib/strategies";
 import SourceIcon from "@/components/newproject/SourceIcon";
 import TemplateIcon from "@/components/newproject/TemplateIcon";
 
@@ -20,6 +21,11 @@ export default function ReviewStep({ source, services, config, repository, build
   const fw = getFramework(config.framework);
   const selectedSource = SOURCES.find((s) => s.id === source.type);
   const template = source.type === "template" ? TEMPLATES.find((t) => t.id === source.template) : null;
+  const st = config.strategy || {};
+  const strategyLabel =
+    !st.type || st.type === "manual"
+      ? "Manual only"
+      : strategySummary({ ...st, strategy: st.type });
 
   return (
     <div className="animate-fade-in">
@@ -88,10 +94,14 @@ export default function ReviewStep({ source, services, config, repository, build
           <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Configuration</h3>
           <div className="rounded-lg border border-border bg-card px-4 py-1.5 divide-y divide-border">
             <Row icon={<Globe className="h-3.5 w-3.5" />} label="Project name" value={config.name || "—"} />
-            <Row icon={<GitBranch className="h-3.5 w-3.5" />} label="Branch" value={<span className="font-mono">{config.branch}</span>} />
+            {config.deployType === "release" && config.deployRef ? (
+              <Row icon={<Tag className="h-3.5 w-3.5" />} label="Release" value={<span className="font-mono">{config.deployRef}</span>} />
+            ) : (
+              <Row icon={<GitBranch className="h-3.5 w-3.5" />} label="Branch" value={<span className="font-mono">{config.branch}</span>} />
+            )}
             <Row icon={<Ship className="h-3.5 w-3.5" />} label="Build" value={<span className="font-mono text-xs">{buildLabel || "Dockerfile · auto-detected"}</span>} />
             <Row icon={<Layers className="h-3.5 w-3.5" />} label="Framework" value={fw.label} />
-            <Row icon={<Check className="h-3.5 w-3.5" />} label="Auto-deploy" value={config.autoDeploy ? "Enabled" : "Disabled"} />
+            <Row icon={<Zap className="h-3.5 w-3.5" />} label="Deploy strategy" value={strategyLabel} />
           </div>
         </section>
 

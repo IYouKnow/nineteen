@@ -24,7 +24,7 @@ func ProjectEnvVarsHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Invalid project ID")
 		return
 	}
-	if _, err := getProject(claims.UserID, projectID); err != nil {
+	if _, err := getProjectForUser(claims.UserID, projectID); err != nil {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return
 	}
@@ -56,7 +56,7 @@ func ProjectEnvVarHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Invalid env var ID")
 		return
 	}
-	if _, err := getProject(claims.UserID, projectID); err != nil {
+	if _, err := getProjectForUser(claims.UserID, projectID); err != nil {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return
 	}
@@ -144,8 +144,8 @@ func updateEnvVar(w http.ResponseWriter, r *http.Request, userID, projectID, var
 		valueEncrypted = enc
 	} else {
 		err := db.DB.QueryRow(
-			"SELECT value_encrypted FROM env_vars WHERE id = ? AND project_id = ? AND user_id = ?",
-			varID, projectID, userID,
+			"SELECT value_encrypted FROM env_vars WHERE id = ? AND project_id = ?",
+			varID, projectID,
 		).Scan(&valueEncrypted)
 		if err != nil {
 			respondError(w, http.StatusNotFound, "Environment variable not found")
@@ -154,8 +154,8 @@ func updateEnvVar(w http.ResponseWriter, r *http.Request, userID, projectID, var
 	}
 
 	_, err := db.DB.Exec(
-		"UPDATE env_vars SET key = ?, value_encrypted = ?, is_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND project_id = ? AND user_id = ?",
-		req.Key, valueEncrypted, boolToInt(req.IsSecret), varID, projectID, userID,
+		"UPDATE env_vars SET key = ?, value_encrypted = ?, is_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND project_id = ?",
+		req.Key, valueEncrypted, boolToInt(req.IsSecret), varID, projectID,
 	)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to update variable")
@@ -166,8 +166,8 @@ func updateEnvVar(w http.ResponseWriter, r *http.Request, userID, projectID, var
 
 func deleteEnvVar(w http.ResponseWriter, userID, projectID, varID int64) {
 	_, err := db.DB.Exec(
-		"DELETE FROM env_vars WHERE id = ? AND project_id = ? AND user_id = ?",
-		varID, projectID, userID,
+		"DELETE FROM env_vars WHERE id = ? AND project_id = ?",
+		varID, projectID,
 	)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to delete variable")

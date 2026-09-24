@@ -154,6 +154,69 @@ func (g *GiteaClient) CountRepositories() (int, error) {
 	return total, nil
 }
 
+// ListReleases returns a repository's published releases, newest first. Drafts
+// are filtered out. A repository with no releases yields an empty slice.
+func (g *GiteaClient) ListReleases(fullName string, limit int) ([]RepoVersion, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+	fullName = strings.Trim(strings.TrimSpace(fullName), "/")
+	if fullName == "" {
+		return nil, fmt.Errorf("fullName is required")
+	}
+	u := fmt.Sprintf("%s?limit=%d", g.apiURL("/repos/"+fullName+"/releases"), limit)
+	body, err := g.doRequest(u)
+	if err != nil {
+		return nil, err
+	}
+
+	var releases []RepoVersion
+	if err := json.Unmarshal(body, &releases); err != nil {
+		return nil, err
+	}
+	out := make([]RepoVersion, 0, len(releases))
+	for _, r := range releases {
+		if r.TagName == "" {
+			continue
+		}
+		r.IsRelease = true
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// ListTags returns a repository's git tags, newest first, so a deploy can offer
+// tagged versions even when no Gitea release was published for them.
+func (g *GiteaClient) ListTags(fullName string, limit int) ([]RepoVersion, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+	fullName = strings.Trim(strings.TrimSpace(fullName), "/")
+	if fullName == "" {
+		return nil, fmt.Errorf("fullName is required")
+	}
+	u := fmt.Sprintf("%s?limit=%d", g.apiURL("/repos/"+fullName+"/tags"), limit)
+	body, err := g.doRequest(u)
+	if err != nil {
+		return nil, err
+	}
+
+	var tags []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &tags); err != nil {
+		return nil, err
+	}
+	out := make([]RepoVersion, 0, len(tags))
+	for _, t := range tags {
+		if t.Name == "" {
+			continue
+		}
+		out = append(out, RepoVersion{TagName: t.Name, Name: t.Name})
+	}
+	return out, nil
+}
+
 // GetRepoTree returns every file path in a repository at the given ref (branch
 // name, tag or "HEAD"). The boolean reports whether Gitea truncated the listing.
 func (g *GiteaClient) GetRepoTree(fullName, ref string) ([]string, bool, error) {

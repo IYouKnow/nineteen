@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Deployer runs the low-level steps needed to clone, build and run a project
@@ -84,14 +85,21 @@ func hostFromURL(raw string) string {
 }
 
 // CloneRepo clones cloneURL into a fresh temp dir. Returns the clone directory.
-// The clone is cancellable via ctx — cancelling kills the git process so an
-// in-flight deployment can be aborted.
-func (d *Deployer) CloneRepo(ctx context.Context, cloneURL string, log func(string)) (string, error) {
+// When ref is non-empty (a branch, tag or release tag) that ref is checked out;
+// otherwise the repository's default branch is used. The clone is cancellable
+// via ctx — cancelling kills the git process so an in-flight deployment can be
+// aborted.
+func (d *Deployer) CloneRepo(ctx context.Context, cloneURL, ref string, log func(string)) (string, error) {
 	dir, err := os.MkdirTemp("", "nineteen-build-")
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", cloneURL, dir)
+	args := []string{"clone", "--depth", "1"}
+	if strings.TrimSpace(ref) != "" {
+		args = append(args, "--branch", strings.TrimSpace(ref))
+	}
+	args = append(args, cloneURL, dir)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if err := streamCommand(cmd, log); err != nil {
 		return dir, err
@@ -197,7 +205,9 @@ func (d *Deployer) ImagePort(image string) int {
 }
 
 // Build runs `docker build` for the image using the given Dockerfile
-// (repo-relative) with the repository root as build context.
+// (repo-relative) with the repository root as build context. When version is
+// non-empty it is passed as the APP_VERSION and VERSION build args so a
+// Dockerfile that declares them can bake the deployed ref into the image.
 //
 // It prefers the buildx/BuildKit builder when the CLI has it available —
 // faster, better caching, and it auto-populates the TARGETARCH/TARGETPLATFORM
@@ -206,7 +216,7 @@ func (d *Deployer) ImagePort(image string) int {
 // cloudflared download URL using ${TARGETARCH}) still resolve to a real value.
 // We do not force BuildKit (DOCKER_BUILDKIT=1) because that hard-errors on
 // hosts missing the buildx component.
-func (d *Deployer) Build(ctx context.Context, image, dir, dockerfile string, log func(string)) error {
+func (d *Deployer) Build(ctx context.Context, image, dir, dockerfile, version string, log func(string)) error {
 	useBuildx := d.buildxAvailable()
 
 	var args []string
@@ -219,6 +229,11 @@ func (d *Deployer) Build(ctx context.Context, image, dir, dockerfile string, log
 	}
 	if dockerfile != "" && dockerfile != "Dockerfile" {
 		args = append(args, "-f", dockerfile)
+	}
+	// Supply the deployed version to Dockerfiles that declare APP_VERSION or
+	// VERSION (undeclared args are ignored by Docker).
+	if v := strings.TrimSpace(version); v != "" {
+		args = append(args, "--build-arg", "APP_VERSION="+v, "--build-arg", "VERSION="+v)
 	}
 	if !useBuildx {
 		args = append(args, buildPlatformArgs()...)
@@ -506,8 +521,10 @@ func (d *Deployer) Run(ctx context.Context, image, name string, hostPort, contai
 // ComposeUp builds and starts the stack defined by composeFile
 // (repo-relative) under the given compose project name. When overrideFile is
 // non-empty it is merged with the base compose file (e.g. to inject env_file).
-// The build/up process is cancellable via ctx.
-func (d *Deployer) ComposeUp(ctx context.Context, dir, composeFile, overrideFile, projectName string, log func(string)) error {
+// version, when set, is exported as APP_VERSION/VERSION so a compose build that
+// references those variables resolves them. The build/up process is cancellable
+// via ctx.
+func (d *Deployer) ComposeUp(ctx context.Context, dir, composeFile, overrideFile, projectName, version string, log func(string)) error {
 	args := []string{"compose", "-f", composeFile}
 	if overrideFile != "" {
 		args = append(args, "-f", overrideFile)
@@ -515,6 +532,9 @@ func (d *Deployer) ComposeUp(ctx context.Context, dir, composeFile, overrideFile
 	args = append(args, "-p", projectName, "up", "-d", "--build")
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = dir
+	if v := strings.TrimSpace(version); v != "" {
+		cmd.Env = append(os.Environ(), "APP_VERSION="+v, "VERSION="+v)
+	}
 	return streamCommand(cmd, log)
 }
 
@@ -694,6 +714,24 @@ func (d *Deployer) HostPortAvailable(port int) bool {
 	}
 	l.Close()
 	return true
+}
+
+// WaitHostPortAvailable polls HostPortAvailable until the port frees up or the
+// timeout elapses. Docker (notably Docker Desktop on Windows) can take a moment
+// to release a published port after its container is removed, so a redeploy
+// that just deleted its own previous container would otherwise mistake that
+// transiently-bound port for a conflict and drift to a new one.
+func (d *Deployer) WaitHostPortAvailable(port int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if d.HostPortAvailable(port) {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func streamCommand(cmd *exec.Cmd, log func(string)) error {

@@ -74,6 +74,17 @@ export const projects = {
       doFetch(`/api/projects/${id}/triggers/${triggerId}`, { method: "DELETE" }),
   },
   events: (id) => doFetch(`/api/projects/${id}/events`),
+  members: {
+    list: (id) => doFetch(`/api/projects/${id}/members`),
+    add: (id, payload) =>
+      doFetch(`/api/projects/${id}/members`, { method: "POST", body: JSON.stringify(payload) }),
+    update: (id, userId, role) =>
+      doFetch(`/api/projects/${id}/members/${userId}`, {
+        method: "PUT",
+        body: JSON.stringify({ role }),
+      }),
+    remove: (id, userId) => doFetch(`/api/projects/${id}/members/${userId}`, { method: "DELETE" }),
+  },
   resourcesStreamUrl: (id) => {
     const token = localStorage.getItem("nineteen_token") || "";
     return `${API_URL}/api/projects/${id}/resources/stream?token=${encodeURIComponent(token)}`;
@@ -88,6 +99,10 @@ export const deployments = {
   cancel: (id) => doFetch(`/api/deployments/${id}/cancel`, { method: "POST" }),
   create: (projectId, payload) =>
     doFetch(`/api/projects/${projectId}/deployments`, { method: "POST", body: JSON.stringify(payload) }),
+};
+
+export const users = {
+  lookup: (q) => doFetch(`/api/users/lookup?q=${encodeURIComponent(q || "")}`),
 };
 
 function repoParams(repository, branch, provider, integrationId) {
@@ -106,6 +121,13 @@ export const integrations = {
     doFetch(
       `/api/settings/integrations/port?${repoParams(repository, branch, provider, integrationId)}&file=${encodeURIComponent(file)}`
     ),
+  versions: (repository, provider, integrationId) => {
+    const params = new URLSearchParams();
+    params.set("repo", repository || "");
+    if (provider) params.set("provider", provider);
+    if (integrationId) params.set("integration", String(integrationId));
+    return doFetch(`/api/settings/integrations/versions?${params.toString()}`);
+  },
 };
 
 export const databases = {

@@ -134,6 +134,16 @@ func runMigrations() {
 			created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_date DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS project_members (
+			project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			role TEXT NOT NULL DEFAULT 'viewer',
+			added_by INTEGER,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (project_id, user_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(user_id)`,
 		`CREATE TABLE IF NOT EXISTS deployments (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -287,6 +297,8 @@ func runMigrations() {
 		{"integrations", "metadata", `ALTER TABLE integrations ADD COLUMN metadata TEXT DEFAULT '{}'`},
 		{"projects", "dockerfile_path", `ALTER TABLE projects ADD COLUMN dockerfile_path TEXT DEFAULT ''`},
 		{"projects", "compose_path", `ALTER TABLE projects ADD COLUMN compose_path TEXT DEFAULT ''`},
+		{"projects", "deploy_type", `ALTER TABLE projects ADD COLUMN deploy_type TEXT DEFAULT 'branch'`},
+		{"projects", "deploy_ref", `ALTER TABLE projects ADD COLUMN deploy_ref TEXT DEFAULT ''`},
 		{"projects", "port", `ALTER TABLE projects ADD COLUMN port INTEGER`},
 		{"projects", "provider", `ALTER TABLE projects ADD COLUMN provider TEXT DEFAULT 'github'`},
 		{"projects", "integration_id", `ALTER TABLE projects ADD COLUMN integration_id INTEGER`},

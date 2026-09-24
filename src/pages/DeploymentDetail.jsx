@@ -149,7 +149,7 @@ export default function DeploymentDetail() {
             </h3>
             <div className="mt-1 divide-y divide-border/60">
               <Meta icon={Rocket} label="Project" value={deployment.project_name || project?.name} />
-              <Meta icon={GitBranch} label="Branch" value={deployment.branch || "—"} mono />
+              <Meta icon={GitBranch} label="Ref" value={deployment.branch || "—"} mono />
               <Meta icon={GitCommitHorizontal} label="Commit" value={shortSha(deployment.commit_sha)} mono />
               <Meta icon={User} label="Author" value={deployment.author || "—"} />
               <Meta icon={Clock} label="Created" value={timeAgo(deployment.created_date)} />

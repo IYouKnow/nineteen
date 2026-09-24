@@ -132,7 +132,7 @@ func ProjectTriggersHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Invalid project ID")
 		return
 	}
-	project, err := getProject(claims.UserID, id)
+	project, err := getProjectForUser(claims.UserID, id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return
@@ -161,7 +161,7 @@ func ProjectTriggerItemHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Invalid project ID")
 		return
 	}
-	project, err := getProject(claims.UserID, id)
+	project, err := getProjectForUser(claims.UserID, id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return
@@ -550,7 +550,9 @@ func GitHubWebhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deployment, err := startDeployment(project.UserID, project, match.Trigger, match.Branch, match.Message, match.Author)
+	// match.Ref is the exact git ref the event refers to: a branch for
+	// commit/branch rules, or the tag for tag/release rules.
+	deployment, err := startDeployment(project.UserID, project, match.Trigger, match.Ref, match.Message, match.Author)
 	if err != nil {
 		logDeployEvent(projectID, event, match.Ref, match.SHA, false, "Failed to start deployment: "+err.Error(), "webhook", nil, nil)
 		respondError(w, http.StatusInternalServerError, "Failed to start deployment")
@@ -708,7 +710,7 @@ func ProjectEventsHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Invalid project ID")
 		return
 	}
-	if _, err := getProject(claims.UserID, id); err != nil {
+	if _, err := getProjectForUser(claims.UserID, id); err != nil {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return
 	}

@@ -197,6 +197,11 @@ func projectRoutePermission(method string, seg []string) (string, bool) {
 		return "projects.triggers.manage", true
 	case "runtime-logs":
 		return "projects.runtime.read", true
+	case "members":
+		if read {
+			return "projects.members.read", true
+		}
+		return "projects.members.manage", true
 	}
 	return "projects.read", true
 }
@@ -231,8 +236,11 @@ func databaseRoutePermission(method string, seg []string) (string, bool) {
 }
 
 // permissionGuard rejects requests whose user lacks the required permission.
-// The role's permissions are read live from the database so changes take effect
-// immediately. Endpoints without a mapped permission are left to their handler.
+// Permissions are read live from the database so changes take effect
+// immediately. Project- and deployment-scoped routes are evaluated against the
+// caller's per-project role (owner / manager / editor / viewer); everything
+// else uses the caller's global role. Endpoints without a mapped permission are
+// left to their handler.
 func permissionGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		perm, ok := requiredPermission(r.Method, r.URL.Path)
@@ -247,7 +255,24 @@ func permissionGuard(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !handlers.HasPermission(claims.UserID, perm) {
+
+		authorized := false
+		switch {
+		case handlers.IsProjectScopedPath(r.URL.Path):
+			if projectID, ok := handlers.ProjectIDFromPath(r.URL.Path); ok {
+				authorized = handlers.HasProjectPermission(claims.UserID, projectID, perm)
+			}
+		case handlers.IsDeploymentScopedPath(r.URL.Path):
+			if deploymentID, ok := handlers.DeploymentIDFromPath(r.URL.Path); ok {
+				if projectID, ok := handlers.DeploymentProjectID(deploymentID); ok {
+					authorized = handlers.HasProjectPermission(claims.UserID, projectID, perm)
+				}
+			}
+		default:
+			authorized = handlers.HasPermission(claims.UserID, perm)
+		}
+
+		if !authorized {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			w.Write([]byte(`{"error":"You don't have permission to do that"}`))
@@ -315,6 +340,7 @@ func main() {
 	mux.HandleFunc("/api/auth/me", handlers.MeHandler)
 	mux.HandleFunc("/api/auth/change-password", handlers.ChangePasswordHandler)
 	mux.HandleFunc("/api/permissions", handlers.PermissionCatalogHandler)
+	mux.HandleFunc("/api/users/lookup", handlers.UserLookupHandler)
 	mux.HandleFunc("/api/admin/users", handlers.AdminUsersHandler)
 	mux.HandleFunc("/api/admin/users/{id}", handlers.AdminUserHandler)
 	mux.HandleFunc("/api/admin/invites", handlers.AdminInvitesHandler)
@@ -333,6 +359,7 @@ func main() {
 	mux.HandleFunc("/api/settings/integrations/test", handlers.TestIntegrationHandler)
 	mux.HandleFunc("/api/settings/integrations/repos", handlers.IntegrationReposHandler)
 	mux.HandleFunc("/api/settings/integrations/scan", handlers.IntegrationScanHandler)
+	mux.HandleFunc("/api/settings/integrations/versions", handlers.IntegrationVersionsHandler)
 	mux.HandleFunc("/api/settings/integrations/port", handlers.IntegrationPortHandler)
 	mux.HandleFunc("/api/settings/integrations/", handlers.UpdateIntegrationHandler)
 	mux.HandleFunc("/api/projects", handlers.ProjectsHandler)
@@ -358,6 +385,8 @@ func main() {
 	mux.HandleFunc("/api/projects/{id}/env-vars/{varId}", handlers.ProjectEnvVarHandler)
 	mux.HandleFunc("/api/projects/{id}/runtime-logs", handlers.ProjectRuntimeLogsHandler)
 	mux.HandleFunc("/api/projects/{id}/runtime-logs/stream", handlers.ProjectRuntimeLogsStreamHandler)
+	mux.HandleFunc("/api/projects/{id}/members", handlers.ProjectMembersHandler)
+	mux.HandleFunc("/api/projects/{id}/members/{userId}", handlers.ProjectMemberItemHandler)
 	mux.HandleFunc("/api/deployments", handlers.DeploymentsHandler)
 	mux.HandleFunc("/api/deployments/{id}", handlers.DeploymentHandler)
 	mux.HandleFunc("/api/deployments/{id}/logs", handlers.DeploymentLogsHandler)

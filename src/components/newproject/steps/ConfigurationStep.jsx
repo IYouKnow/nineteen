@@ -1,8 +1,7 @@
-import { GitBranch, Layers, Globe, Ship, Plug2 } from "lucide-react";
+import { GitBranch, Layers, Globe, Ship, Plug2, Tag } from "lucide-react";
 import { FRAMEWORKS } from "@/lib/devStatus";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 const selectCls =
@@ -10,6 +9,7 @@ const selectCls =
 
 export default function ConfigurationStep({ config, setConfig, sourceLabel, buildLabel }) {
   const update = (patch) => setConfig((c) => ({ ...c, ...patch }));
+  const isRelease = config.deployType === "release" && !!config.deployRef;
 
   return (
     <div className="animate-fade-in">
@@ -44,15 +44,31 @@ export default function ConfigurationStep({ config, setConfig, sourceLabel, buil
         </div>
 
         <div>
-          <Label className="text-xs flex items-center gap-1"><GitBranch className="h-3 w-3" /> Production branch</Label>
-          <div className="relative mt-1.5">
-            <GitBranch className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/50" />
-            <Input
-              value={config.branch}
-              onChange={(e) => update({ branch: e.target.value })}
-              className="pl-9 font-mono text-sm"
-            />
-          </div>
+          <Label className="text-xs flex items-center gap-1">
+            {isRelease ? (
+              <>
+                <Tag className="h-3 w-3" /> Release
+              </>
+            ) : (
+              <>
+                <GitBranch className="h-3 w-3" /> Production branch
+              </>
+            )}
+          </Label>
+          {isRelease ? (
+            <div className="mt-1.5 flex h-9 items-center rounded-md border border-input bg-muted/30 px-3 font-mono text-sm text-foreground">
+              {config.deployRef}
+            </div>
+          ) : (
+            <div className="relative mt-1.5">
+              <GitBranch className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/50" />
+              <Input
+                value={config.branch}
+                onChange={(e) => update({ branch: e.target.value })}
+                className="pl-9 font-mono text-sm"
+              />
+            </div>
+          )}
         </div>
 
         <div>
@@ -81,14 +97,6 @@ export default function ConfigurationStep({ config, setConfig, sourceLabel, buil
             Leave empty to auto-assign. Set a fixed port to match an app that expects one.
           </p>
         </div>
-      </div>
-
-      <div className="mt-4 flex items-center justify-between rounded-md border border-border p-3">
-        <div>
-          <p className="text-sm font-medium">Auto-deploy on push</p>
-          <p className="text-xs text-muted-foreground">Trigger a build when code is pushed to {config.branch}.</p>
-        </div>
-        <Switch checked={config.autoDeploy} onCheckedChange={(v) => update({ autoDeploy: v })} />
       </div>
     </div>
   );

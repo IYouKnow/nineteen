@@ -42,6 +42,8 @@ var catalog = []Group{
 			{"projects.buildfile.manage", "Edit build files"},
 			{"projects.logs.read", "View deployment logs"},
 			{"projects.runtime.read", "View runtime logs and resources"},
+			{"projects.members.read", "View project members"},
+			{"projects.members.manage", "Manage project members"},
 		},
 	},
 	{
@@ -198,4 +200,106 @@ func ViewerDefaults() []string {
 		}
 	}
 	return out
+}
+
+// Project member roles. Ownership is implicit on the project row (projects
+// .user_id); the other three are stored per (project, user) in project_members.
+const (
+	ProjectRoleViewer  = "viewer"
+	ProjectRoleEditor  = "editor"
+	ProjectRoleManager = "manager"
+	ProjectRoleOwner   = "owner"
+)
+
+var projectRoles = []Def{
+	{ProjectRoleViewer, "Viewer"},
+	{ProjectRoleEditor, "Editor"},
+	{ProjectRoleManager, "Manager"},
+	{ProjectRoleOwner, "Owner"},
+}
+
+// projectRolePermissions maps a membership role to the project permissions it
+// grants. These are evaluated per project, independent of the user's global
+// role, so a project can be shared with any account.
+var projectRolePermissions = map[string][]string{
+	ProjectRoleViewer: {
+		"projects.read",
+		"projects.logs.read",
+		"projects.runtime.read",
+		"projects.env.read",
+		"projects.files.read",
+		"projects.volumes.read",
+		"projects.triggers.read",
+		"projects.buildfile.read",
+		"projects.members.read",
+	},
+	ProjectRoleEditor: {
+		"projects.read",
+		"projects.logs.read",
+		"projects.runtime.read",
+		"projects.env.read",
+		"projects.files.read",
+		"projects.volumes.read",
+		"projects.triggers.read",
+		"projects.buildfile.read",
+		"projects.members.read",
+		"projects.deploy",
+		"projects.env.manage",
+		"projects.files.manage",
+		"projects.volumes.manage",
+		"projects.triggers.manage",
+		"projects.buildfile.manage",
+	},
+	ProjectRoleManager: {
+		"projects.read",
+		"projects.logs.read",
+		"projects.runtime.read",
+		"projects.env.read",
+		"projects.files.read",
+		"projects.volumes.read",
+		"projects.triggers.read",
+		"projects.buildfile.read",
+		"projects.members.read",
+		"projects.deploy",
+		"projects.env.manage",
+		"projects.files.manage",
+		"projects.volumes.manage",
+		"projects.triggers.manage",
+		"projects.buildfile.manage",
+		"projects.update",
+	},
+	ProjectRoleOwner: {
+		"projects.read",
+		"projects.logs.read",
+		"projects.runtime.read",
+		"projects.env.read",
+		"projects.files.read",
+		"projects.volumes.read",
+		"projects.triggers.read",
+		"projects.buildfile.read",
+		"projects.members.read",
+		"projects.deploy",
+		"projects.env.manage",
+		"projects.files.manage",
+		"projects.volumes.manage",
+		"projects.triggers.manage",
+		"projects.buildfile.manage",
+		"projects.update",
+		"projects.delete",
+		"projects.members.manage",
+	},
+}
+
+// ProjectRoles returns the project roles for the sharing UI, owner included.
+func ProjectRoles() []Def { return projectRoles }
+
+// ValidProjectRole reports whether role may be assigned to a collaborator.
+// The owner role is implicit and cannot be granted.
+func ValidProjectRole(role string) bool {
+	return role == ProjectRoleViewer || role == ProjectRoleEditor || role == ProjectRoleManager
+}
+
+// ProjectRolePermissions returns the project permissions granted by a role.
+func ProjectRolePermissions(role string) []string {
+	return projectRolePermissions[role]
 }

@@ -34,6 +34,7 @@ import ProjectOverview from "@/components/project/ProjectOverview";
 import ProjectDeployments from "@/components/project/ProjectDeployments";
 import ProjectSource from "@/components/project/ProjectSource";
 import ProjectSettings from "@/components/project/ProjectSettings";
+import ProjectMembers from "@/components/project/ProjectMembers";
 import ProjectFiles from "@/components/project/ProjectFiles";
 import BuildFileTab from "@/components/project/BuildFileTab";
 import ProjectDatabases from "@/components/project/ProjectDatabases";
@@ -67,6 +68,7 @@ const TABS = [
   { id: "databases", label: "Databases", disabled: true },
   { id: "environments", label: "Environments", disabled: true },
   { id: "settings", label: "Settings" },
+  { id: "members", label: "Members" },
 ];
 
 export default function ProjectDetail() {
@@ -94,6 +96,12 @@ export default function ProjectDetail() {
   const latestDeployment = deployments[0];
   const liveUrl = project ? projectAddress(project) : (latestDeployment?.url || "");
   const isRunning = project?.status === "running";
+
+  // Effective per-project access (undefined for legacy responses = owner).
+  const access = project?.access;
+  const canDeploy = !access || ["owner", "manager", "editor"].includes(access);
+  const canEditSettings = !access || ["owner", "manager"].includes(access);
+  const canDelete = !access || access === "owner";
 
   const { data: envVars = [] } = useQuery({
     queryKey: ["envvars", projectId],
@@ -299,7 +307,13 @@ export default function ProjectDetail() {
                   <span>{project.repository}</span>
                 ))}
               <span className="text-muted-foreground/30">·</span>
-              <span>{isProd ? project.branch || "main" : environment?.branch || "main"}</span>
+              <span>
+                {isProd
+                  ? project.deploy_type === "release" && project.deploy_ref
+                    ? project.deploy_ref
+                    : project.branch || "main"
+                  : environment?.branch || "main"}
+              </span>
               {liveUrl && (
                 <>
                   <span className="text-muted-foreground/30">·</span>
@@ -319,39 +333,43 @@ export default function ProjectDetail() {
               onManage={() => setTab("environments")}
             />
           )}
-          {isRunning ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => run("stop")}
-              disabled={!!busy}
-              className="gap-1.5"
-            >
-              {busy === "stop" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
-              Stop
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => run("start")}
-              disabled={!!busy}
-              className="gap-1.5"
-            >
-              {busy === "start" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-              Start
-            </Button>
+          {canDeploy && (
+            <>
+              {isRunning ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => run("stop")}
+                  disabled={!!busy}
+                  className="gap-1.5"
+                >
+                  {busy === "stop" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
+                  Stop
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => run("start")}
+                  disabled={!!busy}
+                  className="gap-1.5"
+                >
+                  {busy === "start" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                  Start
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => run("restart")}
+                disabled={!isRunning || !!busy}
+                className="gap-1.5"
+              >
+                {busy === "restart" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
+                {busy === "restart" ? "Restarting…" : "Restart"}
+              </Button>
+            </>
           )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => run("restart")}
-            disabled={!isRunning || !!busy}
-            className="gap-1.5"
-          >
-            {busy === "restart" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
-            {busy === "restart" ? "Restarting…" : "Restart"}
-          </Button>
           {liveUrl && (
             <Button asChild variant="outline" size="icon" className="h-9 w-9">
               <a href={liveUrl} target="_blank" rel="noreferrer" title="Visit">
@@ -359,33 +377,39 @@ export default function ProjectDetail() {
               </a>
             </Button>
           )}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="h-9 w-9">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-44 border-border bg-popover">
-              <DropdownMenuItem onClick={() => setTab("settings")} className="gap-2">
-                <SettingsIcon className="h-3.5 w-3.5" /> Settings
-              </DropdownMenuItem>
-              <DropdownMenuSeparator className="bg-border" />
-              <ConfirmDialog
-                trigger={
-                  <DropdownMenuItem
-                    onSelect={(e) => e.preventDefault()}
-                    className="gap-2 text-destructive focus:text-destructive"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" /> Delete
+          {(canEditSettings || canDelete) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon" className="h-9 w-9">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44 border-border bg-popover">
+                {canEditSettings && (
+                  <DropdownMenuItem onClick={() => setTab("settings")} className="gap-2">
+                    <SettingsIcon className="h-3.5 w-3.5" /> Settings
                   </DropdownMenuItem>
-                }
-                title={`Delete "${project.name}"?`}
-                description="This permanently removes the project and all associated data."
-                confirmLabel="Delete project"
-                onConfirm={remove}
-              />
-            </DropdownMenuContent>
-          </DropdownMenu>
+                )}
+                {canEditSettings && canDelete && <DropdownMenuSeparator className="bg-border" />}
+                {canDelete && (
+                  <ConfirmDialog
+                    trigger={
+                      <DropdownMenuItem
+                        onSelect={(e) => e.preventDefault()}
+                        className="gap-2 text-destructive focus:text-destructive"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                      </DropdownMenuItem>
+                    }
+                    title={`Delete "${project.name}"?`}
+                    description="This permanently removes the project and all associated data."
+                    confirmLabel="Delete project"
+                    onConfirm={remove}
+                  />
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
 
@@ -496,6 +520,7 @@ export default function ProjectDetail() {
             onVarDelete={onVarDelete}
           />
         )}
+        {tab === "members" && <ProjectMembers project={project} />}
       </div>
     </div>
   );

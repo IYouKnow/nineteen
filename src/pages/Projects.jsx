@@ -4,13 +4,14 @@ import { useMemo, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { Plus, Search, FolderGit2, ArrowUpRight, LayoutGrid, List } from "lucide-react";
+import { Plus, Search, FolderGit2, ArrowUpRight, LayoutGrid, List, Users } from "lucide-react";
 import StatusBadge from "@/components/dev/StatusBadge";
 import FrameworkIcon from "@/components/dev/FrameworkIcon";
 import ProviderBadge from "@/components/dev/ProviderBadge";
 import EmptyState from "@/components/dev/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { timeAgo } from "@/lib/format";
 import { getFramework } from "@/lib/devStatus";
@@ -25,6 +26,15 @@ const FILTERS = [
   { id: "idle", label: "Idle" },
 ];
 
+function SharedBadge({ project }) {
+  if (!project.access || project.access === "owner") return null;
+  return (
+    <Badge variant="secondary" className="gap-1 px-1.5 py-0 text-[10px] font-medium">
+      <Users className="h-2.5 w-2.5" /> Shared
+    </Badge>
+  );
+}
+
 function ProjectCard({ project }) {
   return (
     <Link
@@ -35,7 +45,10 @@ function ProjectCard({ project }) {
         <div className="flex min-w-0 items-center gap-3">
           <FrameworkIcon framework={project.framework} size="lg" />
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-foreground">{project.name}</p>
+            <div className="flex items-center gap-2">
+              <p className="truncate text-sm font-semibold text-foreground">{project.name}</p>
+              <SharedBadge project={project} />
+            </div>
             <p className="truncate font-mono text-xs text-muted-foreground">
               {project.repository || "no repository"}
             </p>
@@ -68,7 +81,10 @@ function ProjectRow({ project }) {
     >
       <FrameworkIcon framework={project.framework} />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground">{project.name}</p>
+        <div className="flex items-center gap-2">
+          <p className="truncate text-sm font-medium text-foreground">{project.name}</p>
+          <SharedBadge project={project} />
+        </div>
         <p className="truncate font-mono text-xs text-muted-foreground">
           {project.repository || "no repository"}
         </p>

@@ -16,6 +16,7 @@ import (
 	"nineteen-server/auth"
 	"nineteen-server/db"
 	"nineteen-server/models"
+	"nineteen-server/permissions"
 	"nineteen-server/services"
 )
 
@@ -69,7 +70,7 @@ type rowScanner interface {
 const projectSelect = `SELECT id, user_id, name, slug, status, framework, repository, branch,
 	domain, description, auto_deploy, region, instance_type, build_strategy,
 	dockerfile_path, compose_path, port, last_deployed_at, created_date, updated_date,
-	provider, integration_id FROM projects`
+	provider, integration_id, deploy_type, deploy_ref FROM projects`
 
 func ProjectsHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -104,7 +105,9 @@ func listProjectsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.DB.Query(projectSelect+" WHERE user_id = ? ORDER BY created_date DESC", claims.UserID)
+	rows, err := db.DB.Query(projectSelect+` WHERE user_id = ?
+		OR id IN (SELECT project_id FROM project_members WHERE user_id = ?)
+		ORDER BY created_date DESC`, claims.UserID, claims.UserID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Database error")
 		return
@@ -119,8 +122,14 @@ func listProjectsHandler(w http.ResponseWriter, r *http.Request) {
 			&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
 			&p.Port,
 			&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
-			&p.Provider, &p.IntegrationID); err != nil {
+			&p.Provider, &p.IntegrationID, &p.DeployType, &p.DeployRef); err != nil {
 			continue
+		}
+		if p.UserID == claims.UserID {
+			p.Access = permissions.ProjectRoleOwner
+			p.IsOwner = true
+		} else if role, ok := resolveProjectRole(claims.UserID, p.ID); ok {
+			p.Access = role
 		}
 		projects = append(projects, p)
 		reconcileProjectStatus(&projects[len(projects)-1])
@@ -151,6 +160,8 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 		BuildStrategy string `json:"build_strategy"`
 		DockerfilePath string `json:"dockerfile_path"`
 		ComposePath   string `json:"compose_path"`
+		DeployType    string `json:"deploy_type"`
+		DeployRef     string `json:"deploy_ref"`
 		Port          *int   `json:"port"`
 		Provider      string `json:"provider"`
 		IntegrationID *int64 `json:"integration_id"`
@@ -189,6 +200,19 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "build_strategy must be one of: detect, dockerfile, compose")
 		return
 	}
+	if req.DeployType == "" {
+		req.DeployType = "branch"
+	}
+	switch req.DeployType {
+	case "branch", "release":
+	default:
+		respondError(w, http.StatusBadRequest, "deploy_type must be one of: branch, release")
+		return
+	}
+	req.DeployRef = strings.TrimSpace(req.DeployRef)
+	if req.DeployType != "release" {
+		req.DeployRef = ""
+	}
 	if req.Status == "" {
 		req.Status = "idle"
 	}
@@ -199,12 +223,12 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 	result, err := db.DB.Exec(
 		`INSERT INTO projects (user_id, name, slug, status, framework, repository, branch, domain,
 			description, auto_deploy, region, instance_type, build_strategy, dockerfile_path, compose_path, port,
-			provider, integration_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			provider, integration_id, deploy_type, deploy_ref)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		claims.UserID, req.Name, req.Slug, req.Status, req.Framework, req.Repository,
 		req.Branch, req.Domain, req.Description, req.AutoDeploy, req.Region, req.InstanceType,
 		req.BuildStrategy, req.DockerfilePath, req.ComposePath, req.Port,
-		req.Provider, req.IntegrationID,
+		req.Provider, req.IntegrationID, req.DeployType, req.DeployRef,
 	)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to create project")
@@ -225,7 +249,7 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 			id, req.Branch,
 		)
 	}
-	p, err := getProject(claims.UserID, id)
+	p, err := getProjectForUser(claims.UserID, id)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to load project")
 		return
@@ -247,7 +271,7 @@ func ProjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		p, err := getProject(claims.UserID, id)
+		p, err := getProjectForUser(claims.UserID, id)
 		if err != nil {
 			respondError(w, http.StatusNotFound, "Project not found")
 			return
@@ -261,13 +285,17 @@ func ProjectHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		respondJSON(w, http.StatusOK, p)
 	case http.MethodDelete:
-		project, err := getProject(claims.UserID, id)
+		if !hasProjectPermission(claims.UserID, id, "projects.delete") {
+			respondError(w, http.StatusForbidden, "You don't have permission to do that")
+			return
+		}
+		project, err := getProjectByID(id)
 		if err != nil {
 			respondError(w, http.StatusNotFound, "Project not found")
 			return
 		}
 		removeProjectContainers(project)
-		if _, err := db.DB.Exec("DELETE FROM projects WHERE id = ? AND user_id = ?", id, claims.UserID); err != nil {
+		if _, err := db.DB.Exec("DELETE FROM projects WHERE id = ?", id); err != nil {
 			respondError(w, http.StatusInternalServerError, "Failed to delete project")
 			return
 		}
@@ -389,7 +417,7 @@ func ProjectBuildFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	project, err := getProject(claims.UserID, id)
+	project, err := getProjectForUser(claims.UserID, id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return
@@ -422,11 +450,15 @@ func ProjectBuildFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	branch := project.Branch
-	if branch == "" {
-		branch = "main"
+	// Release projects read their build file from the pinned release tag.
+	ref := project.Branch
+	if project.DeployType == "release" && strings.TrimSpace(project.DeployRef) != "" {
+		ref = strings.TrimSpace(project.DeployRef)
 	}
-	files, _, err := client.GetRepoTree(project.Repository, branch)
+	if ref == "" {
+		ref = "main"
+	}
+	files, _, err := client.GetRepoTree(project.Repository, ref)
 	if err != nil {
 		respondError(w, http.StatusBadGateway, "Failed to read repository: "+err.Error())
 		return
@@ -463,7 +495,7 @@ func ProjectBuildFileHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		respondJSON(w, http.StatusOK, buildFileResponse{
 			Path: path, Kind: kind, BuildStrategy: project.BuildStrategy,
-			Branch: branch, Repository: project.Repository, Content: req.Content,
+			Branch: ref, Repository: project.Repository, Content: req.Content,
 			Size: len(req.Content), Overridden: true, OneShot: req.OneShot,
 		})
 		return
@@ -474,7 +506,7 @@ func ProjectBuildFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, err := client.GetRepoFile(project.Repository, branch, path)
+	raw, err := client.GetRepoFile(project.Repository, ref, path)
 	if err != nil {
 		respondError(w, http.StatusBadGateway, "Failed to read "+path+": "+err.Error())
 		return
@@ -482,7 +514,7 @@ func ProjectBuildFileHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp := buildFileResponse{
 		Path: path, Kind: kind, BuildStrategy: project.BuildStrategy,
-		Branch: branch, Repository: project.Repository,
+		Branch: ref, Repository: project.Repository,
 		Content: string(raw), Size: len(raw),
 	}
 	if content, oneShot, ok := loadBuildFileOverride(project.ID, path); ok {
@@ -511,7 +543,7 @@ func ProjectResourcesHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Invalid project ID")
 		return
 	}
-	project, err := getProject(claims.UserID, id)
+	project, err := getProjectForUser(claims.UserID, id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return
@@ -542,7 +574,7 @@ func ProjectResourcesStreamHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Invalid project ID")
 		return
 	}
-	project, err := getProject(claims.UserID, projectID)
+	project, err := getProjectForUser(claims.UserID, projectID)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return
@@ -595,7 +627,7 @@ func getProject(userID, id int64) (models.Project, error) {
 		&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
 		&p.Port,
 		&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
-		&p.Provider, &p.IntegrationID,
+		&p.Provider, &p.IntegrationID, &p.DeployType, &p.DeployRef,
 	)
 	reconcileProjectStatus(&p)
 	return p, err
@@ -612,7 +644,7 @@ func getProjectByID(id int64) (models.Project, error) {
 		&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
 		&p.Port,
 		&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
-		&p.Provider, &p.IntegrationID,
+		&p.Provider, &p.IntegrationID, &p.DeployType, &p.DeployRef,
 	)
 	return p, err
 }
@@ -622,6 +654,7 @@ var updatableProjectColumns = map[string]bool{
 	"domain": true, "description": true, "auto_deploy": true, "region": true,
 	"instance_type": true, "build_strategy": true, "name": true, "slug": true,
 	"dockerfile_path": true, "compose_path": true,
+	"deploy_type": true, "deploy_ref": true,
 	"last_deployed_at": true, "port": true,
 	"provider": true, "integration_id": true,
 }
@@ -648,16 +681,16 @@ func updateProject(w http.ResponseWriter, r *http.Request, userID, id int64) (mo
 		}
 	}
 	if len(sets) == 0 {
-		return getProject(userID, id)
+		return getProjectForUser(userID, id)
 	}
 	sets = append(sets, "updated_date = CURRENT_TIMESTAMP")
-	args = append(args, id, userID)
+	args = append(args, id)
 
-	q := "UPDATE projects SET " + strings.Join(sets, ", ") + " WHERE id = ? AND user_id = ?"
+	q := "UPDATE projects SET " + strings.Join(sets, ", ") + " WHERE id = ?"
 	if _, err := db.DB.Exec(q, args...); err != nil {
 		return models.Project{}, err
 	}
-	return getProject(userID, id)
+	return getProjectForUser(userID, id)
 }
 
 func ProjectDeploymentsHandler(w http.ResponseWriter, r *http.Request) {
@@ -674,8 +707,12 @@ func ProjectDeploymentsHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
+		if _, err := getProjectForUser(claims.UserID, id); err != nil {
+			respondError(w, http.StatusNotFound, "Project not found")
+			return
+		}
 		rows, err := db.DB.Query(
-			"SELECT id, user_id, project_id, project_name, status, commit_sha, commit_message, branch, author, trigger, framework, duration, port, url, created_date, updated_date FROM deployments WHERE project_id = ? AND user_id = ? ORDER BY created_date DESC", id, claims.UserID)
+			"SELECT id, user_id, project_id, project_name, status, commit_sha, commit_message, branch, author, trigger, framework, duration, port, url, created_date, updated_date FROM deployments WHERE project_id = ? ORDER BY created_date DESC", id)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, "Database error")
 			return
@@ -714,7 +751,7 @@ func ProjectActionHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Invalid project ID")
 		return
 	}
-	project, err := getProject(claims.UserID, id)
+	project, err := getProjectForUser(claims.UserID, id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return
@@ -765,7 +802,7 @@ func ProjectActionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := getProject(claims.UserID, id)
+	updated, err := getProjectForUser(claims.UserID, id)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to load project")
 		return
@@ -778,7 +815,7 @@ func setProjectStatus(projectID int64, status string) {
 }
 
 func createDeploymentHandler(w http.ResponseWriter, r *http.Request, userID, projectID int64) {
-	project, err := getProject(userID, projectID)
+	project, err := getProjectForUser(userID, projectID)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return
@@ -792,7 +829,9 @@ func createDeploymentHandler(w http.ResponseWriter, r *http.Request, userID, pro
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	d, err := startDeployment(userID, project, req.Trigger, req.Branch, req.CommitMessage, req.Author)
+	// A manual deploy uses the project's configured target (its pinned version,
+	// or the repository's default branch) rather than the caller-supplied branch.
+	d, err := startDeployment(userID, project, req.Trigger, "", req.CommitMessage, req.Author)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to create deployment")
 		return
@@ -803,13 +842,33 @@ func createDeploymentHandler(w http.ResponseWriter, r *http.Request, userID, pro
 // startDeployment creates a deployment record, marks the project as building and
 // kicks off the build worker in the background. It is shared by the HTTP deploy
 // endpoint, the GitHub webhook handler and any future trigger source.
-func startDeployment(userID int64, project models.Project, trigger, branch, commitMessage, author string) (models.Deployment, error) {
-	if branch == "" {
-		branch = project.Branch
+//
+// ref is the git ref to check out when the deploy was triggered by a specific
+// event (a branch for commit/branch rules, a tag for tag/release rules). When
+// empty, the project's pinned version (release projects) or the repository's
+// default branch is used — that is the manual-deploy path.
+func startDeployment(userID int64, project models.Project, trigger, ref, commitMessage, author string) (models.Deployment, error) {
+	ref = strings.TrimSpace(ref)
+
+	// Git ref actually cloned: an explicit event ref wins, then a pinned release.
+	cloneRef := ref
+	if cloneRef == "" && project.DeployType == "release" {
+		cloneRef = strings.TrimSpace(project.DeployRef)
 	}
-	if branch == "" {
-		branch = "main"
+
+	// Display value recorded on the deployment (branch or tag).
+	displayRef := ref
+	if displayRef == "" {
+		if project.DeployType == "release" && strings.TrimSpace(project.DeployRef) != "" {
+			displayRef = strings.TrimSpace(project.DeployRef)
+		} else {
+			displayRef = project.Branch
+		}
 	}
+	if displayRef == "" {
+		displayRef = "main"
+	}
+	branch := displayRef
 	if author == "" {
 		author = "you"
 	}
@@ -818,6 +877,20 @@ func startDeployment(userID int64, project models.Project, trigger, branch, comm
 	}
 	if commitMessage == "" {
 		commitMessage = "Manual deployment"
+	}
+
+	// Keep the project's manual-deploy target aligned with the latest triggered
+	// deploy, so "redeploy" from the project page follows the same ref: a tag
+	// for tag/release rules, the default branch for commit/branch rules.
+	switch trigger {
+	case "tag", "release":
+		if ref != "" {
+			db.DB.Exec("UPDATE projects SET deploy_type = 'release', deploy_ref = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?", ref, project.ID)
+			project.DeployType, project.DeployRef = "release", ref
+		}
+	case "commit", "branch":
+		db.DB.Exec("UPDATE projects SET deploy_type = 'branch', deploy_ref = '', updated_date = CURRENT_TIMESTAMP WHERE id = ?", project.ID)
+		project.DeployType, project.DeployRef = "branch", ""
 	}
 
 	sha := randomHex(40)
@@ -837,7 +910,7 @@ func startDeployment(userID int64, project models.Project, trigger, branch, comm
 	db.DB.Exec("UPDATE projects SET status = ?, last_deployed_at = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
 		statusBuilding, now, project.ID)
 
-	go buildAndDeploy(deployID, project)
+	go buildAndDeploy(deployID, project, cloneRef)
 
 	return getDeployment(userID, deployID)
 }
@@ -852,7 +925,11 @@ func DeploymentsHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
 		return
 	}
-	rows, err := db.DB.Query(deploymentSelect + " WHERE user_id = ? ORDER BY created_date DESC LIMIT 50", claims.UserID)
+	rows, err := db.DB.Query(deploymentSelect+` WHERE project_id IN (
+			SELECT id FROM projects WHERE user_id = ?
+			UNION
+			SELECT project_id FROM project_members WHERE user_id = ?
+		) ORDER BY created_date DESC LIMIT 50`, claims.UserID, claims.UserID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Database error")
 		return
@@ -884,7 +961,7 @@ func DeploymentHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Invalid deployment ID")
 		return
 	}
-	d, err := getDeployment(claims.UserID, id)
+	d, err := getDeploymentForUser(claims.UserID, id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "Deployment not found")
 		return
@@ -911,7 +988,7 @@ func CancelDeploymentHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Invalid deployment ID")
 		return
 	}
-	d, err := getDeployment(claims.UserID, id)
+	d, err := getDeploymentForUser(claims.UserID, id)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "Deployment not found")
 		return
@@ -921,7 +998,7 @@ func CancelDeploymentHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	project, _ := getProject(claims.UserID, d.ProjectID)
+	project, _ := getProjectForUser(claims.UserID, d.ProjectID)
 
 	if !requestDeployCancel(d.ID) {
 		// No worker is registered (it finished between the status read and now,
@@ -953,12 +1030,11 @@ func DeploymentLogsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var deployID int64
-	err = db.DB.QueryRow("SELECT id FROM deployments WHERE id = ? AND user_id = ?", id, claims.UserID).Scan(&deployID)
-	if err != nil {
+	if _, err := getDeploymentForUser(claims.UserID, id); err != nil {
 		respondError(w, http.StatusNotFound, "Deployment not found")
 		return
 	}
+	deployID := id
 
 	rows, err := db.DB.Query(
 		"SELECT id, deployment_id, timestamp, level, message FROM deployment_logs WHERE deployment_id = ? ORDER BY id ASC",
@@ -1010,7 +1086,7 @@ func writeBuildOverride(projectID int64, dir, path string, log func(string, stri
 	return true
 }
 
-func buildAndDeploy(deployID int64, project models.Project) {
+func buildAndDeploy(deployID int64, project models.Project, ref string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	registerDeployCancel(deployID, cancel)
 	defer func() {
@@ -1049,8 +1125,15 @@ func buildAndDeploy(deployID int64, project models.Project) {
 		return
 	}
 
-	log("info", fmt.Sprintf("Deploying %s (%s)", project.Repository, project.Slug))
-	dir, err := d.CloneRepo(ctx, cloneURL, func(line string) { log("info", line) })
+	// ref is the resolved git ref for this deployment: a release/tag for a
+	// tag/release rule, a branch for a commit/branch rule, or empty to build the
+	// repository's default branch.
+	if ref != "" {
+		log("info", fmt.Sprintf("Deploying %s of %s (%s)", ref, project.Repository, project.Slug))
+	} else {
+		log("info", fmt.Sprintf("Deploying %s (%s)", project.Repository, project.Slug))
+	}
+	dir, err := d.CloneRepo(ctx, cloneURL, ref, func(line string) { log("info", line) })
 	defer os.RemoveAll(dir)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -1063,8 +1146,16 @@ func buildAndDeploy(deployID int64, project models.Project) {
 	}
 	log("info", "Repository cloned")
 
-	if sha := d.GitHead(dir); sha != "" {
-		db.DB.Exec("UPDATE deployments SET commit_sha = ? WHERE id = ?", sha, deployID)
+	headSHA := d.GitHead(dir)
+	if headSHA != "" {
+		db.DB.Exec("UPDATE deployments SET commit_sha = ? WHERE id = ?", headSHA, deployID)
+	}
+
+	// Version handed to the build as APP_VERSION/VERSION: the deployed ref
+	// (tag or branch), or the short commit SHA when building the default branch.
+	version := strings.TrimSpace(ref)
+	if version == "" && headSHA != "" {
+		version = headSHA[:min(12, len(headSHA))]
 	}
 
 	// Load the project's env vars and write a temp .env to inject at runtime.
@@ -1093,13 +1184,13 @@ func buildAndDeploy(deployID int64, project models.Project) {
 	}
 
 	if useCompose {
-		composeDeploy(ctx, log, d, deployID, project, dir, composeFiles, envPath, start)
+		composeDeploy(ctx, log, d, deployID, project, dir, composeFiles, envPath, version, start)
 		return
 	}
-	dockerfileDeploy(ctx, log, d, deployID, project, dir, dockerfiles, composeFiles, envPath, start)
+	dockerfileDeploy(ctx, log, d, deployID, project, dir, dockerfiles, composeFiles, envPath, version, start)
 }
 
-func dockerfileDeploy(ctx context.Context, log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, dockerfiles, composeFiles []string, envPath string, start time.Time) {
+func dockerfileDeploy(ctx context.Context, log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, dockerfiles, composeFiles []string, envPath, version string, start time.Time) {
 	dockerfile := project.DockerfilePath
 	if dockerfile != "" && !d.RepoFileExists(dir, dockerfile) {
 		log("warn", fmt.Sprintf("Dockerfile %q from the project settings was not found in this branch — searching the repository", dockerfile))
@@ -1122,7 +1213,7 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 	image := fmt.Sprintf("nineteen-%d-%s:%s", project.ID, project.Slug, buildRef)
 	containerName := services.ProjectContainerName(project.ID, project.Slug)
 	log("info", "Building image "+image)
-	if err := d.Build(ctx, image, dir, dockerfile, func(line string) { log("info", line) }); err != nil {
+	if err := d.Build(ctx, image, dir, dockerfile, version, func(line string) { log("info", line) }); err != nil {
 		if ctx.Err() != nil {
 			log("warn", "Deployment cancelled")
 			finishDeploymentCancelled(deployID, project)
@@ -1157,7 +1248,10 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 
 	hostPort := 0
 	if project.Port != nil && *project.Port > 0 {
-		if d.HostPortAvailable(*project.Port) {
+		// The previous container was just removed; give Docker a moment to
+		// release its published port (Docker Desktop on Windows can lag) so a
+		// redeploy reuses the configured port instead of drifting to a new one.
+		if d.WaitHostPortAvailable(*project.Port, 5*time.Second) {
 			hostPort = *project.Port
 			log("info", fmt.Sprintf("Using configured port %d", hostPort))
 		} else {
@@ -1207,7 +1301,7 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 	services.EnsureTailed(project.ID, deployID, containerName)
 }
 
-func composeDeploy(ctx context.Context, log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, composeFiles []string, envPath string, start time.Time) {
+func composeDeploy(ctx context.Context, log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, composeFiles []string, envPath, version string, start time.Time) {
 	composeFile := project.ComposePath
 	if composeFile != "" && !d.RepoFileExists(dir, composeFile) {
 		log("warn", fmt.Sprintf("Compose file %q from the project settings was not found in this branch — searching the repository", composeFile))
@@ -1248,7 +1342,7 @@ func composeDeploy(ctx context.Context, log func(string, string), d *services.De
 	d.CleanupContainer("nineteen-" + project.Slug)
 	d.CleanupCompose(name, func(line string) { log("info", line) })
 
-	if err := d.ComposeUp(ctx, dir, composeFile, overridePath, name, func(line string) { log("info", line) }); err != nil {
+	if err := d.ComposeUp(ctx, dir, composeFile, overridePath, name, version, func(line string) { log("info", line) }); err != nil {
 		if ctx.Err() != nil {
 			log("warn", "Deployment cancelled")
 			finishDeploymentCancelled(deployID, project)
@@ -1366,6 +1460,30 @@ func getDeployment(userID, id int64) (models.Deployment, error) {
 		&d.Port, &d.URL, &d.CreatedDate, &d.UpdatedDate,
 	)
 	return d, err
+}
+
+// getDeploymentByID loads a deployment without scoping it to a user.
+func getDeploymentByID(id int64) (models.Deployment, error) {
+	var d models.Deployment
+	err := db.DB.QueryRow(deploymentSelect+" WHERE id = ?", id).Scan(
+		&d.ID, &d.UserID, &d.ProjectID, &d.ProjectName, &d.Status, &d.CommitSHA,
+		&d.CommitMessage, &d.Branch, &d.Author, &d.Trigger, &d.Framework, &d.Duration,
+		&d.Port, &d.URL, &d.CreatedDate, &d.UpdatedDate,
+	)
+	return d, err
+}
+
+// getDeploymentForUser loads a deployment only if the caller can access the
+// project it belongs to (as owner or member).
+func getDeploymentForUser(userID, id int64) (models.Deployment, error) {
+	d, err := getDeploymentByID(id)
+	if err != nil {
+		return d, err
+	}
+	if _, err := getProjectForUser(userID, d.ProjectID); err != nil {
+		return models.Deployment{}, err
+	}
+	return d, nil
 }
 
 func pathID(r *http.Request) (int64, bool) {

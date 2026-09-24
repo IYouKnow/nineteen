@@ -33,7 +33,7 @@ func ProjectRuntimeLogsHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Invalid project ID")
 		return
 	}
-	if _, err := getProject(claims.UserID, projectID); err != nil {
+	if _, err := getProjectForUser(claims.UserID, projectID); err != nil {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return
 	}
@@ -106,7 +106,7 @@ func ProjectRuntimeLogsStreamHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Invalid project ID")
 		return
 	}
-	project, err := getProject(claims.UserID, projectID)
+	project, err := getProjectForUser(claims.UserID, projectID)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return

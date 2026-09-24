@@ -117,6 +117,81 @@ func (g *GitHubClient) ListRepositories(page, perPage int) ([]GitHubRepo, error)
 	return repos, nil
 }
 
+// RepoVersion is a deployable version of a repository: either a published
+// release or a plain git tag. TagName is the git ref a deploy would check out.
+// IsRelease distinguishes a real release from a tag-only entry; Name is the
+// release title (releases) or the tag name (tags).
+type RepoVersion struct {
+	TagName     string `json:"tag_name"`
+	Name        string `json:"name"`
+	PublishedAt string `json:"published_at"`
+	Prerelease  bool   `json:"prerelease"`
+	IsRelease   bool   `json:"is_release"`
+}
+
+// ListReleases returns a repository's published releases, newest first. Drafts
+// are filtered out. A repository with no releases yields an empty slice.
+func (g *GitHubClient) ListReleases(fullName string, limit int) ([]RepoVersion, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+	fullName = strings.Trim(strings.TrimSpace(fullName), "/")
+	if fullName == "" {
+		return nil, fmt.Errorf("fullName is required")
+	}
+	u := fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=%d", fullName, limit)
+	body, err := g.doRequest(u)
+	if err != nil {
+		return nil, err
+	}
+
+	var releases []RepoVersion
+	if err := json.Unmarshal(body, &releases); err != nil {
+		return nil, err
+	}
+	out := make([]RepoVersion, 0, len(releases))
+	for _, r := range releases {
+		if r.TagName == "" {
+			continue
+		}
+		r.IsRelease = true
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// ListTags returns a repository's git tags, newest first, so a deploy can offer
+// tagged versions even when no GitHub release was published for them.
+func (g *GitHubClient) ListTags(fullName string, limit int) ([]RepoVersion, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+	fullName = strings.Trim(strings.TrimSpace(fullName), "/")
+	if fullName == "" {
+		return nil, fmt.Errorf("fullName is required")
+	}
+	u := fmt.Sprintf("https://api.github.com/repos/%s/tags?per_page=%d", fullName, limit)
+	body, err := g.doRequest(u)
+	if err != nil {
+		return nil, err
+	}
+
+	var tags []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &tags); err != nil {
+		return nil, err
+	}
+	out := make([]RepoVersion, 0, len(tags))
+	for _, t := range tags {
+		if t.Name == "" {
+			continue
+		}
+		out = append(out, RepoVersion{TagName: t.Name, Name: t.Name})
+	}
+	return out, nil
+}
+
 // GetRepoTree returns every file path in a repository at the given ref
 // (branch name, tag or "HEAD"). The boolean reports whether GitHub truncated
 // the listing for very large repositories.
