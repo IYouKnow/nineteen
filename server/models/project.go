@@ -21,6 +21,9 @@ type Project struct {
 	BuildStrategy string    `json:"build_strategy"`
 	DockerfilePath string   `json:"dockerfile_path"`
 	ComposePath   string    `json:"compose_path"`
+	// BuildContext is the repo-relative directory used as the Docker build
+	// context. Empty means "auto": the Dockerfile's own directory.
+	BuildContext  string    `json:"build_context"`
 	DeployType    string    `json:"deploy_type"`
 	DeployRef     string    `json:"deploy_ref"`
 	Port          *int      `json:"port"`

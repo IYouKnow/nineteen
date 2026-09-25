@@ -1,17 +1,46 @@
 import * as api from "@/lib/api";
 
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import EnvVarEditor from "./EnvVarEditor";
 import RuntimeControls from "./RuntimeControls";
 import ConfirmDialog from "@/components/dev/ConfirmDialog";
 import { Button } from "@/components/ui/button";
-import { Trash2, AlertTriangle } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Trash2, AlertTriangle, Loader2, Save } from "lucide-react";
 
 export default function ProjectSettings({ project, envVars = [], environment, isProd = true, onVarAdd, onVarUpdate, onVarDelete }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
+
+  const [build, setBuild] = useState({ dockerfile_path: "", compose_path: "", build_context: "" });
+  const [savingBuild, setSavingBuild] = useState(false);
+
+  useEffect(() => {
+    setBuild({
+      dockerfile_path: project.dockerfile_path || "",
+      compose_path: project.compose_path || "",
+      build_context: project.build_context || "",
+    });
+  }, [project.id, project.dockerfile_path, project.compose_path, project.build_context]);
+
+  const saveBuild = async () => {
+    setSavingBuild(true);
+    try {
+      await api.projects.update(project.id, build);
+      qc.invalidateQueries({ queryKey: ["project", project.id] });
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("Build settings saved", { description: "Applied on the next deployment." });
+    } catch (e) {
+      toast.error("Could not save build settings", { description: e?.message });
+    } finally {
+      setSavingBuild(false);
+    }
+  };
 
   const remove = async () => {
     await api.projects.delete(project.id);
@@ -23,6 +52,50 @@ export default function ProjectSettings({ project, envVars = [], environment, is
   return (
     <div className="space-y-8">
       <RuntimeControls project={project} />
+
+      <div className="border-t border-border/60 pt-6">
+        <div className="rounded-lg border border-border bg-card p-5">
+          <h3 className="text-sm font-medium text-foreground">Build settings</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            How this project is built. Changes apply to the next deployment.
+          </p>
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            <div>
+              <Label className="text-xs">Dockerfile path</Label>
+              <Input
+                value={build.dockerfile_path}
+                onChange={(e) => setBuild((b) => ({ ...b, dockerfile_path: e.target.value }))}
+                placeholder="Dockerfile"
+                className="mt-1.5 font-mono text-xs"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Compose file path</Label>
+              <Input
+                value={build.compose_path}
+                onChange={(e) => setBuild((b) => ({ ...b, compose_path: e.target.value }))}
+                placeholder="docker-compose.yml"
+                className="mt-1.5 font-mono text-xs"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Build context</Label>
+              <Input
+                value={build.build_context}
+                onChange={(e) => setBuild((b) => ({ ...b, build_context: e.target.value }))}
+                placeholder="empty = Dockerfile's folder"
+                className="mt-1.5 font-mono text-xs"
+              />
+            </div>
+          </div>
+          <div className="mt-4 flex justify-end">
+            <Button size="sm" onClick={saveBuild} disabled={savingBuild} className="gap-1.5">
+              {savingBuild ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Save build settings
+            </Button>
+          </div>
+        </div>
+      </div>
 
       <div className="border-t border-border/60 pt-6">
         <EnvVarEditor

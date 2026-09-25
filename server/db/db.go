@@ -331,6 +331,21 @@ func runMigrations() {
 		}
 	}
 
+	// Build context support. Added once: existing projects are pinned to the
+	// repository root ('.') so their builds are unchanged, while the empty
+	// string is reserved for "auto" (the Dockerfile's own directory) on
+	// projects created after this migration.
+	if exists, err := columnExists("projects", "build_context"); err != nil {
+		log.Fatalf("Migration failed: %v", err)
+	} else if !exists {
+		if _, err := DB.Exec(`ALTER TABLE projects ADD COLUMN build_context TEXT DEFAULT ''`); err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
+		if _, err := DB.Exec(`UPDATE projects SET build_context = '.'`); err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
+	}
+
 	// Multiple accounts per provider are supported (e.g. several self-hosted
 	// Gitea instances), so the legacy UNIQUE(user_id, provider) constraint is
 	// dropped by rebuilding the table.

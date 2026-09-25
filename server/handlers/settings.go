@@ -791,11 +791,18 @@ type ScanResponse struct {
 	Dockerfiles  []string `json:"dockerfiles"`
 	ComposeFiles []string `json:"compose_files"`
 	Port         int      `json:"port"`
+	// BuildContexts suggests a build-context directory per Dockerfile
+	// (dockerfile path -> repo-relative context), so the wizard can pre-fill it.
+	BuildContexts map[string]string `json:"build_contexts"`
 }
 
 var repoNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 const scanFileLimit = 2000
+
+// scanContextLimit bounds how many Dockerfiles are fetched to suggest build
+// contexts, keeping a scan to a single extra request per candidate.
+const scanContextLimit = 20
 
 // IntegrationScanHandler scans a repository's file tree (via the GitHub API)
 // and returns the full file list plus ranked Dockerfile / Compose candidates,
@@ -848,12 +855,23 @@ func IntegrationScanHandler(w http.ResponseWriter, r *http.Request) {
 	composeFiles := services.RankComposeFiles(files)
 
 	// Detect a fixed port from the best-ranked Dockerfile so the wizard can
-	// pre-fill it for apps that only work on a specific port.
+	// pre-fill it for apps that only work on a specific port, and suggest a
+	// build context for every Dockerfile from the paths it COPYs/ADDs. Capped so
+	// a repo with many Dockerfile variants can't cause a burst of API calls.
 	port := 0
-	if len(dockerfiles) > 0 {
-		if data, err := client.GetRepoFile(repo, branch, dockerfiles[0]); err == nil {
+	contexts := make(map[string]string, len(dockerfiles))
+	for i, df := range dockerfiles {
+		if i >= scanContextLimit {
+			break
+		}
+		data, err := client.GetRepoFile(repo, branch, df)
+		if err != nil {
+			continue
+		}
+		if i == 0 {
 			port = services.ParseExposeContent(data)
 		}
+		contexts[df] = services.SuggestBuildContext(df, data, files)
 	}
 
 	if len(files) > scanFileLimit {
@@ -864,13 +882,14 @@ func IntegrationScanHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, ScanResponse{
-		Repository:   repo,
-		Branch:       branch,
-		Files:        files,
-		Truncated:    truncated,
-		Dockerfiles:  dockerfiles,
-		ComposeFiles: composeFiles,
-		Port:         port,
+		Repository:    repo,
+		Branch:        branch,
+		Files:         files,
+		Truncated:     truncated,
+		Dockerfiles:   dockerfiles,
+		ComposeFiles:  composeFiles,
+		Port:          port,
+		BuildContexts: contexts,
 	})
 }
 

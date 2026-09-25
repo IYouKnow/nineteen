@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Check, Container, FileSearch, Layers, Loader2, Search, Ship, Wand2 } from "lucide-react";
+import { AlertTriangle, Check, Container, FileSearch, FolderTree, Layers, Loader2, Search, Ship, Wand2 } from "lucide-react";
 import * as api from "@/lib/api";
 import { FRAMEWORKS } from "@/lib/devStatus";
 import { detectFrameworkFromFiles } from "@/lib/newProject";
@@ -113,15 +113,18 @@ export default function BuildStep({ config, setConfig, scan, scanLoading, scanEr
   const mode = config.dockerMode || "dockerfile";
   const candidates = mode === "compose" ? composeFiles : dockerfiles;
   const selected = mode === "compose" ? config.composePath : config.dockerfilePath;
+  const suggestedContext = scan?.build_contexts?.[config.dockerfilePath];
 
   // When a Dockerfile is picked, detect its EXPOSE port and pre-fill the
-  // configuration port so fixed-port apps are addressed correctly.
+  // configuration port so fixed-port apps are addressed correctly. Also pre-fill
+  // the build context suggested from the Dockerfile's COPY/ADD paths.
   const pick = async (p) => {
     if (mode === "compose") {
       update({ composePath: p });
       return;
     }
-    update({ dockerfilePath: p });
+    const suggested = scan?.build_contexts?.[p];
+    update({ dockerfilePath: p, ...(suggested !== undefined ? { buildContext: suggested } : {}) });
     if (scanTarget?.repo) {
       try {
         const res = await api.integrations.port(
@@ -229,6 +232,15 @@ export default function BuildStep({ config, setConfig, scan, scanLoading, scanEr
                       className="mt-1.5 font-mono text-xs"
                     />
                   </div>
+                  <div>
+                    <Label className="text-xs">Build context</Label>
+                    <Input
+                      value={config.buildContext}
+                      onChange={(e) => update({ buildContext: e.target.value, dockerMode: "dockerfile" })}
+                      placeholder="e.g. backend (empty = Dockerfile's folder)"
+                      className="mt-1.5 font-mono text-xs"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -265,7 +277,7 @@ export default function BuildStep({ config, setConfig, scan, scanLoading, scanEr
                   </Button>
                 </div>
                 <p className="mt-1.5 text-xs text-muted-foreground">
-                  Best matches first. The repository root is used as build context.
+                  Best matches first. The build context is auto-detected from the Dockerfile.
                 </p>
               </div>
             ) : (
@@ -313,6 +325,31 @@ export default function BuildStep({ config, setConfig, scan, scanLoading, scanEr
           </>
         )}
       </div>
+
+      {mode === "dockerfile" && (
+        <div className="mt-5">
+          <Label className="text-xs flex items-center gap-1">
+            <FolderTree className="h-3 w-3" /> Build context
+          </Label>
+          <Input
+            value={config.buildContext}
+            onChange={(e) => update({ buildContext: e.target.value })}
+            placeholder="e.g. backend (empty = the Dockerfile's folder)"
+            className="mt-1.5 font-mono text-xs"
+          />
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            {!config.buildContext && suggestedContext ? (
+              <>
+                Suggested from the Dockerfile:{" "}
+                <span className="font-mono text-foreground">{suggestedContext}</span>. Leave empty to use it
+                automatically.
+              </>
+            ) : (
+              "The folder Docker builds from. Leave empty to use the Dockerfile's own folder — recommended for monorepos."
+            )}
+          </p>
+        </div>
+      )}
 
       <div className="mt-5">
         <Label className="text-xs flex items-center gap-1">

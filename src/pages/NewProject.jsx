@@ -42,6 +42,7 @@ export default function NewProject() {
     dockerMode: "dockerfile",
     dockerfilePath: "",
     composePath: "",
+    buildContext: "",
     deployType: "branch",
     deployRef: "",
     strategy: {
@@ -217,7 +218,9 @@ export default function NewProject() {
     ? "Dockerfile · auto-detected at deploy time"
     : config.dockerMode === "compose"
     ? `Docker Compose${config.composePath ? ` · ${config.composePath}` : ""}`
-    : `Dockerfile${config.dockerfilePath ? ` · ${config.dockerfilePath}` : " · auto-detected"}`;
+    : `Dockerfile${config.dockerfilePath ? ` · ${config.dockerfilePath}` : " · auto-detected"}${
+        config.buildContext ? ` (context: ${config.buildContext})` : ""
+      }`;
 
   const handleCreate = async () => {
     if (!config.name.trim()) return;
@@ -251,6 +254,7 @@ export default function NewProject() {
         build_strategy: scannable ? config.dockerMode : "detect",
         dockerfile_path: scannable && config.dockerMode === "dockerfile" ? config.dockerfilePath : "",
         compose_path: scannable && config.dockerMode === "compose" ? config.composePath : "",
+        build_context: scannable && config.dockerMode === "dockerfile" ? config.buildContext : "",
         deploy_type: isRelease ? "release" : "branch",
         deploy_ref: isRelease ? config.deployRef : "",
       });

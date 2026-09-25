@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -205,9 +206,15 @@ func (d *Deployer) ImagePort(image string) int {
 }
 
 // Build runs `docker build` for the image using the given Dockerfile
-// (repo-relative) with the repository root as build context. When version is
-// non-empty it is passed as the APP_VERSION and VERSION build args so a
-// Dockerfile that declares them can bake the deployed ref into the image.
+// (repo-relative). contextDir is the repo-relative build context; when empty it
+// is derived from the Dockerfile's own directory ("auto"), which is what a
+// monorepo with a per-package Dockerfile needs. Docker requires the Dockerfile
+// to live inside the context, so when it does not it is staged into the context
+// root for the duration of the build.
+//
+// When version is non-empty it is passed as the APP_VERSION and VERSION build
+// args so a Dockerfile that declares them can bake the deployed ref into the
+// image.
 //
 // It prefers the buildx/BuildKit builder when the CLI has it available —
 // faster, better caching, and it auto-populates the TARGETARCH/TARGETPLATFORM
@@ -216,8 +223,17 @@ func (d *Deployer) ImagePort(image string) int {
 // cloudflared download URL using ${TARGETARCH}) still resolve to a real value.
 // We do not force BuildKit (DOCKER_BUILDKIT=1) because that hard-errors on
 // hosts missing the buildx component.
-func (d *Deployer) Build(ctx context.Context, image, dir, dockerfile, version string, log func(string)) error {
+func (d *Deployer) Build(ctx context.Context, image, dir, dockerfile, contextDir, version string, log func(string)) error {
 	useBuildx := d.buildxAvailable()
+
+	contextAbs, contextRel, dockerfileArg, cleanup, err := prepareBuildContext(dir, dockerfile, contextDir)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if log != nil {
+		log("Using build context " + contextRel)
+	}
 
 	var args []string
 	if useBuildx {
@@ -227,8 +243,8 @@ func (d *Deployer) Build(ctx context.Context, image, dir, dockerfile, version st
 	} else {
 		args = []string{"build", "-t", image}
 	}
-	if dockerfile != "" && dockerfile != "Dockerfile" {
-		args = append(args, "-f", dockerfile)
+	if dockerfileArg != "" && dockerfileArg != "Dockerfile" {
+		args = append(args, "-f", dockerfileArg)
 	}
 	// Supply the deployed version to Dockerfiles that declare APP_VERSION or
 	// VERSION (undeclared args are ignored by Docker).
@@ -240,8 +256,67 @@ func (d *Deployer) Build(ctx context.Context, image, dir, dockerfile, version st
 	}
 	args = append(args, ".")
 	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Dir = dir
+	cmd.Dir = contextAbs
 	return streamCommand(cmd, log)
+}
+
+// prepareBuildContext resolves the effective build context for a Dockerfile and
+// the path to pass to `docker build -f`, relative to that context. contextDir is
+// repo-relative; empty means "auto" (the Dockerfile's own directory). It returns
+// the absolute context directory, the repo-relative context (for logging), the
+// Dockerfile argument, and a cleanup that removes any staged Dockerfile copy.
+func prepareBuildContext(dir, dockerfile, contextDir string) (contextAbs, contextRel, dockerfileArg string, cleanup func(), err error) {
+	cleanup = func() {}
+
+	contextRel = strings.TrimSpace(filepath.ToSlash(contextDir))
+	if contextRel == "" {
+		if strings.TrimSpace(dockerfile) == "" {
+			contextRel = "."
+		} else {
+			contextRel = path.Dir(filepath.ToSlash(dockerfile))
+		}
+	}
+	for _, part := range strings.Split(contextRel, "/") {
+		if part == ".." {
+			return "", "", "", cleanup, fmt.Errorf("build context %q must stay inside the repository", contextDir)
+		}
+	}
+	contextRel = strings.TrimPrefix(path.Clean("/"+contextRel), "/")
+	if contextRel == "" {
+		contextRel = "."
+	}
+	contextAbs = filepath.Join(dir, filepath.FromSlash(contextRel))
+	if info, statErr := os.Stat(contextAbs); statErr != nil || !info.IsDir() {
+		return "", "", "", cleanup, fmt.Errorf("build context %q was not found in the repository", contextRel)
+	}
+
+	dockerfile = strings.TrimSpace(filepath.ToSlash(dockerfile))
+	if dockerfile == "" {
+		return contextAbs, contextRel, "Dockerfile", cleanup, nil
+	}
+
+	// A Dockerfile inside the context can be passed directly (Docker requires
+	// the file to be within the context).
+	dockerfileAbs := filepath.Join(dir, filepath.FromSlash(dockerfile))
+	if rel, relErr := filepath.Rel(contextAbs, dockerfileAbs); relErr == nil &&
+		rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return contextAbs, contextRel, filepath.ToSlash(rel), cleanup, nil
+	}
+
+	// Outside the context: stage a copy at the context root so the classic
+	// builder can find it, and remove it afterwards. Dockerfile instructions
+	// resolve paths relative to the context, not the file, so this is safe.
+	data, readErr := os.ReadFile(dockerfileAbs)
+	if readErr != nil {
+		return "", "", "", cleanup, fmt.Errorf("Dockerfile %q was not found in the repository", dockerfile)
+	}
+	const stagedName = ".nineteen.Dockerfile"
+	stagedPath := filepath.Join(contextAbs, stagedName)
+	if writeErr := os.WriteFile(stagedPath, data, 0o644); writeErr != nil {
+		return "", "", "", cleanup, fmt.Errorf("failed to stage Dockerfile into the build context: %w", writeErr)
+	}
+	cleanup = func() { _ = os.Remove(stagedPath) }
+	return contextAbs, contextRel, stagedName, cleanup, nil
 }
 
 // buildxAvailable reports whether the Docker CLI has the buildx component

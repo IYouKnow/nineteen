@@ -69,7 +69,7 @@ type rowScanner interface {
 
 const projectSelect = `SELECT id, user_id, name, slug, status, framework, repository, branch,
 	domain, description, auto_deploy, region, instance_type, build_strategy,
-	dockerfile_path, compose_path, port, last_deployed_at, created_date, updated_date,
+	dockerfile_path, compose_path, build_context, port, last_deployed_at, created_date, updated_date,
 	provider, integration_id, deploy_type, deploy_ref FROM projects`
 
 func ProjectsHandler(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +120,7 @@ func listProjectsHandler(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Slug, &p.Status, &p.Framework,
 			&p.Repository, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
 			&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
+			&p.BuildContext,
 			&p.Port,
 			&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
 			&p.Provider, &p.IntegrationID, &p.DeployType, &p.DeployRef); err != nil {
@@ -160,6 +161,7 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 		BuildStrategy string `json:"build_strategy"`
 		DockerfilePath string `json:"dockerfile_path"`
 		ComposePath   string `json:"compose_path"`
+		BuildContext  string `json:"build_context"`
 		DeployType    string `json:"deploy_type"`
 		DeployRef     string `json:"deploy_ref"`
 		Port          *int   `json:"port"`
@@ -222,12 +224,12 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	result, err := db.DB.Exec(
 		`INSERT INTO projects (user_id, name, slug, status, framework, repository, branch, domain,
-			description, auto_deploy, region, instance_type, build_strategy, dockerfile_path, compose_path, port,
+			description, auto_deploy, region, instance_type, build_strategy, dockerfile_path, compose_path, build_context, port,
 			provider, integration_id, deploy_type, deploy_ref)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		claims.UserID, req.Name, req.Slug, req.Status, req.Framework, req.Repository,
 		req.Branch, req.Domain, req.Description, req.AutoDeploy, req.Region, req.InstanceType,
-		req.BuildStrategy, req.DockerfilePath, req.ComposePath, req.Port,
+		req.BuildStrategy, req.DockerfilePath, req.ComposePath, req.BuildContext, req.Port,
 		req.Provider, req.IntegrationID, req.DeployType, req.DeployRef,
 	)
 	if err != nil {
@@ -625,6 +627,7 @@ func getProject(userID, id int64) (models.Project, error) {
 		&p.ID, &p.UserID, &p.Name, &p.Slug, &p.Status, &p.Framework,
 		&p.Repository, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
 		&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
+		&p.BuildContext,
 		&p.Port,
 		&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
 		&p.Provider, &p.IntegrationID, &p.DeployType, &p.DeployRef,
@@ -642,6 +645,7 @@ func getProjectByID(id int64) (models.Project, error) {
 		&p.ID, &p.UserID, &p.Name, &p.Slug, &p.Status, &p.Framework,
 		&p.Repository, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
 		&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
+		&p.BuildContext,
 		&p.Port,
 		&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
 		&p.Provider, &p.IntegrationID, &p.DeployType, &p.DeployRef,
@@ -653,7 +657,7 @@ var updatableProjectColumns = map[string]bool{
 	"status": true, "framework": true, "repository": true, "branch": true,
 	"domain": true, "description": true, "auto_deploy": true, "region": true,
 	"instance_type": true, "build_strategy": true, "name": true, "slug": true,
-	"dockerfile_path": true, "compose_path": true,
+	"dockerfile_path": true, "compose_path": true, "build_context": true,
 	"deploy_type": true, "deploy_ref": true,
 	"last_deployed_at": true, "port": true,
 	"provider": true, "integration_id": true,
@@ -1213,7 +1217,7 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 	image := fmt.Sprintf("nineteen-%d-%s:%s", project.ID, project.Slug, buildRef)
 	containerName := services.ProjectContainerName(project.ID, project.Slug)
 	log("info", "Building image "+image)
-	if err := d.Build(ctx, image, dir, dockerfile, version, func(line string) { log("info", line) }); err != nil {
+	if err := d.Build(ctx, image, dir, dockerfile, project.BuildContext, version, func(line string) { log("info", line) }); err != nil {
 		if ctx.Err() != nil {
 			log("warn", "Deployment cancelled")
 			finishDeploymentCancelled(deployID, project)
