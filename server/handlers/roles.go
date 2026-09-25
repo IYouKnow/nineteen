@@ -199,6 +199,10 @@ func createRole(w http.ResponseWriter, r *http.Request, claims *Claims) {
 		respondError(w, http.StatusBadRequest, msg)
 		return
 	}
+	if !canGrantAll(claims.UserID, perms) {
+		respondError(w, http.StatusForbidden, "You can't grant permissions you don't have")
+		return
+	}
 
 	result, err := db.DB.Exec(
 		"INSERT INTO roles (name, description, is_superuser, is_default) VALUES (?, ?, FALSE, FALSE)",
@@ -239,6 +243,10 @@ func updateRole(w http.ResponseWriter, r *http.Request, claims *Claims) {
 	}
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	if isSuper && !isSuperuser(claims.UserID) {
+		respondError(w, http.StatusForbidden, "Only a superuser can modify the superuser role")
 		return
 	}
 
@@ -287,6 +295,10 @@ func updateRole(w http.ResponseWriter, r *http.Request, claims *Claims) {
 	}
 
 	if req.IsDefault != nil && *req.IsDefault && !isDefault {
+		if !isSuperuser(claims.UserID) {
+			respondError(w, http.StatusForbidden, "Only a superuser can change the default role")
+			return
+		}
 		if _, err := tx.Exec("UPDATE roles SET is_default = FALSE"); err != nil {
 			respondError(w, http.StatusInternalServerError, "Failed to set default role")
 			return
@@ -310,6 +322,10 @@ func updateRole(w http.ResponseWriter, r *http.Request, claims *Claims) {
 		newPerms, msg := normalizePermissions(req.Permissions)
 		if msg != "" {
 			respondError(w, http.StatusBadRequest, msg)
+			return
+		}
+		if !canGrantAll(claims.UserID, newPerms) {
+			respondError(w, http.StatusForbidden, "You can't grant permissions you don't have")
 			return
 		}
 		replaceRolePermissions(id, newPerms)
@@ -390,7 +406,8 @@ func deleteRole(w http.ResponseWriter, r *http.Request, claims *Claims) {
 }
 
 // normalizePermissions validates a permission list, returning a message when
-// any entry is unknown.
+// any entry is unknown. The global wildcard "*" is never assignable through the
+// API — it is reserved for the superuser role, which is evaluated implicitly.
 func normalizePermissions(input *[]string) ([]string, string) {
 	if input == nil {
 		return []string{}, ""
@@ -402,6 +419,9 @@ func normalizePermissions(input *[]string) ([]string, string) {
 		if p == "" || seen[p] {
 			continue
 		}
+		if p == "*" {
+			return nil, "the global wildcard permission cannot be assigned to a role"
+		}
 		if !permissions.ValidGrant(p) {
 			return nil, "Unknown permission: " + p
 		}
@@ -409,6 +429,36 @@ func normalizePermissions(input *[]string) ([]string, string) {
 		out = append(out, p)
 	}
 	return out, ""
+}
+
+// callerCanGrant reports whether userID may grant perm to a role. Superusers may
+// grant anything; everyone else may only grant permissions they already hold, so
+// a delegated role manager cannot escalate their own or another role beyond
+// their current access.
+func callerCanGrant(userID int64, perm string) bool {
+	if isSuperuser(userID) {
+		return true
+	}
+	if strings.HasSuffix(perm, ".*") {
+		prefix := strings.TrimSuffix(perm, ".*")
+		for _, key := range permissions.All() {
+			if (key == prefix || strings.HasPrefix(key, prefix+".")) && !hasPermission(userID, key) {
+				return false
+			}
+		}
+		return true
+	}
+	return hasPermission(userID, perm)
+}
+
+// canGrantAll reports whether userID may grant every permission in perms.
+func canGrantAll(userID int64, perms []string) bool {
+	for _, p := range perms {
+		if !callerCanGrant(userID, p) {
+			return false
+		}
+	}
+	return true
 }
 
 // replaceRolePermissions swaps a role's permission set.

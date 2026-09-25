@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -45,6 +46,17 @@ func branchOrDefault(branch string) string {
 	return branch
 }
 
+// validHTTPURL reports whether raw is an absolute http(s) URL with a host. It is
+// used to reject non-network schemes (file://, etc.) before the server is asked
+// to make an outbound request on the user's behalf.
+func validHTTPURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
 // newRepoClient builds the provider client for a repository given its provider
 // id, decrypted token and integration config JSON.
 func newRepoClient(provider, token, configJSON string) (repoClient, error) {
@@ -55,6 +67,9 @@ func newRepoClient(provider, token, configJSON string) (repoClient, error) {
 		base := giteaBaseURLFromConfig(configJSON)
 		if base == "" {
 			return nil, fmt.Errorf("Gitea integration is missing its base URL")
+		}
+		if !validHTTPURL(base) {
+			return nil, fmt.Errorf("Gitea base URL must be an http(s) URL")
 		}
 		return services.NewGiteaClient(base, token), nil
 	default:
@@ -104,8 +119,8 @@ func projectIntegrationAuth(project models.Project) (provider, token, config str
 	var enc string
 	if project.IntegrationID != nil {
 		err = db.DB.QueryRow(
-			"SELECT provider, access_token, config FROM integrations WHERE id = ?",
-			*project.IntegrationID,
+			"SELECT provider, access_token, config FROM integrations WHERE id = ? AND user_id = ?",
+			*project.IntegrationID, project.UserID,
 		).Scan(&provider, &enc, &config)
 	} else {
 		provider = project.Provider
@@ -498,6 +513,10 @@ func connectIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 		base := giteaBaseURLFromConfig(req.Config)
 		if base == "" {
 			respondError(w, http.StatusBadRequest, "base_url is required for Gitea")
+			return
+		}
+		if !validHTTPURL(base) {
+			respondError(w, http.StatusBadRequest, "base_url must be an http(s) URL")
 			return
 		}
 		giteaClient := services.NewGiteaClient(base, req.AccessToken)
@@ -1028,6 +1047,9 @@ func TestIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
+	if _, ok := requirePermission(w, r, "settings.integrations.manage"); !ok {
+		return
+	}
 
 	var req TestIntegrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1067,6 +1089,10 @@ func TestIntegrationHandler(w http.ResponseWriter, r *http.Request) {
 		base := giteaBaseURLFromConfig(req.Config)
 		if base == "" {
 			respondError(w, http.StatusBadRequest, "base_url is required for Gitea")
+			return
+		}
+		if !validHTTPURL(base) {
+			respondError(w, http.StatusBadRequest, "base_url must be an http(s) URL")
 			return
 		}
 		giteaClient := services.NewGiteaClient(base, req.AccessToken)

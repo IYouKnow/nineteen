@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -26,6 +27,10 @@ const (
 	statusError    = "error"
 	statusCanceled = "canceled"
 )
+
+// errBadIntegration is returned when a project update references an integration
+// that does not belong to the caller.
+var errBadIntegration = errors.New("unknown integration")
 
 // deployCancels tracks the cancellation handle for each in-flight deployment
 // worker, so a request can abort a running build (git clone / docker build /
@@ -221,6 +226,16 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 	if req.Provider == "" {
 		req.Provider = "github"
 	}
+	if req.IntegrationID != nil {
+		var exists bool
+		if err := db.DB.QueryRow(
+			"SELECT EXISTS(SELECT 1 FROM integrations WHERE id = ? AND user_id = ?)",
+			*req.IntegrationID, claims.UserID,
+		).Scan(&exists); err != nil || !exists {
+			respondError(w, http.StatusBadRequest, "Unknown integration")
+			return
+		}
+	}
 
 	result, err := db.DB.Exec(
 		`INSERT INTO projects (user_id, name, slug, status, framework, repository, branch, domain,
@@ -282,6 +297,10 @@ func ProjectHandler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		p, err := updateProject(w, r, claims.UserID, id)
 		if err != nil {
+			if errors.Is(err, errBadIntegration) {
+				respondError(w, http.StatusBadRequest, "Unknown integration")
+				return
+			}
 			respondError(w, http.StatusInternalServerError, "Failed to update project")
 			return
 		}
@@ -680,6 +699,18 @@ func updateProject(w http.ResponseWriter, r *http.Request, userID, id int64) (mo
 			args = append(args, boolToInt(toBool(val)))
 		} else if col == "port" {
 			args = append(args, intOrNil(val))
+		} else if col == "integration_id" {
+			iv := intOrNil(val)
+			if iv != nil {
+				var exists bool
+				if err := db.DB.QueryRow(
+					"SELECT EXISTS(SELECT 1 FROM integrations WHERE id = ? AND user_id = ?)",
+					iv, userID,
+				).Scan(&exists); err != nil || !exists {
+					return models.Project{}, errBadIntegration
+				}
+			}
+			args = append(args, iv)
 		} else {
 			args = append(args, valueToString(val))
 		}

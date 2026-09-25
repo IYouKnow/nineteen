@@ -104,6 +104,14 @@ func AdminUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A delegated user manager must not be able to touch superuser accounts or
+	// elevate anyone (including themselves) to the superuser role.
+	callerSuper := isSuperuser(claims.UserID)
+	if targetSuper && !callerSuper {
+		respondError(w, http.StatusForbidden, "Only a superuser can manage a superuser account")
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		var req adminUserUpdate
@@ -119,6 +127,10 @@ func AdminUserHandler(w http.ResponseWriter, r *http.Request) {
 			role := strings.TrimSpace(*req.Role)
 			if !roleExists(role) {
 				respondError(w, http.StatusBadRequest, "Unknown role: "+role)
+				return
+			}
+			if roleIsSuperuser(role) && !callerSuper {
+				respondError(w, http.StatusForbidden, "Only a superuser can grant the superuser role")
 				return
 			}
 			if targetSuper && !roleIsSuperuser(role) && activeAdminCount() <= 1 {

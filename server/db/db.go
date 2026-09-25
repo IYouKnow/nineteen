@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 
+	"nineteen-server/auth"
 	"nineteen-server/permissions"
 
 	_ "modernc.org/sqlite"
@@ -226,6 +227,9 @@ func runMigrations() {
 			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			database_id INTEGER NOT NULL REFERENCES databases(id) ON DELETE CASCADE,
 			project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			database_name TEXT DEFAULT '',
+			database_type TEXT DEFAULT '',
+			project_name TEXT DEFAULT '',
 			scope TEXT DEFAULT 'all',
 			selected_tables TEXT DEFAULT '',
 			role TEXT DEFAULT 'primary',
@@ -316,6 +320,9 @@ func runMigrations() {
 		{"roles", "is_superuser", `ALTER TABLE roles ADD COLUMN is_superuser BOOLEAN DEFAULT FALSE`},
 		{"roles", "is_default", `ALTER TABLE roles ADD COLUMN is_default BOOLEAN DEFAULT FALSE`},
 		{"roles", "updated_at", `ALTER TABLE roles ADD COLUMN updated_at DATETIME`},
+		{"database_connections", "database_name", `ALTER TABLE database_connections ADD COLUMN database_name TEXT DEFAULT ''`},
+		{"database_connections", "database_type", `ALTER TABLE database_connections ADD COLUMN database_type TEXT DEFAULT ''`},
+		{"database_connections", "project_name", `ALTER TABLE database_connections ADD COLUMN project_name TEXT DEFAULT ''`},
 	}
 
 	for _, c := range columns {
@@ -370,6 +377,50 @@ func runMigrations() {
 	seedRoles()
 	seedRolePermissions()
 	promoteFirstUserToAdmin()
+	encryptLegacySecrets()
+}
+
+// encryptLegacySecrets encrypts secrets that were written before encryption at
+// rest was enabled (integration tokens, database passwords and env var values).
+// Best-effort: a failure to encrypt one row never blocks startup.
+func encryptLegacySecrets() {
+	cols := []struct{ table, id, col string }{
+		{"env_vars", "id", "value_encrypted"},
+		{"integrations", "id", "access_token"},
+		{"databases", "id", "password_encrypted"},
+	}
+	for _, c := range cols {
+		rows, err := DB.Query(fmt.Sprintf("SELECT %s, %s FROM %s", c.id, c.col, c.table))
+		if err != nil {
+			continue
+		}
+		type row struct {
+			id  int64
+			val string
+		}
+		var pending []row
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.id, &r.val); err != nil {
+				continue
+			}
+			if r.val == "" || auth.IsEncrypted(r.val) {
+				continue
+			}
+			pending = append(pending, r)
+		}
+		rows.Close()
+		for _, r := range pending {
+			enc, err := auth.EncryptToken(r.val)
+			if err != nil {
+				log.Printf("Failed to encrypt %s.%s for id %d: %v", c.table, c.col, r.id, err)
+				continue
+			}
+			if _, err := DB.Exec(fmt.Sprintf("UPDATE %s SET %s = ? WHERE %s = ?", c.table, c.col, c.id), enc, r.id); err != nil {
+				log.Printf("Failed to store encrypted %s.%s for id %d: %v", c.table, c.col, r.id, err)
+			}
+		}
+	}
 }
 
 // seedRoles ensures the built-in roles exist. Roles are stored in their own
