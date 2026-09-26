@@ -552,7 +552,14 @@ func GitHubWebhookHandler(w http.ResponseWriter, r *http.Request) {
 
 	// match.Ref is the exact git ref the event refers to: a branch for
 	// commit/branch rules, or the tag for tag/release rules.
-	deployment, err := startDeployment(project.UserID, project, match.Trigger, match.Ref, match.Message, match.Author)
+	deployment, err := startDeployment(project.UserID, project, deployRequest{
+		Trigger:       match.Trigger,
+		Source:        deploySourceForTrigger(match.Trigger),
+		Ref:           match.Ref,
+		CommitMessage: match.Message,
+		Author:        match.Author,
+		ApplyTarget:   true,
+	})
 	if err != nil {
 		logDeployEvent(projectID, event, match.Ref, match.SHA, false, "Failed to start deployment: "+err.Error(), "webhook", nil, nil)
 		respondError(w, http.StatusInternalServerError, "Failed to start deployment")

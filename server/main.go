@@ -368,6 +368,8 @@ func main() {
 	mux.HandleFunc("/api/projects/{id}/resources/stream", handlers.ProjectResourcesStreamHandler)
 	mux.HandleFunc("/api/projects/{id}/deployments", handlers.ProjectDeploymentsHandler)
 	mux.HandleFunc("/api/projects/{id}/actions", handlers.ProjectActionHandler)
+	mux.HandleFunc("/api/projects/{id}/refs", handlers.ProjectRefsHandler)
+	mux.HandleFunc("/api/projects/{id}/commits", handlers.ProjectCommitsHandler)
 	mux.HandleFunc("/api/projects/{id}/env-vars", handlers.ProjectEnvVarsHandler)
 	mux.HandleFunc("/api/projects/{id}/files", handlers.ProjectFilesHandler)
 	mux.HandleFunc("/api/projects/{id}/files/upload", handlers.ProjectFileUploadHandler)

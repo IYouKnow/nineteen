@@ -217,6 +217,87 @@ func (g *GiteaClient) ListTags(fullName string, limit int) ([]RepoVersion, error
 	return out, nil
 }
 
+// ListBranches returns a repository's branches, most recently pushed first.
+func (g *GiteaClient) ListBranches(fullName string, limit int) ([]RepoBranch, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	fullName = strings.Trim(strings.TrimSpace(fullName), "/")
+	if fullName == "" {
+		return nil, fmt.Errorf("fullName is required")
+	}
+	u := fmt.Sprintf("%s?limit=%d", g.apiURL("/repos/"+fullName+"/branches"), limit)
+	body, err := g.doRequest(u)
+	if err != nil {
+		return nil, err
+	}
+
+	var branches []struct {
+		Name   string `json:"name"`
+		Commit struct {
+			ID string `json:"id"`
+		} `json:"commit"`
+	}
+	if err := json.Unmarshal(body, &branches); err != nil {
+		return nil, err
+	}
+	out := make([]RepoBranch, 0, len(branches))
+	for _, b := range branches {
+		if b.Name == "" {
+			continue
+		}
+		out = append(out, RepoBranch{Name: b.Name, Commit: b.Commit.ID})
+	}
+	return out, nil
+}
+
+// ListCommits returns a branch's most recent commits, newest first, so a deploy
+// can pin an exact commit SHA.
+func (g *GiteaClient) ListCommits(fullName, branch string, limit int) ([]RepoCommit, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+	fullName = strings.Trim(strings.TrimSpace(fullName), "/")
+	if fullName == "" {
+		return nil, fmt.Errorf("fullName is required")
+	}
+	u := fmt.Sprintf("%s?limit=%d", g.apiURL("/repos/"+fullName+"/commits"), limit)
+	if b := strings.TrimSpace(branch); b != "" {
+		u += "&sha=" + url.QueryEscape(b)
+	}
+	body, err := g.doRequest(u)
+	if err != nil {
+		return nil, err
+	}
+
+	var commits []struct {
+		SHA    string `json:"sha"`
+		Commit struct {
+			Message string `json:"message"`
+			Author  struct {
+				Name string `json:"name"`
+				Date string `json:"date"`
+			} `json:"author"`
+		} `json:"commit"`
+	}
+	if err := json.Unmarshal(body, &commits); err != nil {
+		return nil, err
+	}
+	out := make([]RepoCommit, 0, len(commits))
+	for _, c := range commits {
+		if c.SHA == "" {
+			continue
+		}
+		out = append(out, RepoCommit{
+			SHA:     c.SHA,
+			Message: firstLine(c.Commit.Message),
+			Author:  c.Commit.Author.Name,
+			Date:    c.Commit.Author.Date,
+		})
+	}
+	return out, nil
+}
+
 // GetRepoTree returns every file path in a repository at the given ref (branch
 // name, tag or "HEAD"). The boolean reports whether Gitea truncated the listing.
 func (g *GiteaClient) GetRepoTree(fullName, ref string) ([]string, bool, error) {

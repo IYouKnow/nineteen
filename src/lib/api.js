@@ -56,6 +56,9 @@ export const projects = {
   delete: (id) => doFetch(`/api/projects/${id}`, { method: "DELETE" }),
   action: (id, action) =>
     doFetch(`/api/projects/${id}/actions`, { method: "POST", body: JSON.stringify({ action }) }),
+  refs: (id) => doFetch(`/api/projects/${id}/refs`),
+  commits: (id, branch) =>
+    doFetch(`/api/projects/${id}/commits?branch=${encodeURIComponent(branch || "")}`),
   resources: (id) => doFetch(`/api/projects/${id}/resources`),
   buildFile: (id) => doFetch(`/api/projects/${id}/buildfile`),
   buildFileSave: (id, payload) =>

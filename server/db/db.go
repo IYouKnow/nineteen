@@ -323,6 +323,8 @@ func runMigrations() {
 		{"database_connections", "database_name", `ALTER TABLE database_connections ADD COLUMN database_name TEXT DEFAULT ''`},
 		{"database_connections", "database_type", `ALTER TABLE database_connections ADD COLUMN database_type TEXT DEFAULT ''`},
 		{"database_connections", "project_name", `ALTER TABLE database_connections ADD COLUMN project_name TEXT DEFAULT ''`},
+		{"deployments", "deploy_source", `ALTER TABLE deployments ADD COLUMN deploy_source TEXT DEFAULT 'default'`},
+		{"deployments", "deploy_ref", `ALTER TABLE deployments ADD COLUMN deploy_ref TEXT DEFAULT ''`},
 	}
 
 	for _, c := range columns {

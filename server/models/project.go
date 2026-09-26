@@ -79,6 +79,12 @@ type Deployment struct {
 	Duration     int64  `json:"duration"`
 	Port         *int   `json:"port"`
 	URL          string `json:"url"`
+	// DeploySource records how the ref was chosen for this deployment:
+	// "default" (project target), "branch", "tag" or "commit". DeployRef is the
+	// exact ref requested (a branch/tag name or commit SHA); it is empty for
+	// "default" deploys.
+	DeploySource string `json:"deploy_source"`
+	DeployRef    string `json:"deploy_ref"`
 	CreatedDate  string `json:"created_date"`
 	UpdatedDate  string `json:"updated_date"`
 }

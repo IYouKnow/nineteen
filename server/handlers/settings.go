@@ -25,6 +25,8 @@ type repoClient interface {
 	GetRepoFile(fullName, ref, path string) ([]byte, error)
 	ListReleases(fullName string, limit int) ([]services.RepoVersion, error)
 	ListTags(fullName string, limit int) ([]services.RepoVersion, error)
+	ListBranches(fullName string, limit int) ([]services.RepoBranch, error)
+	ListCommits(fullName, branch string, limit int) ([]services.RepoCommit, error)
 }
 
 // giteaBaseURLFromConfig extracts the instance base URL from an integration's
@@ -149,6 +151,20 @@ func projectRepoClient(project models.Project) (repoClient, error) {
 		return nil, err
 	}
 	return newRepoClient(provider, token, cfg)
+}
+
+// projectRepoReadClient resolves a git client for reading a project's
+// repository. When the project has no usable integration it falls back to an
+// anonymous GitHub client, so public repositories still list their refs.
+func projectRepoReadClient(project models.Project) (repoClient, error) {
+	client, err := projectRepoClient(project)
+	if err == nil {
+		return client, nil
+	}
+	if project.Provider == "github" || project.Provider == "" {
+		return services.NewGitHubClient(""), nil
+	}
+	return nil, err
 }
 
 func SettingsHandler(w http.ResponseWriter, r *http.Request) {

@@ -1,10 +1,6 @@
-import * as api from "@/lib/api";
-
-import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
-import { Rocket, Loader2, GitCommitHorizontal, Clock, Zap, GitBranch } from "lucide-react";
+import { Rocket, GitCommitHorizontal, Clock, Zap, GitBranch } from "lucide-react";
 import StatusBadge from "@/components/dev/StatusBadge";
 import EmptyState from "@/components/dev/EmptyState";
 import { Button } from "@/components/ui/button";
@@ -17,37 +13,6 @@ const TRIGGER_LABEL = {
 };
 
 export default function ProjectDeployments({ project, deployments = [], environment, isProd = true, onDeploy }) {
-  const qc = useQueryClient();
-  const [deploying, setDeploying] = useState(false);
-
-  const deploy = async () => {
-    if (!isProd) {
-      onDeploy?.();
-      return;
-    }
-    setDeploying(true);
-    try {
-      const deployment = await api.deployments.create(project.id, {
-        commit_message: "Manual deployment from dashboard",
-        branch: project.branch || "main",
-        author: "you",
-        trigger: "manual",
-      });
-      await api.projects.update(project.id, {
-        status: "building",
-        last_deployed_at: new Date().toISOString(),
-      });
-      qc.invalidateQueries({ queryKey: ["projects"] });
-      qc.invalidateQueries({ queryKey: ["project", project.id] });
-      qc.invalidateQueries({ queryKey: ["deployments", project.id] });
-      qc.invalidateQueries({ queryKey: ["deployments-recent"] });
-      window.location.href = `/projects/${project.id}/deployments/${deployment.id}`;
-    } catch (e) {
-      console.error(e);
-      setDeploying(false);
-    }
-  };
-
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
@@ -57,9 +22,9 @@ export default function ProjectDeployments({ project, deployments = [], environm
             {deployments.length} deployment{deployments.length === 1 ? "" : "s"} for this project
           </p>
         </div>
-        <Button onClick={deploy} disabled={deploying} size="sm" className="gap-2">
-          {deploying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
-          Deploy now
+        <Button onClick={onDeploy} size="sm" className="gap-2">
+          <Rocket className="h-3.5 w-3.5" />
+          Deploy
         </Button>
       </div>
 
@@ -69,9 +34,9 @@ export default function ProjectDeployments({ project, deployments = [], environm
           title="No deployments yet"
           description="Trigger your first deployment to start building."
           action={
-            <Button onClick={deploy} disabled={deploying} size="sm" className="gap-2">
-              {deploying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
-              Deploy now
+            <Button onClick={onDeploy} size="sm" className="gap-2">
+              <Rocket className="h-3.5 w-3.5" />
+              Deploy
             </Button>
           }
         />
@@ -88,7 +53,7 @@ export default function ProjectDeployments({ project, deployments = [], environm
                       <span className="text-foreground/70">{shortSha(d.commit_sha)}</span>
                       <span className="flex items-center gap-1">
                         <GitBranch className="h-3 w-3" />
-                        {d.branch}
+                        {d.deploy_ref || d.branch}
                       </span>
                       <span>{d.author}</span>
                     </div>

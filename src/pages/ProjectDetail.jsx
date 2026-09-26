@@ -15,6 +15,7 @@ import {
   Settings as SettingsIcon,
   ArrowLeft,
   ChevronRight,
+  Rocket,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -32,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import ProjectOverview from "@/components/project/ProjectOverview";
 import ProjectDeployments from "@/components/project/ProjectDeployments";
+import DeployDialog from "@/components/project/DeployDialog";
 import ProjectSource from "@/components/project/ProjectSource";
 import ProjectSettings from "@/components/project/ProjectSettings";
 import ProjectMembers from "@/components/project/ProjectMembers";
@@ -77,6 +79,7 @@ export default function ProjectDetail() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [busy, setBusy] = useState(null);
+  const [deployOpen, setDeployOpen] = useState(false);
   const requestedTab = searchParams.get("tab") || "overview";
   const requestedTabDef = TABS.find((t) => t.id === requestedTab);
   const tab = requestedTabDef?.disabled ? "overview" : (requestedTabDef?.id || "overview");
@@ -333,6 +336,17 @@ export default function ProjectDetail() {
               onManage={() => setTab("environments")}
             />
           )}
+          {canDeploy && isProd && (
+            <Button
+              size="sm"
+              onClick={() => setDeployOpen(true)}
+              disabled={project.status === "building"}
+              className="gap-1.5"
+            >
+              <Rocket className="h-3.5 w-3.5" />
+              Deploy
+            </Button>
+          )}
           {canDeploy && (
             <>
               {isRunning ? (
@@ -459,7 +473,7 @@ export default function ProjectDetail() {
             environment={environment}
             isProd={isProd}
             deployments={envDeployments}
-            onDeploy={onDeployMock}
+            onDeploy={isProd ? () => setDeployOpen(true) : onDeployMock}
           />
         )}
         {tab === "logs" && <ProjectLogs project={project} environment={environment} isProd={isProd} />}
@@ -522,6 +536,10 @@ export default function ProjectDetail() {
         )}
         {tab === "members" && <ProjectMembers project={project} />}
       </div>
+
+      {isProd && (
+        <DeployDialog project={project} open={deployOpen} onOpenChange={setDeployOpen} />
+      )}
     </div>
   );
 }

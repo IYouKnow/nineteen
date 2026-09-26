@@ -86,26 +86,67 @@ func hostFromURL(raw string) string {
 }
 
 // CloneRepo clones cloneURL into a fresh temp dir. Returns the clone directory.
-// When ref is non-empty (a branch, tag or release tag) that ref is checked out;
-// otherwise the repository's default branch is used. The clone is cancellable
-// via ctx — cancelling kills the git process so an in-flight deployment can be
-// aborted.
+// When ref is non-empty (a branch or tag) that ref is checked out; a 40-hex
+// commit SHA is fetched and checked out explicitly, since `git clone --branch`
+// only accepts branch/tag names. Otherwise the repository's default branch is
+// used. The clone is cancellable via ctx — cancelling kills the git process so
+// an in-flight deployment can be aborted.
 func (d *Deployer) CloneRepo(ctx context.Context, cloneURL, ref string, log func(string)) (string, error) {
 	dir, err := os.MkdirTemp("", "nineteen-build-")
 	if err != nil {
 		return "", err
 	}
+	ref = strings.TrimSpace(ref)
+	isSHA := commitSHARe.MatchString(ref)
+
 	args := []string{"clone", "--depth", "1"}
-	if strings.TrimSpace(ref) != "" {
-		args = append(args, "--branch", strings.TrimSpace(ref))
+	if ref != "" && !isSHA {
+		args = append(args, "--branch", ref)
 	}
 	args = append(args, cloneURL, dir)
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	if err := streamCommand(cmd, log); err != nil {
+	if err := runGit(ctx, args, log); err != nil {
 		return dir, err
 	}
+
+	if isSHA {
+		if err := d.checkoutCommit(ctx, dir, ref, log); err != nil {
+			return dir, err
+		}
+	}
 	return dir, nil
+}
+
+// commitSHARe matches a full 40-character git commit SHA.
+var commitSHARe = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+
+// checkoutCommit checks out a specific commit in an existing clone. A shallow
+// clone of the default branch usually does not contain the commit, so it is
+// fetched by SHA first. Some servers disallow fetching an arbitrary SHA, so on
+// failure the repository is unshallowed and the commit is fetched with the rest
+// of history.
+func (d *Deployer) checkoutCommit(ctx context.Context, dir, sha string, log func(string)) error {
+	short := sha
+	if len(short) > 12 {
+		short = short[:12]
+	}
+	if err := runGit(ctx, []string{"-C", dir, "fetch", "--depth", "1", "origin", sha}, log); err != nil {
+		log("Commit " + short + " is not directly fetchable — fetching full history")
+		if ferr := runGit(ctx, []string{"-C", dir, "fetch", "--unshallow", "origin"}, log); ferr != nil {
+			return ferr
+		}
+	}
+	if err := runGit(ctx, []string{"-C", dir, "checkout", "--detach", sha}, log); err != nil {
+		return err
+	}
+	return nil
+}
+
+// runGit runs a git command with interactive prompting disabled, streaming its
+// output through log.
+func runGit(ctx context.Context, args []string, log func(string)) error {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	return streamCommand(cmd, log)
 }
 
 // GitHead returns the commit SHA the clone is at, or "" if it can't be read.

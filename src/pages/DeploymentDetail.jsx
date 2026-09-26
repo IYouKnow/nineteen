@@ -18,6 +18,7 @@ import {
   Globe,
   Loader2,
   X,
+  Tag,
 } from "lucide-react";
 import StatusBadge from "@/components/dev/StatusBadge";
 import FrameworkIcon from "@/components/dev/FrameworkIcon";
@@ -26,6 +27,13 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { timeAgo, formatDuration, shortSha } from "@/lib/format";
 import { getFramework, projectAddress } from "@/lib/devStatus";
+
+const SOURCE_LABEL = {
+  default: "Project default",
+  branch: "Branch",
+  tag: "Release / tag",
+  commit: "Commit",
+};
 
 function Meta({ icon: Icon, label, value, mono }) {
   return (
@@ -149,7 +157,14 @@ export default function DeploymentDetail() {
             </h3>
             <div className="mt-1 divide-y divide-border/60">
               <Meta icon={Rocket} label="Project" value={deployment.project_name || project?.name} />
-              <Meta icon={GitBranch} label="Ref" value={deployment.branch || "—"} mono />
+              {deployment.deploy_source && (
+                <Meta
+                  icon={Tag}
+                  label="Source"
+                  value={SOURCE_LABEL[deployment.deploy_source] || deployment.deploy_source}
+                />
+              )}
+              <Meta icon={GitBranch} label="Ref" value={deployment.deploy_ref || deployment.branch || "—"} mono />
               <Meta icon={GitCommitHorizontal} label="Commit" value={shortSha(deployment.commit_sha)} mono />
               <Meta icon={User} label="Author" value={deployment.author || "—"} />
               <Meta icon={Clock} label="Created" value={timeAgo(deployment.created_date)} />

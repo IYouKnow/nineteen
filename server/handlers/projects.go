@@ -747,7 +747,7 @@ func ProjectDeploymentsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rows, err := db.DB.Query(
-			"SELECT id, user_id, project_id, project_name, status, commit_sha, commit_message, branch, author, trigger, framework, duration, port, url, created_date, updated_date FROM deployments WHERE project_id = ? ORDER BY created_date DESC", id)
+			"SELECT id, user_id, project_id, project_name, status, commit_sha, commit_message, branch, author, trigger, framework, duration, port, url, deploy_source, deploy_ref, created_date, updated_date FROM deployments WHERE project_id = ? ORDER BY created_date DESC", id)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, "Database error")
 			return
@@ -767,6 +767,107 @@ func ProjectDeploymentsHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
+}
+
+// ProjectRefsHandler lists the deployable refs of a project's repository:
+// branches (for a branch deploy) and versions (published releases + git tags,
+// for a release deploy). It backs the deploy dialog's ref pickers.
+func ProjectRefsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	claims, err := extractUser(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
+	}
+	id, ok := pathID(r)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "Invalid project ID")
+		return
+	}
+	project, err := getProjectForUser(claims.UserID, id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+	if strings.TrimSpace(project.Repository) == "" {
+		respondError(w, http.StatusBadRequest, "Project has no repository linked")
+		return
+	}
+
+	client, err := projectRepoReadClient(project)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "No integration available to read the repository")
+		return
+	}
+
+	// Fetch independently: a repo may have branches without releases, or vice
+	// versa. Only fail when every source fails.
+	branches, brErr := client.ListBranches(project.Repository, 100)
+	releases, relErr := client.ListReleases(project.Repository, 50)
+	tags, tagErr := client.ListTags(project.Repository, 50)
+	if brErr != nil && relErr != nil && tagErr != nil {
+		respondError(w, http.StatusBadGateway, "Failed to list refs: "+brErr.Error())
+		return
+	}
+	if branches == nil {
+		branches = []services.RepoBranch{}
+	}
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"branches":       branches,
+		"versions":       mergeRepoVersions(releases, tags),
+		"default_branch": project.Branch,
+	})
+}
+
+// ProjectCommitsHandler lists a branch's most recent commits so the deploy
+// dialog can pin an exact commit SHA.
+func ProjectCommitsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	claims, err := extractUser(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
+	}
+	id, ok := pathID(r)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "Invalid project ID")
+		return
+	}
+	project, err := getProjectForUser(claims.UserID, id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+	if strings.TrimSpace(project.Repository) == "" {
+		respondError(w, http.StatusBadRequest, "Project has no repository linked")
+		return
+	}
+
+	client, err := projectRepoReadClient(project)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "No integration available to read the repository")
+		return
+	}
+
+	branch := strings.TrimSpace(r.URL.Query().Get("branch"))
+	if branch == "" {
+		branch = project.Branch
+	}
+	commits, err := client.ListCommits(project.Repository, branch, 30)
+	if err != nil {
+		respondError(w, http.StatusBadGateway, "Failed to list commits: "+err.Error())
+		return
+	}
+	if commits == nil {
+		commits = []services.RepoCommit{}
+	}
+	respondJSON(w, http.StatusOK, commits)
 }
 
 // ProjectActionHandler performs a Docker lifecycle action (start / stop /
@@ -861,12 +962,49 @@ func createDeploymentHandler(w http.ResponseWriter, r *http.Request, userID, pro
 		Branch        string `json:"branch"`
 		Author        string `json:"author"`
 		Trigger       string `json:"trigger"`
+		Source        string `json:"source"`
+		Ref           string `json:"ref"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	// A manual deploy uses the project's configured target (its pinned version,
-	// or the repository's default branch) rather than the caller-supplied branch.
-	d, err := startDeployment(userID, project, req.Trigger, "", req.CommitMessage, req.Author)
+	// Block a new deploy while one is already in flight: two concurrent builds
+	// for the same project would race over its container and published port.
+	if project.Status == statusBuilding {
+		respondError(w, http.StatusConflict, "A deployment is already in progress — cancel it or wait for it to finish")
+		return
+	}
+
+	// source selects how the deployed ref was chosen. Empty means the project's
+	// configured target (its pinned release or default branch).
+	source := strings.TrimSpace(req.Source)
+	if source == "" {
+		source = deploySourceDefault
+	}
+	ref := strings.TrimSpace(req.Ref)
+	switch source {
+	case deploySourceDefault:
+		ref = "" // the project's configured target decides
+	case deploySourceBranch, deploySourceTag, deploySourceCommit:
+		if ref == "" {
+			respondError(w, http.StatusBadRequest, "ref is required for a "+source+" deploy")
+			return
+		}
+	default:
+		respondError(w, http.StatusBadRequest, "source must be one of: default, branch, tag, commit")
+		return
+	}
+
+	// A one-off deploy builds the requested ref but leaves the project's
+	// configured target untouched, so future manual deploys and webhooks are
+	// unaffected.
+	d, err := startDeployment(userID, project, deployRequest{
+		Trigger:       req.Trigger,
+		Source:        source,
+		Ref:           ref,
+		CommitMessage: req.CommitMessage,
+		Author:        req.Author,
+		ApplyTarget:   false,
+	})
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to create deployment")
 		return
@@ -874,24 +1012,59 @@ func createDeploymentHandler(w http.ResponseWriter, r *http.Request, userID, pro
 	respondJSON(w, http.StatusCreated, d)
 }
 
+// Deployment sources recorded on a deployment row.
+const (
+	deploySourceDefault = "default"
+	deploySourceBranch  = "branch"
+	deploySourceTag     = "tag"
+	deploySourceCommit  = "commit"
+)
+
+// deploySourceForTrigger maps a webhook trigger to the deployment source it
+// represents, so triggered deploys are recorded consistently with manual ones.
+func deploySourceForTrigger(trigger string) string {
+	switch trigger {
+	case "tag", "release":
+		return deploySourceTag
+	case "commit", "branch":
+		return deploySourceBranch
+	default:
+		return deploySourceDefault
+	}
+}
+
+// deployRequest describes a deployment to start. Ref is the exact git ref to
+// check out (a branch/tag name or commit SHA) and is empty for a "default"
+// deploy, which uses the project's configured target. ApplyTarget controls
+// whether the project's configured deploy target is updated to follow this
+// deploy (webhook behavior) or left untouched (one-off manual deploys).
+type deployRequest struct {
+	Trigger       string
+	Source        string
+	Ref           string
+	CommitMessage string
+	Author        string
+	ApplyTarget   bool
+}
+
 // startDeployment creates a deployment record, marks the project as building and
 // kicks off the build worker in the background. It is shared by the HTTP deploy
 // endpoint, the GitHub webhook handler and any future trigger source.
 //
-// ref is the git ref to check out when the deploy was triggered by a specific
-// event (a branch for commit/branch rules, a tag for tag/release rules). When
-// empty, the project's pinned version (release projects) or the repository's
-// default branch is used — that is the manual-deploy path.
-func startDeployment(userID int64, project models.Project, trigger, ref, commitMessage, author string) (models.Deployment, error) {
-	ref = strings.TrimSpace(ref)
+// A non-empty req.Ref is the git ref to check out (a branch for commit/branch
+// rules, a tag for tag/release rules, or a commit SHA for a one-off deploy).
+// When empty, the project's pinned version (release projects) or the
+// repository's default branch is used — that is the manual-deploy path.
+func startDeployment(userID int64, project models.Project, req deployRequest) (models.Deployment, error) {
+	ref := strings.TrimSpace(req.Ref)
 
-	// Git ref actually cloned: an explicit event ref wins, then a pinned release.
+	// Git ref actually cloned: an explicit ref wins, then a pinned release.
 	cloneRef := ref
 	if cloneRef == "" && project.DeployType == "release" {
 		cloneRef = strings.TrimSpace(project.DeployRef)
 	}
 
-	// Display value recorded on the deployment (branch or tag).
+	// Display value recorded on the deployment (branch, tag or commit).
 	displayRef := ref
 	if displayRef == "" {
 		if project.DeployType == "release" && strings.TrimSpace(project.DeployRef) != "" {
@@ -904,36 +1077,46 @@ func startDeployment(userID int64, project models.Project, trigger, ref, commitM
 		displayRef = "main"
 	}
 	branch := displayRef
+	author := req.Author
 	if author == "" {
 		author = "you"
 	}
+	trigger := req.Trigger
 	if trigger == "" {
 		trigger = "manual"
 	}
+	commitMessage := req.CommitMessage
 	if commitMessage == "" {
 		commitMessage = "Manual deployment"
+	}
+	source := req.Source
+	if source == "" {
+		source = deploySourceDefault
 	}
 
 	// Keep the project's manual-deploy target aligned with the latest triggered
 	// deploy, so "redeploy" from the project page follows the same ref: a tag
-	// for tag/release rules, the default branch for commit/branch rules.
-	switch trigger {
-	case "tag", "release":
-		if ref != "" {
-			db.DB.Exec("UPDATE projects SET deploy_type = 'release', deploy_ref = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?", ref, project.ID)
-			project.DeployType, project.DeployRef = "release", ref
+	// for tag/release rules, the default branch for commit/branch rules. One-off
+	// manual deploys (ApplyTarget false) leave the configured target untouched.
+	if req.ApplyTarget {
+		switch trigger {
+		case "tag", "release":
+			if ref != "" {
+				db.DB.Exec("UPDATE projects SET deploy_type = 'release', deploy_ref = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?", ref, project.ID)
+				project.DeployType, project.DeployRef = "release", ref
+			}
+		case "commit", "branch":
+			db.DB.Exec("UPDATE projects SET deploy_type = 'branch', deploy_ref = '', updated_date = CURRENT_TIMESTAMP WHERE id = ?", project.ID)
+			project.DeployType, project.DeployRef = "branch", ""
 		}
-	case "commit", "branch":
-		db.DB.Exec("UPDATE projects SET deploy_type = 'branch', deploy_ref = '', updated_date = CURRENT_TIMESTAMP WHERE id = ?", project.ID)
-		project.DeployType, project.DeployRef = "branch", ""
 	}
 
 	sha := randomHex(40)
 	result, err := db.DB.Exec(
 		`INSERT INTO deployments (user_id, project_id, project_name, status, commit_sha, commit_message,
-			branch, author, trigger, framework) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			branch, author, trigger, framework, deploy_source, deploy_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		userID, project.ID, project.Name, statusBuilding, sha, commitMessage,
-		branch, author, trigger, project.Framework,
+		branch, author, trigger, project.Framework, source, ref,
 	)
 	if err != nil {
 		return models.Deployment{}, err
@@ -1480,19 +1663,19 @@ func scanDeployment(r rowScanner) (models.Deployment, error) {
 	var d models.Deployment
 	err := r.Scan(&d.ID, &d.UserID, &d.ProjectID, &d.ProjectName, &d.Status, &d.CommitSHA,
 		&d.CommitMessage, &d.Branch, &d.Author, &d.Trigger, &d.Framework, &d.Duration,
-		&d.Port, &d.URL, &d.CreatedDate, &d.UpdatedDate)
+		&d.Port, &d.URL, &d.DeploySource, &d.DeployRef, &d.CreatedDate, &d.UpdatedDate)
 	return d, err
 }
 
 const deploymentSelect = `SELECT id, user_id, project_id, project_name, status, commit_sha, commit_message,
-	branch, author, trigger, framework, duration, port, url, created_date, updated_date FROM deployments`
+	branch, author, trigger, framework, duration, port, url, deploy_source, deploy_ref, created_date, updated_date FROM deployments`
 
 func getDeployment(userID, id int64) (models.Deployment, error) {
 	var d models.Deployment
 	err := db.DB.QueryRow(deploymentSelect+" WHERE id = ? AND user_id = ?", id, userID).Scan(
 		&d.ID, &d.UserID, &d.ProjectID, &d.ProjectName, &d.Status, &d.CommitSHA,
 		&d.CommitMessage, &d.Branch, &d.Author, &d.Trigger, &d.Framework, &d.Duration,
-		&d.Port, &d.URL, &d.CreatedDate, &d.UpdatedDate,
+		&d.Port, &d.URL, &d.DeploySource, &d.DeployRef, &d.CreatedDate, &d.UpdatedDate,
 	)
 	return d, err
 }
@@ -1503,7 +1686,7 @@ func getDeploymentByID(id int64) (models.Deployment, error) {
 	err := db.DB.QueryRow(deploymentSelect+" WHERE id = ?", id).Scan(
 		&d.ID, &d.UserID, &d.ProjectID, &d.ProjectName, &d.Status, &d.CommitSHA,
 		&d.CommitMessage, &d.Branch, &d.Author, &d.Trigger, &d.Framework, &d.Duration,
-		&d.Port, &d.URL, &d.CreatedDate, &d.UpdatedDate,
+		&d.Port, &d.URL, &d.DeploySource, &d.DeployRef, &d.CreatedDate, &d.UpdatedDate,
 	)
 	return d, err
 }

@@ -192,6 +192,109 @@ func (g *GitHubClient) ListTags(fullName string, limit int) ([]RepoVersion, erro
 	return out, nil
 }
 
+// RepoBranch is a repository branch: its name and the commit it points at.
+type RepoBranch struct {
+	Name   string `json:"name"`
+	Commit string `json:"commit"`
+}
+
+// RepoCommit is a commit that can be deployed directly.
+type RepoCommit struct {
+	SHA     string `json:"sha"`
+	Message string `json:"message"`
+	Author  string `json:"author"`
+	Date    string `json:"date"`
+}
+
+// ListBranches returns a repository's branches, most recently pushed first.
+func (g *GitHubClient) ListBranches(fullName string, limit int) ([]RepoBranch, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	fullName = strings.Trim(strings.TrimSpace(fullName), "/")
+	if fullName == "" {
+		return nil, fmt.Errorf("fullName is required")
+	}
+	u := fmt.Sprintf("https://api.github.com/repos/%s/branches?per_page=%d", fullName, limit)
+	body, err := g.doRequest(u)
+	if err != nil {
+		return nil, err
+	}
+
+	var branches []struct {
+		Name   string `json:"name"`
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	if err := json.Unmarshal(body, &branches); err != nil {
+		return nil, err
+	}
+	out := make([]RepoBranch, 0, len(branches))
+	for _, b := range branches {
+		if b.Name == "" {
+			continue
+		}
+		out = append(out, RepoBranch{Name: b.Name, Commit: b.Commit.SHA})
+	}
+	return out, nil
+}
+
+// ListCommits returns a branch's most recent commits, newest first, so a deploy
+// can pin an exact commit SHA.
+func (g *GitHubClient) ListCommits(fullName, branch string, limit int) ([]RepoCommit, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+	fullName = strings.Trim(strings.TrimSpace(fullName), "/")
+	if fullName == "" {
+		return nil, fmt.Errorf("fullName is required")
+	}
+	u := fmt.Sprintf("https://api.github.com/repos/%s/commits?per_page=%d", fullName, limit)
+	if b := strings.TrimSpace(branch); b != "" {
+		u += "&sha=" + url.QueryEscape(b)
+	}
+	body, err := g.doRequest(u)
+	if err != nil {
+		return nil, err
+	}
+
+	var commits []struct {
+		SHA    string `json:"sha"`
+		Commit struct {
+			Message string `json:"message"`
+			Author  struct {
+				Name string `json:"name"`
+				Date string `json:"date"`
+			} `json:"author"`
+		} `json:"commit"`
+	}
+	if err := json.Unmarshal(body, &commits); err != nil {
+		return nil, err
+	}
+	out := make([]RepoCommit, 0, len(commits))
+	for _, c := range commits {
+		if c.SHA == "" {
+			continue
+		}
+		out = append(out, RepoCommit{
+			SHA:     c.SHA,
+			Message: firstLine(c.Commit.Message),
+			Author:  c.Commit.Author.Name,
+			Date:    c.Commit.Author.Date,
+		})
+	}
+	return out, nil
+}
+
+// firstLine returns the first line of a (possibly multi-line) commit message.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
+}
+
 // GetRepoTree returns every file path in a repository at the given ref
 // (branch name, tag or "HEAD"). The boolean reports whether GitHub truncated
 // the listing for very large repositories.
