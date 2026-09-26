@@ -2,6 +2,13 @@
 
 export const SOURCES = [
   {
+    id: "dockerhub",
+    label: "Docker Hub",
+    icon: "docker",
+    color: "#2496ed",
+    description: "Browse the app store and run a prebuilt image — no code required.",
+  },
+  {
     id: "github",
     label: "GitHub Personal",
     icon: "github",
@@ -133,6 +140,8 @@ export function sourceReady(source) {
   switch (source.type) {
     case "template":
       return !!source.template;
+    case "dockerhub":
+      return !!source.image;
     case "github":
     case "gitea":
       return !!source.repo;
@@ -147,9 +156,22 @@ export function sourceReady(source) {
 
 export function buildRepository(source) {
   if (source.type === "template") return "";
+  if (source.type === "dockerhub") return imageRef(source);
   if (source.type === "github" || source.type === "gitea") return source.repo?.full_name || "";
   if (source.type === "public") return source.publicUrl.trim();
   const host = source.gitlabHost.trim().replace(/\/+$/, "");
   const project = source.gitlabProject.trim().replace(/^\/+/, "");
   return `${host}/${project}`;
+}
+
+// isImageSource reports whether a source runs a prebuilt image (no repo/build).
+export function isImageSource(source) {
+  return source?.type === "dockerhub";
+}
+
+// imageRef composes the full image reference from the selected repository and
+// tag, e.g. "nginx:1.27".
+export function imageRef(source) {
+  if (!source?.image) return "";
+  return source.imageTag ? `${source.image}:${source.imageTag}` : source.image;
 }

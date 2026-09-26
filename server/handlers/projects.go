@@ -72,7 +72,7 @@ type rowScanner interface {
 	Scan(dest ...interface{}) error
 }
 
-const projectSelect = `SELECT id, user_id, name, slug, status, framework, repository, branch,
+const projectSelect = `SELECT id, user_id, name, slug, status, framework, repository, image, branch,
 	domain, description, auto_deploy, region, instance_type, build_strategy,
 	dockerfile_path, compose_path, build_context, port, last_deployed_at, created_date, updated_date,
 	provider, integration_id, deploy_type, deploy_ref FROM projects`
@@ -123,7 +123,7 @@ func listProjectsHandler(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var p models.Project
 		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Slug, &p.Status, &p.Framework,
-			&p.Repository, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
+			&p.Repository, &p.Image, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
 			&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
 			&p.BuildContext,
 			&p.Port,
@@ -157,6 +157,7 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 		Status        string `json:"status"`
 		Framework     string `json:"framework"`
 		Repository    string `json:"repository"`
+		Image         string `json:"image"`
 		Branch        string `json:"branch"`
 		Domain        string `json:"domain"`
 		Description   string `json:"description"`
@@ -202,10 +203,17 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 		req.BuildStrategy = "detect"
 	}
 	switch req.BuildStrategy {
-	case "detect", "dockerfile", "compose":
+	case "detect", "dockerfile", "compose", "image":
 	default:
-		respondError(w, http.StatusBadRequest, "build_strategy must be one of: detect, dockerfile, compose")
+		respondError(w, http.StatusBadRequest, "build_strategy must be one of: detect, dockerfile, compose, image")
 		return
+	}
+	if req.BuildStrategy == "image" {
+		req.Image = strings.TrimSpace(req.Image)
+		if req.Image == "" {
+			respondError(w, http.StatusBadRequest, "image is required for an image-based project")
+			return
+		}
 	}
 	if req.DeployType == "" {
 		req.DeployType = "branch"
@@ -238,11 +246,11 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := db.DB.Exec(
-		`INSERT INTO projects (user_id, name, slug, status, framework, repository, branch, domain,
+		`INSERT INTO projects (user_id, name, slug, status, framework, repository, image, branch, domain,
 			description, auto_deploy, region, instance_type, build_strategy, dockerfile_path, compose_path, build_context, port,
 			provider, integration_id, deploy_type, deploy_ref)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		claims.UserID, req.Name, req.Slug, req.Status, req.Framework, req.Repository,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		claims.UserID, req.Name, req.Slug, req.Status, req.Framework, req.Repository, req.Image,
 		req.Branch, req.Domain, req.Description, req.AutoDeploy, req.Region, req.InstanceType,
 		req.BuildStrategy, req.DockerfilePath, req.ComposePath, req.BuildContext, req.Port,
 		req.Provider, req.IntegrationID, req.DeployType, req.DeployRef,
@@ -644,7 +652,7 @@ func getProject(userID, id int64) (models.Project, error) {
 	var p models.Project
 	err := db.DB.QueryRow(projectSelect+" WHERE id = ? AND user_id = ?", id, userID).Scan(
 		&p.ID, &p.UserID, &p.Name, &p.Slug, &p.Status, &p.Framework,
-		&p.Repository, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
+		&p.Repository, &p.Image, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
 		&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
 		&p.BuildContext,
 		&p.Port,
@@ -662,7 +670,7 @@ func getProjectByID(id int64) (models.Project, error) {
 	var p models.Project
 	err := db.DB.QueryRow(projectSelect+" WHERE id = ?", id).Scan(
 		&p.ID, &p.UserID, &p.Name, &p.Slug, &p.Status, &p.Framework,
-		&p.Repository, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
+		&p.Repository, &p.Image, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
 		&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
 		&p.BuildContext,
 		&p.Port,
@@ -674,6 +682,7 @@ func getProjectByID(id int64) (models.Project, error) {
 
 var updatableProjectColumns = map[string]bool{
 	"status": true, "framework": true, "repository": true, "branch": true,
+	"image": true,
 	"domain": true, "description": true, "auto_deploy": true, "region": true,
 	"instance_type": true, "build_strategy": true, "name": true, "slug": true,
 	"dockerfile_path": true, "compose_path": true, "build_context": true,
@@ -1325,6 +1334,13 @@ func buildAndDeploy(deployID int64, project models.Project, ref string) {
 		return
 	}
 
+	// Image-based projects pull a prebuilt image and run it directly — there is
+	// no repository to clone and nothing to build.
+	if project.BuildStrategy == "image" {
+		imageDeploy(ctx, log, d, deployID, project, start)
+		return
+	}
+
 	provider := project.Provider
 	if provider == "" {
 		provider = "github"
@@ -1406,6 +1422,112 @@ func buildAndDeploy(deployID int64, project models.Project, ref string) {
 		return
 	}
 	dockerfileDeploy(ctx, log, d, deployID, project, dir, dockerfiles, composeFiles, envPath, version, start)
+}
+
+// imageDeploy runs a prebuilt container image: it pulls the image, then starts
+// it with the project's env vars and persistent volumes. No repository is
+// cloned and nothing is built.
+func imageDeploy(ctx context.Context, log func(string, string), d *services.Deployer, deployID int64, project models.Project, start time.Time) {
+	image := strings.TrimSpace(project.Image)
+	if image == "" {
+		log("error", "This project has no image reference configured")
+		finishDeployment(deployID, project.ID, statusError, 0, "")
+		return
+	}
+
+	log("info", "Pulling image "+image)
+	if err := d.Pull(ctx, image, func(line string) { log("info", line) }); err != nil {
+		if ctx.Err() != nil {
+			log("warn", "Deployment cancelled")
+			finishDeploymentCancelled(deployID, project)
+			return
+		}
+		log("error", "Pull failed: "+err.Error())
+		finishDeployment(deployID, project.ID, statusError, 0, "")
+		return
+	}
+	log("info", "Image pulled")
+
+	// Load the project's env vars and write a temp .env to inject at runtime.
+	envVars, envErr := services.LoadEnvVars(project.ID)
+	if envErr != nil {
+		log("warn", "Failed to load environment variables: "+envErr.Error())
+		envVars = nil
+	}
+	envPath, envErr := services.WriteEnvFile(envVars)
+	if envErr != nil {
+		log("warn", "Failed to write env file: "+envErr.Error())
+		envPath = ""
+	}
+	if envPath != "" {
+		defer os.Remove(envPath)
+	}
+
+	containerPort := d.ImagePort(image)
+	if containerPort == 0 {
+		containerPort = 3000
+		log("warn", "The image does not declare an exposed port — assuming 3000. Set a port in the project settings if this is wrong.")
+	} else {
+		log("info", fmt.Sprintf("Image exposes port %d", containerPort))
+	}
+
+	containerName := services.ProjectContainerName(project.ID, project.Slug)
+	// Remove this project's previous containers before probing the configured
+	// port, so a redeploy doesn't mistake its own running container for a
+	// conflicting one.
+	d.CleanupContainer(containerName)
+	d.CleanupContainer("nineteen-" + project.Slug)
+	d.CleanupCompose(services.ProjectComposeName(project.ID, project.Slug), func(line string) { log("info", line) })
+
+	hostPort := 0
+	if project.Port != nil && *project.Port > 0 {
+		if d.WaitHostPortAvailable(*project.Port, 5*time.Second) {
+			hostPort = *project.Port
+			log("info", fmt.Sprintf("Using configured port %d", hostPort))
+		} else {
+			log("warn", fmt.Sprintf("Configured port %d is already in use — assigning a free port instead", *project.Port))
+		}
+	}
+	if hostPort == 0 {
+		hp, err := d.FreePort()
+		if err != nil {
+			log("error", "Failed to reserve a port: "+err.Error())
+			finishDeployment(deployID, project.ID, statusError, 0, "")
+			return
+		}
+		hostPort = hp
+		if project.Port != nil && *project.Port > 0 {
+			// Persist the reassigned port so the UI shows the real URL.
+			db.DB.Exec("UPDATE projects SET port = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?", hostPort, project.ID)
+			log("info", fmt.Sprintf("Assigned free port %d", hostPort))
+		}
+	}
+
+	syncProjectDataMount(project.ID, image, func(msg string) { log("info", msg) })
+	mounts := projectBindMounts(project.ID)
+	if len(mounts) > 0 {
+		log("info", fmt.Sprintf("Mounting %d persistent volume(s)", len(mounts)))
+	}
+	log("info", fmt.Sprintf("Starting container on %s:%d", services.ProjectBindAddr(), hostPort))
+	if _, err := d.Run(ctx, image, containerName, hostPort, containerPort, envPath, mounts, func(line string) { log("info", line) }); err != nil {
+		if ctx.Err() != nil {
+			log("warn", "Deployment cancelled")
+			finishDeploymentCancelled(deployID, project)
+			return
+		}
+		log("error", "Container failed: "+err.Error())
+		finishDeployment(deployID, project.ID, statusError, 0, "")
+		return
+	}
+
+	duration := int64(time.Since(start).Seconds())
+	url := fmt.Sprintf("http://localhost:%d", hostPort)
+	db.DB.Exec("UPDATE deployments SET status = ?, port = ?, url = ?, duration = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
+		statusReady, hostPort, url, duration, deployID)
+	db.DB.Exec("UPDATE projects SET status = 'running', last_deployed_at = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
+		time.Now().UTC().Format(time.RFC3339), project.ID)
+	log("success", "Deployment ready at "+url)
+	services.EnsureTailed(project.ID, deployID, containerName)
 }
 
 func dockerfileDeploy(ctx context.Context, log func(string, string), d *services.Deployer, deployID int64, project models.Project, dir string, dockerfiles, composeFiles []string, envPath, version string, start time.Time) {

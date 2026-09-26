@@ -10,6 +10,9 @@ type Project struct {
 	Status        string    `json:"status"`
 	Framework     string    `json:"framework"`
 	Repository    string    `json:"repository"`
+	// Image is the prebuilt container image reference (e.g. "nginx:1.27") for
+	// projects whose build strategy is "image". Empty for source-built projects.
+	Image         string    `json:"image"`
 	Branch        string    `json:"branch"`
 	Provider      string    `json:"provider"`
 	IntegrationID *int64    `json:"integration_id"`

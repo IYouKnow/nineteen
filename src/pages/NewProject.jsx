@@ -2,12 +2,12 @@ import * as api from "@/lib/api";
 import { resolveProjectPort } from "@/lib/devStatus";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ArrowLeft, ArrowRight, Loader2, Rocket } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { buildRepository, sourceReady, TEMPLATES } from "@/lib/newProject";
+import { buildRepository, sourceReady, isImageSource, imageRef, TEMPLATES } from "@/lib/newProject";
 import Stepper from "@/components/newproject/Stepper";
 import SourceStep from "@/components/newproject/steps/SourceStep";
 import VersionStep from "@/components/newproject/steps/VersionStep";
@@ -26,10 +26,15 @@ const emptySource = {
   gitlabHost: "https://gitlab.com",
   gitlabToken: "",
   gitlabProject: "",
+  image: null,
+  imageTag: "latest",
+  imageMeta: null,
+  env: [],
 };
 
 export default function NewProject() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const qc = useQueryClient();
   const [stepId, setStepId] = useState("source");
   const [source, setSource] = useState(emptySource);
@@ -56,6 +61,19 @@ export default function NewProject() {
   const [creating, setCreating] = useState(false);
   const prefilledRef = useRef(false);
   const autoNameRef = useRef("");
+
+  // Prefill a Docker Hub image when arriving from the app store, e.g.
+  // /projects/new?image=nginx&tag=1.27.
+  useEffect(() => {
+    const image = searchParams.get("image");
+    if (!image) return;
+    setSource((s) => ({
+      ...s,
+      type: "dockerhub",
+      image,
+      imageTag: searchParams.get("tag") || "latest",
+    }));
+  }, []);
 
   // Repositories we can scan for build files (GitHub/Gitea source, or a public
   // github.com URL).
@@ -115,7 +133,8 @@ export default function NewProject() {
   const scannable = !!scanTarget;
   const scanRepo = scanTarget?.repo || "";
   const repository = buildRepository(source);
-  const hasRepo = source.type !== "template" && !!repository;
+  const isImage = isImageSource(source);
+  const hasRepo = !isImage && source.type !== "template" && !!repository;
   const isRelease = config.deployType === "release" && !!config.deployRef;
 
   const STEPS = useMemo(() => {
@@ -177,6 +196,20 @@ export default function NewProject() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source.repo]);
 
+  // Prefill name, framework and port when a Docker Hub image is selected.
+  useEffect(() => {
+    if (!isImage || !source.image) return;
+    const repoName = source.image.split("/").pop();
+    const shouldSetName = !config.name || config.name === autoNameRef.current;
+    if (shouldSetName) autoNameRef.current = repoName;
+    setConfig((c) => ({
+      ...c,
+      name: shouldSetName ? repoName : c.name,
+      framework: "docker",
+      port: c.port || (source.imageMeta?.port ? String(source.imageMeta.port) : ""),
+    }));
+  }, [source.image]);
+
   // Apply the selected template's runtime framework as the default.
   useEffect(() => {
     if (source.type === "template" && source.template) {
@@ -210,11 +243,15 @@ export default function NewProject() {
   const template = source.type === "template" ? TEMPLATES.find((t) => t.id === source.template) : null;
   const sourceLabel = template
     ? `Template · ${template.label}`
+    : isImage
+    ? `Docker Hub · ${repository || "—"}`
     : source.type === "github"
     ? source.repo?.full_name || "GitHub"
     : repository || "—";
 
-  const buildLabel = !scannable
+  const buildLabel = isImage
+    ? `Prebuilt image · ${repository || "—"}`
+    : !scannable
     ? "Dockerfile · auto-detected at deploy time"
     : config.dockerMode === "compose"
     ? `Docker Compose${config.composePath ? ` · ${config.composePath}` : ""}`
@@ -231,33 +268,51 @@ export default function NewProject() {
       const framework = repoProvider && source.repo ? source.repo.framework : config.framework;
       const strategyType = config.strategy?.type || "manual";
       const wantsStrategy = strategyType !== "manual";
+      const image = isImage ? imageRef(source) : "";
       const project = await api.projects.create({
         name: config.name,
         slug,
         status: "building",
-        framework,
-        repository,
+        framework: isImage ? "docker" : framework,
+        repository: isImage ? image : repository,
+        image,
         branch: config.branch,
-        provider:
-          source.type === "gitea"
-            ? "gitea"
-            : source.type === "github"
-            ? "github"
-            : source.type === "gitlab"
-            ? "gitlab"
-            : "git",
+        provider: isImage
+          ? "dockerhub"
+          : source.type === "gitea"
+          ? "gitea"
+          : source.type === "github"
+          ? "github"
+          : source.type === "gitlab"
+          ? "gitlab"
+          : "git",
         integration_id: source.integrationId ?? null,
         domain: `${slug}.fra1.nineteen.app`,
         auto_deploy: false,
         last_deployed_at: new Date().toISOString(),
         port: resolveProjectPort(config),
-        build_strategy: scannable ? config.dockerMode : "detect",
+        build_strategy: isImage ? "image" : scannable ? config.dockerMode : "detect",
         dockerfile_path: scannable && config.dockerMode === "dockerfile" ? config.dockerfilePath : "",
         compose_path: scannable && config.dockerMode === "compose" ? config.composePath : "",
         build_context: scannable && config.dockerMode === "dockerfile" ? config.buildContext : "",
-        deploy_type: isRelease ? "release" : "branch",
-        deploy_ref: isRelease ? config.deployRef : "",
+        deploy_type: isImage || !isRelease ? "branch" : "release",
+        deploy_ref: !isImage && isRelease ? config.deployRef : "",
       });
+      // Persist any environment variables supplied with a prebuilt image.
+      if (isImage && source.env?.length) {
+        for (const e of source.env) {
+          if (!e.key || (!e.value && !e.required)) continue;
+          try {
+            await api.envVars.create(project.id, {
+              key: e.key,
+              value: e.value,
+              is_secret: !!e.secret,
+            });
+          } catch (err) {
+            console.error("Failed to create env var", e.key, err);
+          }
+        }
+      }
       // Create the chosen automatic deployment strategy. Non-fatal: a failed
       // webhook registration must not block the initial deployment.
       if (wantsStrategy) {
@@ -344,6 +399,8 @@ export default function NewProject() {
               setConfig={setConfig}
               sourceLabel={sourceLabel}
               buildLabel={buildLabel}
+              isImage={isImage}
+              imageLabel={repository}
             />
           )}
           {activeStep === "review" && (
@@ -353,6 +410,7 @@ export default function NewProject() {
               config={config}
               repository={repository}
               buildLabel={buildLabel}
+              isImage={isImage}
             />
           )}
         </div>

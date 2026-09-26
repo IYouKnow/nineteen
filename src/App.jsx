@@ -11,6 +11,7 @@ import ScrollToTop from "./components/ScrollToTop";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Projects from "@/pages/Projects";
+import AppStore from "@/pages/AppStore";
 import NewProject from "@/pages/NewProject";
 import ProjectDetail from "@/pages/ProjectDetail";
 import DeploymentDetail from "@/pages/DeploymentDetail";
@@ -64,6 +65,7 @@ function AppRoutes() {
       <Route element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/projects" element={<Projects />} />
+        <Route path="/store" element={<AppStore />} />
         <Route path="/projects/new" element={<WriteRoute permission="projects.create"><NewProject /></WriteRoute>} />
         <Route path="/projects/:projectId" element={<ProjectDetail />} />
         <Route path="/projects/:projectId/deployments/:deploymentId" element={<DeploymentDetail />} />

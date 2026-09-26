@@ -133,6 +133,24 @@ export const integrations = {
   },
 };
 
+// Docker Hub app-store catalog (featured + live search/tags). Proxied by the
+// server so the browser never calls Docker Hub directly.
+export const dockerhub = {
+  featured: () => doFetch("/api/dockerhub/featured"),
+  search: (q, limit = 25) => {
+    const params = new URLSearchParams();
+    params.set("q", q || "");
+    params.set("limit", String(limit));
+    return doFetch(`/api/dockerhub/search?${params.toString()}`);
+  },
+  tags: (image, limit = 25) => {
+    const params = new URLSearchParams();
+    params.set("image", image || "");
+    params.set("limit", String(limit));
+    return doFetch(`/api/dockerhub/tags?${params.toString()}`);
+  },
+};
+
 export const databases = {
   list: (order = "-created_date", limit = 100) => {
     const params = new URLSearchParams();

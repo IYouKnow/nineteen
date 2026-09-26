@@ -1,4 +1,4 @@
-import { Globe } from "lucide-react";
+import { Globe, Container } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const SIZES = { sm: 32, md: 40, lg: 48 };
@@ -28,6 +28,9 @@ function Glyph({ icon, size }) {
         <path d="M8 3.6c.7.7.7 1.4 0 2.1M11.5 3.6c.7.7.7 1.4 0 2.1" />
       </svg>
     );
+  }
+  if (icon === "docker") {
+    return <Container className={cls} style={{ width: g, height: g }} />;
   }
   return <Globe className={cn(cls)} style={{ width: g, height: g }} />;
 }

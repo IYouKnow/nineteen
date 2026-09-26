@@ -15,7 +15,6 @@ import {
   Settings as SettingsIcon,
   ArrowLeft,
   ChevronRight,
-  Rocket,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -262,7 +261,7 @@ export default function ProjectDetail() {
 
   if (isLoading || !project) {
     return (
-      <div className="mx-auto max-w-5xl px-6 py-8">
+      <div className="mx-auto max-w-7xl px-6 py-8">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="mt-4 h-24 w-full rounded-lg" />
         <Skeleton className="mt-4 h-10 w-full rounded-md" />
@@ -271,8 +270,15 @@ export default function ProjectDetail() {
     );
   }
 
+  // Image-based projects have no repository: source, strategy and build-file
+  // tabs don't apply, so they are hidden.
+  const isImageProject = project.build_strategy === "image";
+  const visibleTabs = isImageProject
+    ? TABS.filter((t) => !["source", "strategy", "buildfile"].includes(t.id))
+    : TABS;
+
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
+    <div className="mx-auto max-w-7xl px-6 py-8">
       <nav className="mb-4 flex items-center gap-1.5 text-sm">
         <Link
           to="/projects"
@@ -335,17 +341,6 @@ export default function ProjectDetail() {
               onSelect={setEnv}
               onManage={() => setTab("environments")}
             />
-          )}
-          {canDeploy && isProd && (
-            <Button
-              size="sm"
-              onClick={() => setDeployOpen(true)}
-              disabled={project.status === "building"}
-              className="gap-1.5"
-            >
-              <Rocket className="h-3.5 w-3.5" />
-              Deploy
-            </Button>
           )}
           {canDeploy && (
             <>
@@ -430,7 +425,7 @@ export default function ProjectDetail() {
       {/* Tabs */}
       <div className="mt-6 border-b border-border">
         <nav className="flex gap-1 overflow-x-auto overflow-y-hidden">
-          {TABS.map((t) => {
+          {visibleTabs.map((t) => {
             const disabled = !!t.disabled;
             return (
               <button
@@ -477,8 +472,8 @@ export default function ProjectDetail() {
           />
         )}
         {tab === "logs" && <ProjectLogs project={project} environment={environment} isProd={isProd} />}
-        {tab === "strategy" && <ProjectStrategy project={project} />}
-        {tab === "source" && (
+        {tab === "strategy" && !isImageProject && <ProjectStrategy project={project} />}
+        {tab === "source" && !isImageProject && (
           <ProjectSource
             project={project}
             environment={environment}
@@ -487,7 +482,7 @@ export default function ProjectDetail() {
             onBranchChange={onBranchChange}
           />
         )}
-        {tab === "buildfile" && <BuildFileTab project={project} />}
+        {tab === "buildfile" && !isImageProject && <BuildFileTab project={project} />}
         {tab === "files" && <ProjectFiles projectId={project.id} />}
         {tab === "architecture" &&
           (isProd ? (

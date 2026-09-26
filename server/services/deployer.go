@@ -301,6 +301,13 @@ func (d *Deployer) Build(ctx context.Context, image, dir, dockerfile, contextDir
 	return streamCommand(cmd, log)
 }
 
+// Pull fetches a prebuilt image from a registry (e.g. Docker Hub), streaming
+// progress through log. Used by image-based projects that skip the build step.
+func (d *Deployer) Pull(ctx context.Context, image string, log func(string)) error {
+	cmd := exec.CommandContext(ctx, "docker", "pull", image)
+	return streamCommand(cmd, log)
+}
+
 // prepareBuildContext resolves the effective build context for a Dockerfile and
 // the path to pass to `docker build -f`, relative to that context. contextDir is
 // repo-relative; empty means "auto" (the Dockerfile's own directory). It returns

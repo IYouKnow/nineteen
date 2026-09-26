@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Search, Link2, Loader2, Star, Plug, Sparkles } from "lucide-react";
-import { SOURCES, TEMPLATES } from "@/lib/newProject";
+import { SOURCES, TEMPLATES, isImageSource } from "@/lib/newProject";
 import SourceIcon from "@/components/newproject/SourceIcon";
+import DockerHubBrowser from "@/components/newproject/DockerHubBrowser";
+import ImageTagSelect from "@/components/newproject/ImageTagSelect";
 import FrameworkIcon from "@/components/dev/FrameworkIcon";
 import TemplateIcon from "@/components/newproject/TemplateIcon";
 import { Input } from "@/components/ui/input";
@@ -207,12 +209,102 @@ function IntegrationPanel({ providerId, selectedRepo, update, integrations, inte
   );
 }
 
+// DockerHubPanel lets the user pick a prebuilt image from the curated catalog
+// or a live Docker Hub search, then choose a tag and fill in its env vars.
+function DockerHubPanel({ source, update }) {
+  const pick = (app) =>
+    update({
+      image: app.repository,
+      imageTag: "latest",
+      imageMeta: {
+        name: app.name,
+        description: app.description,
+        port: app.port || 0,
+      },
+      env: (app.env || []).map((e) => ({
+        key: e.key,
+        label: e.label,
+        value: e.default || "",
+        secret: !!e.secret,
+        required: !!e.required,
+      })),
+    });
+
+  const setEnvValue = (key, value) =>
+    update({ env: (source.env || []).map((e) => (e.key === key ? { ...e, value } : e)) });
+
+  return (
+    <div>
+      <DockerHubBrowser
+        selected={source.image}
+        onPick={pick}
+        emptyHint="No images matched your search."
+      />
+
+      {source.image && (
+        <div className="mt-4 rounded-lg border border-border bg-card p-4 animate-slide-up">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">{source.imageMeta?.name || source.image}</p>
+              <p className="truncate font-mono text-xs text-muted-foreground">{source.image}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground">Tag</Label>
+              <ImageTagSelect
+                image={source.image}
+                value={source.imageTag}
+                onChange={(v) => update({ imageTag: v })}
+                className="h-8 w-40 font-mono text-xs"
+              />
+            </div>
+          </div>
+
+          {source.imageMeta?.description && (
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              {source.imageMeta.description}
+            </p>
+          )}
+
+          {source.env?.length > 0 && (
+            <div className="mt-3 space-y-2 border-t border-border pt-3">
+              <p className="text-xs font-medium text-muted-foreground">Environment</p>
+              {source.env.map((e) => (
+                <div key={e.key} className="grid grid-cols-[1fr_1.2fr] items-center gap-2">
+                  <span className="truncate font-mono text-xs text-foreground" title={e.key}>
+                    {e.key}
+                  </span>
+                  <Input
+                    type={e.secret ? "password" : "text"}
+                    value={e.value}
+                    onChange={(ev) => setEnvValue(e.key, ev.target.value)}
+                    placeholder={e.required ? "required" : "optional"}
+                    className="h-8 font-mono text-xs"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SourceStep({ source, setSource }) {
   const navigate = useNavigate();
 
   const update = (patch) => setSource((s) => ({ ...s, ...patch }));
   const selectSource = (id) =>
-    update({ type: id, template: null, repo: null, integrationId: null, publicUrl: "" });
+    update({
+      type: id,
+      template: null,
+      repo: null,
+      integrationId: null,
+      publicUrl: "",
+      ...(id === "dockerhub"
+        ? {}
+        : { image: null, imageTag: "latest", imageMeta: null, env: [] }),
+    });
   const selectTemplate = (id) =>
     update({ type: "template", template: id, repo: null, integrationId: null, publicUrl: "" });
 
@@ -316,6 +408,12 @@ export default function SourceStep({ source, setSource }) {
               </p>
             </div>
           </div>
+        </div>
+      )}
+
+      {isImageSource(source) && (
+        <div className="mt-5 rounded-lg border border-border bg-muted/15 p-4 animate-slide-up">
+          <DockerHubPanel source={source} update={update} />
         </div>
       )}
 

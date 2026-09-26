@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 const selectCls =
   "mt-1.5 h-9 w-full rounded-md border border-input bg-card px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
 
-export default function ConfigurationStep({ config, setConfig, sourceLabel, buildLabel }) {
+export default function ConfigurationStep({ config, setConfig, sourceLabel, buildLabel, isImage, imageLabel }) {
   const update = (patch) => setConfig((c) => ({ ...c, ...patch }));
   const isRelease = config.deployType === "release" && !!config.deployRef;
 
@@ -45,7 +45,11 @@ export default function ConfigurationStep({ config, setConfig, sourceLabel, buil
 
         <div>
           <Label className="text-xs flex items-center gap-1">
-            {isRelease ? (
+            {isImage ? (
+              <>
+                <Tag className="h-3 w-3" /> Image
+              </>
+            ) : isRelease ? (
               <>
                 <Tag className="h-3 w-3" /> Release
               </>
@@ -55,7 +59,11 @@ export default function ConfigurationStep({ config, setConfig, sourceLabel, buil
               </>
             )}
           </Label>
-          {isRelease ? (
+          {isImage ? (
+            <div className="mt-1.5 flex h-9 items-center rounded-md border border-input bg-muted/30 px-3 font-mono text-sm text-foreground">
+              <span className="truncate">{imageLabel || "—"}</span>
+            </div>
+          ) : isRelease ? (
             <div className="mt-1.5 flex h-9 items-center rounded-md border border-input bg-muted/30 px-3 font-mono text-sm text-foreground">
               {config.deployRef}
             </div>
@@ -71,18 +79,20 @@ export default function ConfigurationStep({ config, setConfig, sourceLabel, buil
           )}
         </div>
 
-        <div>
-          <Label className="text-xs flex items-center gap-1"><Layers className="h-3 w-3" /> Framework</Label>
-          <select
-            value={config.framework}
-            onChange={(e) => update({ framework: e.target.value })}
-            className={cn(selectCls)}
-          >
-            {Object.entries(FRAMEWORKS).map(([id, f]) => (
-              <option key={id} value={id}>{f.label}</option>
-            ))}
-          </select>
-        </div>
+        {!isImage && (
+          <div>
+            <Label className="text-xs flex items-center gap-1"><Layers className="h-3 w-3" /> Framework</Label>
+            <select
+              value={config.framework}
+              onChange={(e) => update({ framework: e.target.value })}
+              className={cn(selectCls)}
+            >
+              {Object.entries(FRAMEWORKS).map(([id, f]) => (
+                <option key={id} value={id}>{f.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div>
           <Label className="text-xs flex items-center gap-1"><Plug2 className="h-3 w-3" /> Port</Label>

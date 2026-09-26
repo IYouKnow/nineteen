@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { Boxes, LayoutDashboard, FolderGit2, Database, HardDrive, Plus, X, Server, Settings, ShieldCheck } from "lucide-react";
+import { Boxes, LayoutDashboard, FolderGit2, Database, HardDrive, Plus, X, Server, Settings, ShieldCheck, Store } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/projects", label: "Projects", icon: FolderGit2, end: false },
+  { to: "/store", label: "App Store", icon: Store, end: false },
   { to: "/databases", label: "Databases", icon: Database, end: false },
   { to: "/storage", label: "Storage", icon: HardDrive, end: false },
 ];

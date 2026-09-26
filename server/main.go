@@ -50,7 +50,7 @@ func requiredPermission(method, path string) (string, bool) {
 		return "", false
 	}
 	switch seg[1] {
-	case "auth", "webhooks", "health", "permissions":
+	case "auth", "webhooks", "health", "permissions", "dockerhub":
 		return "", false
 	case "admin":
 		return adminRoutePermission(method, seg[2:])
@@ -362,6 +362,9 @@ func main() {
 	mux.HandleFunc("/api/settings/integrations/versions", handlers.IntegrationVersionsHandler)
 	mux.HandleFunc("/api/settings/integrations/port", handlers.IntegrationPortHandler)
 	mux.HandleFunc("/api/settings/integrations/", handlers.UpdateIntegrationHandler)
+	mux.HandleFunc("/api/dockerhub/featured", handlers.DockerHubFeaturedHandler)
+	mux.HandleFunc("/api/dockerhub/search", handlers.DockerHubSearchHandler)
+	mux.HandleFunc("/api/dockerhub/tags", handlers.DockerHubTagsHandler)
 	mux.HandleFunc("/api/projects", handlers.ProjectsHandler)
 	mux.HandleFunc("/api/projects/{id}", handlers.ProjectHandler)
 	mux.HandleFunc("/api/projects/{id}/resources", handlers.ProjectResourcesHandler)
