@@ -13,7 +13,6 @@ import SourceStep from "@/components/newproject/steps/SourceStep";
 import SelectStep from "@/components/newproject/steps/SelectStep";
 import VersionStep from "@/components/newproject/steps/VersionStep";
 import BuildStep from "@/components/newproject/steps/BuildStep";
-import InfrastructureStep from "@/components/newproject/steps/InfrastructureStep";
 import StrategyStep from "@/components/newproject/steps/StrategyStep";
 import ConfigurationStep from "@/components/newproject/steps/ConfigurationStep";
 import ReviewStep from "@/components/newproject/steps/ReviewStep";
@@ -39,7 +38,6 @@ export default function NewProject() {
   const qc = useQueryClient();
   const [stepId, setStepId] = useState("source");
   const [source, setSource] = useState(emptySource);
-  const [services, setServices] = useState([]);
   const [config, setConfig] = useState({
     name: "",
     branch: "main",
@@ -145,7 +143,6 @@ export default function NewProject() {
     }
     if (scannable) steps.push({ id: "version", label: "Version" });
     if (scannable) steps.push({ id: "build", label: "Build" });
-    steps.push({ id: "infra", label: "Infrastructure" });
     if (hasRepo) steps.push({ id: "strategy", label: "Strategy" });
     steps.push(
       { id: "config", label: "Configuration" },
@@ -278,7 +275,6 @@ export default function NewProject() {
       const project = await api.projects.create({
         name: config.name,
         slug,
-        status: "building",
         framework: isImage ? "docker" : framework,
         repository: isImage ? image : repository,
         image,
@@ -394,9 +390,6 @@ export default function NewProject() {
               scanTarget={scanTarget}
             />
           )}
-          {activeStep === "infra" && (
-            <InfrastructureStep services={services} setServices={setServices} />
-          )}
           {activeStep === "strategy" && (
             <StrategyStep config={config} setConfig={setConfig} branch={config.branch} />
           )}
@@ -413,7 +406,6 @@ export default function NewProject() {
           {activeStep === "review" && (
             <ReviewStep
               source={source}
-              services={services}
               config={config}
               repository={repository}
               buildLabel={buildLabel}

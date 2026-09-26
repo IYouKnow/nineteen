@@ -978,9 +978,21 @@ func createDeploymentHandler(w http.ResponseWriter, r *http.Request, userID, pro
 
 	// Block a new deploy while one is already in flight: two concurrent builds
 	// for the same project would race over its container and published port.
+	// A project can also carry the "building" status with no deployment behind
+	// it (e.g. a stale row), so only block when a build is actually running.
 	if project.Status == statusBuilding {
-		respondError(w, http.StatusConflict, "A deployment is already in progress — cancel it or wait for it to finish")
-		return
+		var active int
+		if err := db.DB.QueryRow(
+			"SELECT COUNT(*) FROM deployments WHERE project_id = ? AND status = ?",
+			project.ID, statusBuilding,
+		).Scan(&active); err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to check for in-progress deployments")
+			return
+		}
+		if active > 0 {
+			respondError(w, http.StatusConflict, "A deployment is already in progress — cancel it or wait for it to finish")
+			return
+		}
 	}
 
 	// source selects how the deployed ref was chosen. Empty means the project's

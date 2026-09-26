@@ -234,49 +234,57 @@ type FeaturedApp struct {
 	Env         []AppEnv `json:"env"`
 }
 
+// dashboardIconURL returns a stable logo URL for a featured app from the
+// community-maintained dashboard-icons set (served via the jsDelivr CDN).
+// Docker Hub's public API no longer returns repository logo URLs, so the store
+// catalog ships curated icons instead.
+func dashboardIconURL(slug string) string {
+	return "https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/" + slug + ".png"
+}
+
 // FeaturedApps returns the curated catalog shown by the app store. These are
 // public images that run with sensible defaults; env vars are optional unless
 // marked required.
 func FeaturedApps() []FeaturedApp {
 	return []FeaturedApp{
-		{Repository: "nginx", Name: "Nginx", Category: "Web", Port: 80,
+		{Repository: "nginx", Name: "Nginx", Category: "Web", Port: 80, LogoURL: dashboardIconURL("nginx"),
 			Description: "High-performance HTTP server and reverse proxy."},
-		{Repository: "httpd", Name: "Apache HTTP Server", Category: "Web", Port: 80,
+		{Repository: "httpd", Name: "Apache HTTP Server", Category: "Web", Port: 80, LogoURL: dashboardIconURL("apache"),
 			Description: "The Apache Foundation's battle-tested web server."},
-		{Repository: "caddy", Name: "Caddy", Category: "Web", Port: 80,
+		{Repository: "caddy", Name: "Caddy", Category: "Web", Port: 80, LogoURL: dashboardIconURL("caddy"),
 			Description: "Web server with automatic HTTPS."},
-		{Repository: "redis", Name: "Redis", Category: "Data", Port: 6379,
+		{Repository: "redis", Name: "Redis", Category: "Data", Port: 6379, LogoURL: dashboardIconURL("redis"),
 			Description: "In-memory key/value store for caching and queues."},
-		{Repository: "postgres", Name: "PostgreSQL", Category: "Data", Port: 5432,
-			Env: []AppEnv{{Key: "POSTGRES_PASSWORD", Label: "Password", Required: true, Secret: true}},
+		{Repository: "postgres", Name: "PostgreSQL", Category: "Data", Port: 5432, LogoURL: dashboardIconURL("postgresql"),
+			Env:         []AppEnv{{Key: "POSTGRES_PASSWORD", Label: "Password", Required: true, Secret: true}},
 			Description: "Powerful open-source relational database."},
-		{Repository: "mysql", Name: "MySQL", Category: "Data", Port: 3306,
-			Env: []AppEnv{{Key: "MYSQL_ROOT_PASSWORD", Label: "Root password", Required: true, Secret: true}},
+		{Repository: "mysql", Name: "MySQL", Category: "Data", Port: 3306, LogoURL: dashboardIconURL("mysql"),
+			Env:         []AppEnv{{Key: "MYSQL_ROOT_PASSWORD", Label: "Root password", Required: true, Secret: true}},
 			Description: "The world's most popular open-source database."},
-		{Repository: "mongo", Name: "MongoDB", Category: "Data", Port: 27017,
+		{Repository: "mongo", Name: "MongoDB", Category: "Data", Port: 27017, LogoURL: dashboardIconURL("mongodb"),
 			Description: "Document database for flexible schemas."},
-		{Repository: "grafana/grafana", Name: "Grafana", Category: "Monitoring", Port: 3000,
-			Env: []AppEnv{{Key: "GF_SECURITY_ADMIN_PASSWORD", Label: "Admin password", Default: "admin", Secret: true}},
+		{Repository: "grafana/grafana", Name: "Grafana", Category: "Monitoring", Port: 3000, LogoURL: dashboardIconURL("grafana"),
+			Env:         []AppEnv{{Key: "GF_SECURITY_ADMIN_PASSWORD", Label: "Admin password", Default: "admin", Secret: true}},
 			Description: "Dashboards and analytics for all your metrics."},
-		{Repository: "prom/prometheus", Name: "Prometheus", Category: "Monitoring", Port: 9090,
+		{Repository: "prom/prometheus", Name: "Prometheus", Category: "Monitoring", Port: 9090, LogoURL: dashboardIconURL("prometheus"),
 			Description: "Metrics collection and alerting toolkit."},
-		{Repository: "louislam/uptime-kuma", Name: "Uptime Kuma", Category: "Monitoring", Port: 3001,
+		{Repository: "louislam/uptime-kuma", Name: "Uptime Kuma", Category: "Monitoring", Port: 3001, LogoURL: dashboardIconURL("uptime-kuma"),
 			Description: "Self-hosted uptime monitoring with a clean UI."},
-		{Repository: "vaultwarden/server", Name: "Vaultwarden", Category: "Security", Port: 80,
+		{Repository: "vaultwarden/server", Name: "Vaultwarden", Category: "Security", Port: 80, LogoURL: dashboardIconURL("vaultwarden"),
 			Description: "Lightweight Bitwarden-compatible password manager server."},
-		{Repository: "portainer/portainer-ce", Name: "Portainer", Category: "Management", Port: 9000,
+		{Repository: "portainer/portainer-ce", Name: "Portainer", Category: "Management", Port: 9000, LogoURL: dashboardIconURL("portainer"),
 			Description: "Web UI for managing Docker environments."},
-		{Repository: "jellyfin/jellyfin", Name: "Jellyfin", Category: "Media", Port: 8096,
+		{Repository: "jellyfin/jellyfin", Name: "Jellyfin", Category: "Media", Port: 8096, LogoURL: dashboardIconURL("jellyfin"),
 			Description: "Free media server for movies, shows and music."},
-		{Repository: "gitea/gitea", Name: "Gitea", Category: "Developer", Port: 3000,
+		{Repository: "gitea/gitea", Name: "Gitea", Category: "Developer", Port: 3000, LogoURL: dashboardIconURL("gitea"),
 			Description: "Lightweight self-hosted Git service."},
-		{Repository: "metabase/metabase", Name: "Metabase", Category: "Analytics", Port: 3000,
+		{Repository: "metabase/metabase", Name: "Metabase", Category: "Analytics", Port: 3000, LogoURL: dashboardIconURL("metabase"),
 			Description: "Easy BI and analytics for everyone."},
-		{Repository: "nocodb/nocodb", Name: "NocoDB", Category: "Data", Port: 8080,
+		{Repository: "nocodb/nocodb", Name: "NocoDB", Category: "Data", Port: 8080, LogoURL: dashboardIconURL("nocodb"),
 			Description: "Open-source Airtable alternative."},
-		{Repository: "adminer", Name: "Adminer", Category: "Data", Port: 8080,
+		{Repository: "adminer", Name: "Adminer", Category: "Data", Port: 8080, LogoURL: dashboardIconURL("adminer"),
 			Description: "Full-featured database management in a single file."},
-		{Repository: "phpmyadmin/phpmyadmin", Name: "phpMyAdmin", Category: "Data", Port: 80,
+		{Repository: "phpmyadmin/phpmyadmin", Name: "phpMyAdmin", Category: "Data", Port: 80, LogoURL: dashboardIconURL("phpmyadmin"),
 			Description: "Web interface for MySQL and MariaDB."},
 	}
 }

@@ -1,5 +1,5 @@
-import { GitBranch, Layers, Rocket, Globe, Server, Ship, HardDrive, Tag, Zap } from "lucide-react";
-import { DATABASES, SOURCES, TEMPLATES } from "@/lib/newProject";
+import { GitBranch, Layers, Rocket, Globe, Ship, HardDrive, Tag, Zap } from "lucide-react";
+import { SOURCES, TEMPLATES } from "@/lib/newProject";
 import { getFramework, projectAddress } from "@/lib/devStatus";
 import { strategySummary } from "@/lib/strategies";
 import SourceIcon from "@/components/newproject/SourceIcon";
@@ -17,7 +17,7 @@ function Row({ icon, label, value }) {
   );
 }
 
-export default function ReviewStep({ source, services, config, repository, buildLabel, isImage }) {
+export default function ReviewStep({ source, config, repository, buildLabel, isImage }) {
   const fw = getFramework(config.framework);
   const selectedSource = SOURCES.find((s) => s.id === source.type);
   const template = source.type === "template" ? TEMPLATES.find((t) => t.id === source.template) : null;
@@ -63,34 +63,6 @@ export default function ReviewStep({ source, services, config, repository, build
         </section>
 
         <section>
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Infrastructure</h3>
-          <div className="space-y-3 rounded-lg border border-border bg-card p-4">
-            {services.length === 0 ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Server className="h-4 w-4" /> No additional services
-              </div>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {DATABASES.filter((d) => services.includes(d.id)).map((d) => (
-                  <span
-                    key={d.id}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/30 px-2.5 py-1 text-xs font-medium"
-                  >
-                    <span className="h-2 w-2 rounded-full" style={{ background: d.color }} />
-                    {d.label}
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <HardDrive className="h-4 w-4" />
-              Persistent storage{" "}
-              <span className="font-mono text-xs text-foreground">/data → /app/data</span>
-            </div>
-          </div>
-        </section>
-
-        <section>
           <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Configuration</h3>
           <div className="rounded-lg border border-border bg-card px-4 py-1.5 divide-y divide-border">
             <Row icon={<Globe className="h-3.5 w-3.5" />} label="Project name" value={config.name || "—"} />
@@ -104,6 +76,27 @@ export default function ReviewStep({ source, services, config, repository, build
             <Row icon={<Ship className="h-3.5 w-3.5" />} label="Build" value={<span className="font-mono text-xs">{buildLabel || "Dockerfile · auto-detected"}</span>} />
             <Row icon={<Layers className="h-3.5 w-3.5" />} label="Framework" value={fw.label} />
             <Row icon={<Zap className="h-3.5 w-3.5" />} label="Deploy strategy" value={strategyLabel} />
+          </div>
+        </section>
+
+        <section>
+          <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Storage</h3>
+          <div className="flex items-start gap-3 rounded-lg border border-border bg-card p-4">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/30">
+              <HardDrive className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-medium text-foreground">Persistent storage</p>
+                <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                  /data → /app/data
+                </span>
+              </div>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Every project gets a folder that survives redeploys — ideal for a SQLite database or
+                uploads.
+              </p>
+            </div>
           </div>
         </section>
 

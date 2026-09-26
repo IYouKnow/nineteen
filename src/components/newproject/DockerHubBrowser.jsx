@@ -4,6 +4,7 @@ import * as api from "@/lib/api";
 import { Check, Download, Loader2, Search, Star, BadgeCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { StoreBrowser } from "@/components/newproject/AppStoreBrowser";
 
 // useDebounced returns value after it has stopped changing for `delay` ms.
 function useDebounced(value, delay = 350) {
@@ -15,6 +16,25 @@ function useDebounced(value, delay = 350) {
   return debounced;
 }
 
+// Docker Hub no longer returns repository logos, and a server started before
+// the curated catalog was updated may omit logo_url. Fall back to the
+// community dashboard-icons set so featured cards always render an icon.
+const ICON_SLUG_OVERRIDES = {
+  httpd: "apache",
+  postgres: "postgresql",
+  mongo: "mongodb",
+  "portainer/portainer-ce": "portainer",
+  "vaultwarden/server": "vaultwarden",
+};
+
+function fallbackLogo(repository) {
+  const repo = repository || "";
+  if (!repo) return "";
+  const name = repo.split("/").pop();
+  const slug = ICON_SLUG_OVERRIDES[repo] || ICON_SLUG_OVERRIDES[name] || name;
+  return `https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/${slug}.png`;
+}
+
 // normalize maps a featured app or a Docker Hub search result into the shape the
 // browser renders and the parent consumes.
 function normalize(item, featured) {
@@ -24,23 +44,27 @@ function normalize(item, featured) {
       name: item.name,
       description: item.description,
       category: item.category,
-      logo_url: item.logo_url,
+      logo_url: item.logo_url || fallbackLogo(item.repository),
       port: item.port,
       env: item.env || [],
       is_official: true,
+      star_count: item.star_count,
+      pull_count: item.pull_count,
+      last_updated: item.last_updated,
     };
   }
   return {
     repository: item.repository,
     name: item.name,
     description: item.description,
-    category: null,
+    category: item.category || null,
     logo_url: item.logo_url,
-    port: 0,
-    env: [],
+    port: item.port || 0,
+    env: item.env || [],
     is_official: item.is_official,
     star_count: item.star_count,
     pull_count: item.pull_count,
+    last_updated: item.last_updated,
   };
 }
 
@@ -108,8 +132,15 @@ function AppCard({ app, active, onPick }) {
 }
 
 // DockerHubBrowser renders the curated featured catalog plus a live Docker Hub
-// search. It is shared by the New Project source step and the standalone store.
-export default function DockerHubBrowser({ onPick, selected, emptyHint }) {
+// search. It is shared by the New Project source step ("select") and the
+// standalone app store ("store").
+export default function DockerHubBrowser({
+  onPick,
+  selected,
+  emptyHint,
+  variant = "select",
+  canInstall = true,
+}) {
   const [query, setQuery] = useState("");
   const debounced = useDebounced(query, 350);
   const searching = debounced.trim().length > 0;
@@ -128,12 +159,29 @@ export default function DockerHubBrowser({ onPick, selected, emptyHint }) {
     retry: false,
   });
 
-  const list = useMemo(() => {
-    if (searching) return results.map((r) => normalize(r, false));
-    return featured.map((f) => normalize(f, true));
-  }, [searching, results, featured]);
+  const featuredList = useMemo(() => featured.map((f) => normalize(f, true)), [featured]);
+  const resultList = useMemo(() => results.map((r) => normalize(r, false)), [results]);
 
   const loading = searching ? isFetching : featuredLoading;
+
+  if (variant === "store") {
+    return (
+      <StoreBrowser
+        query={query}
+        setQuery={setQuery}
+        debounced={debounced}
+        searching={searching}
+        loading={loading}
+        featured={featuredList}
+        results={resultList}
+        onInstall={onPick}
+        canInstall={canInstall}
+        emptyHint={emptyHint}
+      />
+    );
+  }
+
+  const list = searching ? resultList : featuredList;
 
   return (
     <div>

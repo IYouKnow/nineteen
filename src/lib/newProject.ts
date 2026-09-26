@@ -42,54 +42,6 @@ export const SOURCES: SourceOption[] = [
   },
 ];
 
-export interface DatabaseOption {
-  id: string;
-  label: string;
-  color: string;
-  description: string;
-  embedded?: boolean;
-}
-
-export const DATABASES: DatabaseOption[] = [
-  {
-    id: "postgres",
-    label: "PostgreSQL",
-    color: "#4169e1",
-    description: "Powerful relational database with JSON & extension support.",
-  },
-  {
-    id: "mysql",
-    label: "MySQL",
-    color: "#00758f",
-    description: "Popular open-source relational database.",
-  },
-  {
-    id: "mariadb",
-    label: "MariaDB",
-    color: "#003545",
-    description: "Community-driven MySQL fork, drop-in compatible.",
-  },
-  {
-    id: "redis",
-    label: "Redis",
-    color: "#dc382d",
-    description: "In-memory data store for caching and queues.",
-  },
-  {
-    id: "mongodb",
-    label: "MongoDB",
-    color: "#47a248",
-    description: "Document database for flexible schemas.",
-  },
-  {
-    id: "sqlite",
-    label: "SQLite",
-    color: "#00657e",
-    description: "Embedded file-based database — bundled with your app, no server to provision.",
-    embedded: true,
-  },
-];
-
 export interface Template {
   id: string;
   label: string;
