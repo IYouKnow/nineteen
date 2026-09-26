@@ -23,14 +23,6 @@ export const SOURCES = [
     description: "Deploy from any public Git URL — no account connection required.",
   },
   {
-    id: "gitlab",
-    label: "GitLab",
-    icon: "gitlab",
-    color: "#fc6d26",
-    description: "Connect a GitLab.com or self-hosted GitLab instance.",
-    disabled: true,
-  },
-  {
     id: "gitea",
     label: "Gitea",
     icon: "gitea",
@@ -134,6 +126,15 @@ export function detectFrameworkFromFiles(files) {
     return "docker";
 
   return null;
+}
+
+// sourceChosen reports whether the user has picked a source in the first wizard
+// step (enough to advance to the detail step). Templates are chosen inline, so
+// they only count once a template is selected.
+export function sourceChosen(source) {
+  if (!source.type) return false;
+  if (source.type === "template") return !!source.template;
+  return true;
 }
 
 export function sourceReady(source) {

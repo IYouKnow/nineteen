@@ -7,9 +7,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ArrowLeft, ArrowRight, Loader2, Rocket } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { buildRepository, sourceReady, isImageSource, imageRef, TEMPLATES } from "@/lib/newProject";
+import { buildRepository, sourceReady, sourceChosen, isImageSource, imageRef, TEMPLATES } from "@/lib/newProject";
 import Stepper from "@/components/newproject/Stepper";
 import SourceStep from "@/components/newproject/steps/SourceStep";
+import SelectStep from "@/components/newproject/steps/SelectStep";
 import VersionStep from "@/components/newproject/steps/VersionStep";
 import BuildStep from "@/components/newproject/steps/BuildStep";
 import InfrastructureStep from "@/components/newproject/steps/InfrastructureStep";
@@ -139,6 +140,9 @@ export default function NewProject() {
 
   const STEPS = useMemo(() => {
     const steps = [{ id: "source", label: "Source" }];
+    if (source.type && source.type !== "template") {
+      steps.push({ id: "select", label: isImage ? "Image" : "Repository" });
+    }
     if (scannable) steps.push({ id: "version", label: "Version" });
     if (scannable) steps.push({ id: "build", label: "Build" });
     steps.push({ id: "infra", label: "Infrastructure" });
@@ -148,7 +152,7 @@ export default function NewProject() {
       { id: "review", label: "Review" }
     );
     return steps;
-  }, [scannable, hasRepo]);
+  }, [source.type, isImage, scannable, hasRepo]);
 
   const stepIndex = Math.max(0, STEPS.findIndex((s) => s.id === stepId));
   const activeStep = STEPS[stepIndex].id;
@@ -228,6 +232,8 @@ export default function NewProject() {
 
   const canContinue =
     activeStep === "source"
+      ? sourceChosen(source)
+      : activeStep === "select"
       ? sourceReady(source)
       : activeStep === "version"
       ? config.deployType !== "release" || !!config.deployRef
@@ -366,6 +372,7 @@ export default function NewProject() {
 
         <div className="px-6 py-6">
           {activeStep === "source" && <SourceStep source={source} setSource={setSource} />}
+          {activeStep === "select" && <SelectStep source={source} setSource={setSource} />}
           {activeStep === "version" && (
             <VersionStep
               config={config}
