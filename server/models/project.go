@@ -30,6 +30,11 @@ type Project struct {
 	DeployType    string    `json:"deploy_type"`
 	DeployRef     string    `json:"deploy_ref"`
 	Port          *int      `json:"port"`
+	// RestartPolicy is the Docker restart policy applied to the project's
+	// container(s): "no", "always", "unless-stopped" or "on-failure".
+	// RestartRetries is the optional max-retry count for "on-failure" only.
+	RestartPolicy  string `json:"restart_policy"`
+	RestartRetries *int   `json:"restart_retries"`
 	LastDeployedAt *string  `json:"last_deployed_at"`
 	CreatedDate   string    `json:"created_date"`
 	UpdatedDate   string    `json:"updated_date"`

@@ -75,7 +75,7 @@ type rowScanner interface {
 const projectSelect = `SELECT id, user_id, name, slug, status, framework, repository, image, branch,
 	domain, description, auto_deploy, region, instance_type, build_strategy,
 	dockerfile_path, compose_path, build_context, port, last_deployed_at, created_date, updated_date,
-	provider, integration_id, deploy_type, deploy_ref FROM projects`
+	provider, integration_id, deploy_type, deploy_ref, restart_policy, restart_retries FROM projects`
 
 func ProjectsHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -128,7 +128,8 @@ func listProjectsHandler(w http.ResponseWriter, r *http.Request) {
 			&p.BuildContext,
 			&p.Port,
 			&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
-			&p.Provider, &p.IntegrationID, &p.DeployType, &p.DeployRef); err != nil {
+			&p.Provider, &p.IntegrationID, &p.DeployType, &p.DeployRef,
+			&p.RestartPolicy, &p.RestartRetries); err != nil {
 			continue
 		}
 		if p.UserID == claims.UserID {
@@ -173,6 +174,8 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 		Port          *int   `json:"port"`
 		Provider      string `json:"provider"`
 		IntegrationID *int64 `json:"integration_id"`
+		RestartPolicy  string `json:"restart_policy"`
+		RestartRetries *int   `json:"restart_retries"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
@@ -228,6 +231,17 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 	if req.DeployType != "release" {
 		req.DeployRef = ""
 	}
+	req.RestartPolicy = strings.TrimSpace(req.RestartPolicy)
+	if req.RestartPolicy == "" {
+		req.RestartPolicy = "unless-stopped"
+	}
+	if !validRestartPolicy(req.RestartPolicy) {
+		respondError(w, http.StatusBadRequest, "restart_policy must be one of: no, always, unless-stopped, on-failure")
+		return
+	}
+	if req.RestartPolicy != "on-failure" {
+		req.RestartRetries = nil
+	}
 	if req.Status == "" {
 		req.Status = "idle"
 	}
@@ -248,12 +262,13 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 	result, err := db.DB.Exec(
 		`INSERT INTO projects (user_id, name, slug, status, framework, repository, image, branch, domain,
 			description, auto_deploy, region, instance_type, build_strategy, dockerfile_path, compose_path, build_context, port,
-			provider, integration_id, deploy_type, deploy_ref)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			provider, integration_id, deploy_type, deploy_ref, restart_policy, restart_retries)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		claims.UserID, req.Name, req.Slug, req.Status, req.Framework, req.Repository, req.Image,
 		req.Branch, req.Domain, req.Description, req.AutoDeploy, req.Region, req.InstanceType,
 		req.BuildStrategy, req.DockerfilePath, req.ComposePath, req.BuildContext, req.Port,
 		req.Provider, req.IntegrationID, req.DeployType, req.DeployRef,
+		req.RestartPolicy, req.RestartRetries,
 	)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to create project")
@@ -683,6 +698,7 @@ func getProject(userID, id int64) (models.Project, error) {
 		&p.Port,
 		&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
 		&p.Provider, &p.IntegrationID, &p.DeployType, &p.DeployRef,
+		&p.RestartPolicy, &p.RestartRetries,
 	)
 	reconcileProjectStatus(&p)
 	return p, err
@@ -701,6 +717,7 @@ func getProjectByID(id int64) (models.Project, error) {
 		&p.Port,
 		&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
 		&p.Provider, &p.IntegrationID, &p.DeployType, &p.DeployRef,
+		&p.RestartPolicy, &p.RestartRetries,
 	)
 	return p, err
 }
@@ -714,6 +731,7 @@ var updatableProjectColumns = map[string]bool{
 	"deploy_type": true, "deploy_ref": true,
 	"last_deployed_at": true, "port": true,
 	"provider": true, "integration_id": true,
+	"restart_policy": true, "restart_retries": true,
 }
 
 func updateProject(w http.ResponseWriter, r *http.Request, userID, id int64) (models.Project, error) {
@@ -721,6 +739,9 @@ func updateProject(w http.ResponseWriter, r *http.Request, userID, id int64) (mo
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		return models.Project{}, fmt.Errorf("bad body")
 	}
+
+	_, policyTouched := body["restart_policy"]
+	_, retriesTouched := body["restart_retries"]
 
 	sets := []string{}
 	args := []interface{}{}
@@ -733,6 +754,17 @@ func updateProject(w http.ResponseWriter, r *http.Request, userID, id int64) (mo
 			args = append(args, boolToInt(toBool(val)))
 		} else if col == "port" {
 			args = append(args, intOrNil(val))
+		} else if col == "restart_retries" {
+			args = append(args, intOrNil(val))
+		} else if col == "restart_policy" {
+			policy := strings.TrimSpace(valueToString(val))
+			if policy == "" {
+				policy = "unless-stopped"
+			}
+			if !validRestartPolicy(policy) {
+				return models.Project{}, fmt.Errorf("restart_policy must be one of: no, always, unless-stopped, on-failure")
+			}
+			args = append(args, policy)
 		} else if col == "integration_id" {
 			iv := intOrNil(val)
 			if iv != nil {
@@ -759,7 +791,22 @@ func updateProject(w http.ResponseWriter, r *http.Request, userID, id int64) (mo
 	if _, err := db.DB.Exec(q, args...); err != nil {
 		return models.Project{}, err
 	}
-	return getProjectForUser(userID, id)
+	p, err := getProjectForUser(userID, id)
+	if err != nil {
+		return p, err
+	}
+	// Apply a restart-policy change to the live container(s) immediately, so it
+	// takes effect without waiting for the next deployment. A retry count only
+	// applies to on-failure, so a stale count is cleared for other policies.
+	if policyTouched || retriesTouched {
+		if p.RestartPolicy != "on-failure" && p.RestartRetries != nil {
+			db.DB.Exec("UPDATE projects SET restart_retries = NULL WHERE id = ?", id)
+			p.RestartRetries = nil
+		}
+		services.NewDeployer().ApplyRestartPolicy(p.ID, p.Slug, p.BuildStrategy,
+			services.RestartArg(p.RestartPolicy, p.RestartRetries))
+	}
+	return p, nil
 }
 
 func ProjectDeploymentsHandler(w http.ResponseWriter, r *http.Request) {
@@ -1552,7 +1599,7 @@ func imageDeploy(ctx context.Context, log func(string, string), d *services.Depl
 		log("info", fmt.Sprintf("Mounting %d persistent volume(s)", len(mounts)))
 	}
 	log("info", fmt.Sprintf("Starting container on %s:%d", services.ProjectBindAddr(), hostPort))
-	if _, err := d.Run(ctx, image, containerName, hostPort, containerPort, envPath, mounts, func(line string) { log("info", line) }); err != nil {
+	if _, err := d.Run(ctx, image, containerName, hostPort, containerPort, envPath, mounts, services.RestartArg(project.RestartPolicy, project.RestartRetries), func(line string) { log("info", line) }); err != nil {
 		if ctx.Err() != nil {
 			log("warn", "Deployment cancelled")
 			finishDeploymentCancelled(deployID, project)
@@ -1663,7 +1710,7 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 		log("info", fmt.Sprintf("Mounting %d persistent volume(s)", len(mounts)))
 	}
 	log("info", fmt.Sprintf("Starting container on %s:%d", services.ProjectBindAddr(), hostPort))
-	if _, err := d.Run(ctx, image, containerName, hostPort, containerPort, envPath, mounts, func(line string) { log("info", line) }); err != nil {
+	if _, err := d.Run(ctx, image, containerName, hostPort, containerPort, envPath, mounts, services.RestartArg(project.RestartPolicy, project.RestartRetries), func(line string) { log("info", line) }); err != nil {
 		if ctx.Err() != nil {
 			log("warn", "Deployment cancelled")
 			finishDeploymentCancelled(deployID, project)
@@ -1706,18 +1753,17 @@ func composeDeploy(ctx context.Context, log func(string, string), d *services.De
 	// Prepare the persistent folder, then inject it (and env vars) into every
 	// service via a generated override.
 	mounts := projectBindMounts(project.ID)
+	restartArg := services.RestartArg(project.RestartPolicy, project.RestartRetries)
 	overridePath := ""
-	if envPath != "" || len(mounts) > 0 {
-		if names := services.ComposeServiceNames(filepath.Join(dir, composeFile)); len(names) > 0 {
-			if p, err := services.WriteComposeOverride(names, envPath, mounts); err == nil {
-				overridePath = p
-				defer os.Remove(overridePath)
-			} else {
-				log("warn", "Failed to generate compose override: "+err.Error())
-			}
+	if names := services.ComposeServiceNames(filepath.Join(dir, composeFile)); len(names) > 0 {
+		if p, err := services.WriteComposeOverride(names, envPath, mounts, restartArg); err == nil {
+			overridePath = p
+			defer os.Remove(overridePath)
 		} else {
-			log("warn", "Could not list compose services — env vars and the persistent folder were not injected")
+			log("warn", "Failed to generate compose override: "+err.Error())
 		}
+	} else {
+		log("warn", "Could not list compose services — env vars, volumes and the restart policy were not injected")
 	}
 
 	name := services.ProjectComposeName(project.ID, project.Slug)
@@ -1879,6 +1925,15 @@ func pathID(r *http.Request) (int64, bool) {
 		return 0, false
 	}
 	return id, true
+}
+
+// validRestartPolicy reports whether p is a supported Docker restart policy.
+func validRestartPolicy(p string) bool {
+	switch p {
+	case "no", "always", "unless-stopped", "on-failure":
+		return true
+	}
+	return false
 }
 
 func slugify(s string) string {

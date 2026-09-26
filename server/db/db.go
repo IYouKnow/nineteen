@@ -348,6 +348,8 @@ func runMigrations() {
 		{"projects", "port", `ALTER TABLE projects ADD COLUMN port INTEGER`},
 		{"projects", "provider", `ALTER TABLE projects ADD COLUMN provider TEXT DEFAULT 'github'`},
 		{"projects", "integration_id", `ALTER TABLE projects ADD COLUMN integration_id INTEGER`},
+		{"projects", "restart_policy", `ALTER TABLE projects ADD COLUMN restart_policy TEXT DEFAULT 'unless-stopped'`},
+		{"projects", "restart_retries", `ALTER TABLE projects ADD COLUMN restart_retries INTEGER`},
 		{"deploy_events", "trigger_id", `ALTER TABLE deploy_events ADD COLUMN trigger_id INTEGER`},
 		{"users", "role", `ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'member'`},
 		{"users", "status", `ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'`},

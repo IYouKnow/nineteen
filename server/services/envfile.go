@@ -76,10 +76,10 @@ func WriteEnvFile(vars []models.EnvVar) (string, error) {
 }
 
 // WriteComposeOverride generates a compose override that injects the given
-// absolute .env file and/or bind mounts into every service. Returns "" when
-// there are no services or nothing to inject.
-func WriteComposeOverride(serviceNames []string, envFile string, mounts []BindMount) (string, error) {
-	if len(serviceNames) == 0 || (envFile == "" && len(mounts) == 0) {
+// absolute .env file, bind mounts and restart policy into every service.
+// Returns "" when there are no services.
+func WriteComposeOverride(serviceNames []string, envFile string, mounts []BindMount, restart string) (string, error) {
+	if len(serviceNames) == 0 {
 		return "", nil
 	}
 	f, err := os.CreateTemp("", "nineteen-override-*.yml")
@@ -103,6 +103,9 @@ func WriteComposeOverride(serviceNames []string, envFile string, mounts []BindMo
 				b.WriteString("        source: " + filepath.ToSlash(m.Source) + "\n")
 				b.WriteString("        target: " + m.Target + "\n")
 			}
+		}
+		if restart != "" {
+			b.WriteString("    restart: " + restart + "\n")
 		}
 	}
 	if _, err := f.WriteString(b.String()); err != nil {

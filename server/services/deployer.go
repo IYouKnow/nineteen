@@ -621,14 +621,70 @@ type BindMount struct {
 	Target string
 }
 
+// RestartArg converts a project's restart policy into the value Docker expects
+// for `--restart` (docker run) and `restart:` (compose). An empty or unknown
+// policy falls back to "unless-stopped" so projects keep coming back after a
+// host reboot. For "on-failure" a positive retries count is appended as
+// "on-failure:N"; the count is ignored for every other policy.
+func RestartArg(policy string, retries *int) string {
+	switch strings.TrimSpace(policy) {
+	case "no":
+		return "no"
+	case "always":
+		return "always"
+	case "on-failure":
+		if retries != nil && *retries > 0 {
+			return fmt.Sprintf("on-failure:%d", *retries)
+		}
+		return "on-failure"
+	default: // "unless-stopped" and anything unrecognized
+		return "unless-stopped"
+	}
+}
+
+// ApplyRestartPolicy updates the restart policy of a project's existing
+// container(s) so a policy change takes effect immediately, without a redeploy.
+// For a compose stack every container in the stack is updated. Best-effort: a
+// missing container or Docker outage is not an error.
+func (d *Deployer) ApplyRestartPolicy(projectID int64, slug, buildStrategy, restartArg string) {
+	if restartArg == "" {
+		restartArg = "unless-stopped"
+	}
+	if buildStrategy == "compose" {
+		out, err := exec.Command("docker", "ps", "-a", "--filter",
+			"label=com.docker.compose.project="+ProjectComposeName(projectID, slug),
+			"--format", "{{.ID}}").Output()
+		if err != nil {
+			return
+		}
+		ids := strings.Fields(string(out))
+		if len(ids) == 0 {
+			return
+		}
+		args := append([]string{"update", "--restart", restartArg}, ids...)
+		_ = exec.Command("docker", args...).Run()
+		return
+	}
+	name := ProjectContainerName(projectID, slug)
+	if d.ContainerState(name) == "" {
+		return // no container to update
+	}
+	_ = exec.Command("docker", "update", "--restart", restartArg, name).Run()
+}
+
 // Run starts a published container and returns its id. If envFile is non-empty
 // its content is passed to the container via --env-file. Each bind mount maps a
-// host path into the container so data persists across redeploys.
-func (d *Deployer) Run(ctx context.Context, image, name string, hostPort, containerPort int, envFile string, mounts []BindMount, log func(string)) (string, error) {
+// host path into the container so data persists across redeploys. restartArg is
+// the Docker restart policy (see RestartArg); empty falls back to
+// "unless-stopped".
+func (d *Deployer) Run(ctx context.Context, image, name string, hostPort, containerPort int, envFile string, mounts []BindMount, restartArg string, log func(string)) (string, error) {
+	if restartArg == "" {
+		restartArg = "unless-stopped"
+	}
 	args := []string{
 		"run", "-d",
 		"--name", name,
-		"--restart", "unless-stopped",
+		"--restart", restartArg,
 		"-p", fmt.Sprintf("%s:%d:%d", ProjectBindAddr(), hostPort, containerPort),
 	}
 	if envFile != "" {
