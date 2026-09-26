@@ -19,7 +19,7 @@ export default function PageNotFound() {
                 </div>
 
                 <p className="text-muted-foreground text-sm leading-relaxed max-w-sm">
-                    <span className="font-mono text-foreground/80">/{pageName}</span> doesn't seem to exist.
+                    <span className="font-mono text-foreground/80">/{pageName}</span> doesn&apos;t seem to exist.
                     Maybe it never did, or maybe it packed its bags and left.
                 </p>
 

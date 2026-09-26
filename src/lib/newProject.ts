@@ -1,6 +1,17 @@
-// Shared constants for the New Project wizard.
+// Shared constants and helpers for the New Project wizard.
 
-export const SOURCES = [
+export type SourceId = "dockerhub" | "github" | "public" | "gitea" | "gitlab" | "template";
+
+export interface SourceOption {
+  id: SourceId;
+  label: string;
+  icon: string;
+  color: string;
+  description: string;
+  disabled?: boolean;
+}
+
+export const SOURCES: SourceOption[] = [
   {
     id: "dockerhub",
     label: "Docker Hub",
@@ -31,7 +42,15 @@ export const SOURCES = [
   },
 ];
 
-export const DATABASES = [
+export interface DatabaseOption {
+  id: string;
+  label: string;
+  color: string;
+  description: string;
+  embedded?: boolean;
+}
+
+export const DATABASES: DatabaseOption[] = [
   {
     id: "postgres",
     label: "PostgreSQL",
@@ -71,10 +90,20 @@ export const DATABASES = [
   },
 ];
 
+export interface Template {
+  id: string;
+  label: string;
+  code: string;
+  framework: string;
+  color: string;
+  description: string;
+  generator: string;
+}
+
 // Ready-made starter templates. `framework` maps to the runtime framework used
 // by the existing build system; `generator` is an opaque id a backend can later
 // resolve to a real project generator / repository creation mechanism.
-export const TEMPLATES = [
+export const TEMPLATES: Template[] = [
   { id: "nextjs", label: "Next.js", code: "N", framework: "nextjs", color: "#f8f9fa", description: "Full-stack React framework with SSR, routing & API routes.", generator: "template:nextjs" },
   { id: "vite-react", label: "Vite + React", code: "V", framework: "vite", color: "#646cff", description: "Fast SPA starter with Vite, React and hot module reload.", generator: "template:vite-react" },
   { id: "react", label: "React", code: "Re", framework: "vite", color: "#61dafb", description: "Classic single-page React app, built and served statically.", generator: "template:react" },
@@ -86,14 +115,56 @@ export const TEMPLATES = [
   { id: "docker", label: "Docker", code: "D", framework: "docker", color: "#2496ed", description: "Bring-your-own Dockerfile — we build and run the image.", generator: "template:docker" },
 ];
 
+// Repo is the subset of a provider repository the wizard reads.
+export interface Repo {
+  full_name: string;
+  branch?: string;
+  framework?: string;
+  description?: string;
+  stars?: number;
+  private?: boolean;
+}
+
+// ImageEnvVar is one environment variable supplied with a prebuilt image.
+export interface ImageEnvVar {
+  key: string;
+  label?: string;
+  value: string;
+  secret?: boolean;
+  required?: boolean;
+}
+
+// ImageMeta carries display metadata for a chosen Docker Hub image.
+export interface ImageMeta {
+  name?: string;
+  description?: string;
+  port?: number;
+}
+
+// Source is the wizard's source-selection state.
+export interface Source {
+  type: SourceId | null;
+  template: string | null;
+  repo: Repo | null;
+  integrationId: number | null;
+  publicUrl: string;
+  gitlabHost: string;
+  gitlabToken: string;
+  gitlabProject: string;
+  image: string | null;
+  imageTag: string;
+  imageMeta: ImageMeta | null;
+  env: ImageEnvVar[];
+}
+
 // Detect the runtime framework from a scanned repository file list. Uses only
 // file paths (the scan returns names, not contents). Returns a FRAMEWORKS id or
 // null when nothing confident is found.
-export function detectFrameworkFromFiles(files) {
+export function detectFrameworkFromFiles(files: string[] | null | undefined): string | null {
   if (!files || files.length === 0) return null;
   const lower = files.map((f) => f.toLowerCase());
-  const hasBase = (base) => lower.some((f) => f === base || f.endsWith("/" + base));
-  const any = (re) => lower.some((f) => re.test(f));
+  const hasBase = (base: string) => lower.some((f) => f === base || f.endsWith("/" + base));
+  const any = (re: RegExp) => lower.some((f) => re.test(f));
 
   // Go services are containerized by convention.
   if (hasBase("go.mod")) return "docker";
@@ -131,13 +202,13 @@ export function detectFrameworkFromFiles(files) {
 // sourceChosen reports whether the user has picked a source in the first wizard
 // step (enough to advance to the detail step). Templates are chosen inline, so
 // they only count once a template is selected.
-export function sourceChosen(source) {
+export function sourceChosen(source: Pick<Source, "type" | "template">): boolean {
   if (!source.type) return false;
   if (source.type === "template") return !!source.template;
   return true;
 }
 
-export function sourceReady(source) {
+export function sourceReady(source: Source): boolean {
   switch (source.type) {
     case "template":
       return !!source.template;
@@ -155,7 +226,7 @@ export function sourceReady(source) {
   }
 }
 
-export function buildRepository(source) {
+export function buildRepository(source: Source): string {
   if (source.type === "template") return "";
   if (source.type === "dockerhub") return imageRef(source);
   if (source.type === "github" || source.type === "gitea") return source.repo?.full_name || "";
@@ -166,13 +237,13 @@ export function buildRepository(source) {
 }
 
 // isImageSource reports whether a source runs a prebuilt image (no repo/build).
-export function isImageSource(source) {
+export function isImageSource(source: Source | null | undefined): boolean {
   return source?.type === "dockerhub";
 }
 
 // imageRef composes the full image reference from the selected repository and
 // tag, e.g. "nginx:1.27".
-export function imageRef(source) {
-  if (!source?.image) return "";
+export function imageRef(source: Source): string {
+  if (!source.image) return "";
   return source.imageTag ? `${source.image}:${source.imageTag}` : source.image;
 }
