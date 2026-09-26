@@ -253,10 +253,18 @@ export default function ProjectDetail() {
   };
 
   const remove = async () => {
-    await api.projects.delete(project.id);
-    qc.invalidateQueries({ queryKey: ["projects"] });
-    qc.invalidateQueries({ queryKey: ["deployments-recent"] });
-    navigate("/projects");
+    const toastId = toast.loading(
+      project.status === "running" ? "Stopping and deleting project…" : "Deleting project…"
+    );
+    try {
+      await api.projects.delete(project.id);
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["deployments-recent"] });
+      toast.success("Project deleted", { id: toastId });
+      navigate("/projects");
+    } catch (e) {
+      toast.error("Delete failed", { id: toastId, description: e?.message });
+    }
   };
 
   if (isLoading || !project) {
@@ -412,6 +420,11 @@ export default function ProjectDetail() {
                     }
                     title={`Delete "${project.name}"?`}
                     description="This permanently removes the project and all associated data."
+                    warning={
+                      project.status === "running"
+                        ? "This project is currently running. Its container will be stopped and removed."
+                        : undefined
+                    }
                     confirmLabel="Delete project"
                     onConfirm={remove}
                   />

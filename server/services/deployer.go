@@ -400,6 +400,18 @@ func (d *Deployer) CleanupContainer(name string) {
 	_ = exec.Command("docker", "rm", "-f", name).Run()
 }
 
+// StopAndRemoveContainer gracefully stops a container (SIGTERM, up to a short
+// timeout) before removing it. Used when deleting a project so a running app
+// gets a chance to shut down cleanly instead of being killed instantly.
+// Best-effort: a missing container or a Docker outage is not an error.
+func (d *Deployer) StopAndRemoveContainer(name string) {
+	if name == "" || d.ContainerState(name) == "" {
+		return
+	}
+	_ = exec.Command("docker", "stop", "-t", "10", name).Run()
+	_ = exec.Command("docker", "rm", "-f", name).Run()
+}
+
 // ContainerState returns the current Docker state (running / exited / …) of a
 // container, or "" if it does not exist.
 func (d *Deployer) ContainerState(name string) string {
@@ -740,6 +752,23 @@ func (d *Deployer) CleanupCompose(projectName string, log func(string)) {
 	if err := streamCommand(exec.Command("docker", args...), log); err != nil {
 		log("warn: failed to remove previous containers: " + err.Error())
 	}
+}
+
+// StopAndRemoveCompose gracefully stops every container belonging to a compose
+// project (SIGTERM, up to a short timeout) and then removes them. Used when
+// deleting a project. Volumes are preserved so data survives. Best-effort.
+func (d *Deployer) StopAndRemoveCompose(projectName string) {
+	out, err := exec.Command("docker", "ps", "-a", "--filter",
+		"label=com.docker.compose.project="+projectName, "--format", "{{.ID}}").Output()
+	if err != nil {
+		return
+	}
+	ids := strings.Fields(string(out))
+	if len(ids) == 0 {
+		return
+	}
+	_ = exec.Command("docker", append([]string{"stop", "-t", "10"}, ids...)...).Run()
+	_ = exec.Command("docker", append([]string{"rm", "-f"}, ids...)...).Run()
 }
 
 type containerInfo struct {

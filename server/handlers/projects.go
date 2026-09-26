@@ -323,6 +323,9 @@ func ProjectHandler(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusNotFound, "Project not found")
 			return
 		}
+		// Abort any in-flight build first, otherwise its worker keeps running
+		// after the project row is gone and can re-create containers.
+		cancelProjectDeployments(project.ID)
 		removeProjectContainers(project)
 		if _, err := db.DB.Exec("DELETE FROM projects WHERE id = ?", id); err != nil {
 			respondError(w, http.StatusInternalServerError, "Failed to delete project")
@@ -335,15 +338,37 @@ func ProjectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// cancelProjectDeployments aborts every in-flight build worker for a project.
+// Called before deleting a project so a running build can't outlive its row.
+func cancelProjectDeployments(projectID int64) {
+	rows, err := db.DB.Query("SELECT id FROM deployments WHERE project_id = ? AND status = ?",
+		projectID, statusBuilding)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	for _, id := range ids {
+		requestDeployCancel(id)
+	}
+}
+
 // removeProjectContainers tears down every container a project created: its
 // Dockerfile container (current id-based name and the legacy slug-only name)
-// and any Compose stack. Best-effort — a Docker outage must not block deleting
-// the project. Volumes are preserved.
+// and any Compose stack. Containers are stopped gracefully before removal.
+// Best-effort — a Docker outage must not block deleting the project. Volumes
+// are preserved.
 func removeProjectContainers(project models.Project) {
 	d := services.NewDeployer()
-	d.CleanupContainer(services.ProjectContainerName(project.ID, project.Slug))
-	d.CleanupContainer("nineteen-" + project.Slug)
-	d.CleanupCompose(services.ProjectComposeName(project.ID, project.Slug), func(string) {})
+	d.StopAndRemoveContainer(services.ProjectContainerName(project.ID, project.Slug))
+	d.StopAndRemoveContainer("nineteen-" + project.Slug)
+	d.StopAndRemoveCompose(services.ProjectComposeName(project.ID, project.Slug))
 }
 
 // buildFileResponse is the shape returned by the build-file viewer.
@@ -1331,6 +1356,12 @@ func buildAndDeploy(deployID int64, project models.Project, ref string) {
 	defer func() {
 		unregisterDeployCancel(deployID)
 		cancel()
+		if r := recover(); r != nil {
+			// A panic in the worker must never take down the whole server.
+			db.DB.Exec("INSERT INTO deployment_logs (deployment_id, level, message) VALUES (?, 'error', ?)",
+				deployID, fmt.Sprintf("Deployment worker panicked: %v", r))
+			finishDeployment(deployID, project.ID, statusError, 0, "")
+		}
 	}()
 
 	log := func(level, msg string) {

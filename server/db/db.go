@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"nineteen-server/auth"
 	"nineteen-server/permissions"
@@ -14,9 +15,25 @@ import (
 
 var DB *sql.DB
 
+// sqliteDSN appends the connection pragmas the modernc driver understands.
+// NOTE: modernc.org/sqlite does not read the mattn-style "_journal_mode" /
+// "_foreign_keys" parameters; those must be set through "_pragma" or they are
+// silently ignored (leaving foreign keys off and the DB in rollback-journal
+// mode, which causes SQLITE_BUSY errors under concurrent access).
+func sqliteDSN(dbPath string) string {
+	sep := "?"
+	if strings.Contains(dbPath, "?") {
+		sep = "&"
+	}
+	return dbPath + sep +
+		"_pragma=busy_timeout(10000)" +
+		"&_pragma=journal_mode(WAL)" +
+		"&_pragma=foreign_keys(1)"
+}
+
 func Init(dbPath string) {
 	var err error
-	DB, err = sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_foreign_keys=on")
+	DB, err = sql.Open("sqlite", sqliteDSN(dbPath))
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
@@ -26,8 +43,32 @@ func Init(dbPath string) {
 	}
 
 	runMigrations()
+	cleanupOrphans()
 	seedInviteCode()
 	log.Println("Database initialized successfully")
+}
+
+// cleanupOrphans removes child rows left behind by deletes that ran while
+// foreign keys were disabled (the old DSN silently ignored foreign_keys). Once
+// foreign keys are enforced these cascades happen automatically, so this only
+// needs to sweep up pre-existing rows.
+func cleanupOrphans() {
+	projectTables := []string{
+		"project_members", "deployments", "runtime_logs", "env_vars",
+		"build_file_overrides", "database_connections", "project_volumes",
+		"project_triggers", "project_webhooks", "deploy_events",
+	}
+	for _, t := range projectTables {
+		if _, err := DB.Exec("DELETE FROM " + t + " WHERE project_id NOT IN (SELECT id FROM projects)"); err != nil {
+			log.Printf("Orphan cleanup failed for %s: %v", t, err)
+		}
+	}
+	if _, err := DB.Exec("DELETE FROM deployment_logs WHERE deployment_id NOT IN (SELECT id FROM deployments)"); err != nil {
+		log.Printf("Orphan cleanup failed for deployment_logs: %v", err)
+	}
+	if _, err := DB.Exec("DELETE FROM database_connections WHERE database_id NOT IN (SELECT id FROM databases)"); err != nil {
+		log.Printf("Orphan cleanup failed for database_connections: %v", err)
+	}
 }
 
 func runMigrations() {
