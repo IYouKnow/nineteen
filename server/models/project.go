@@ -61,6 +61,9 @@ type ProjectMember struct {
 // ProjectVolume maps a folder inside a project's persistent directory to a path
 // inside the running container. The host folder always lives under the
 // project's data directory; HostDir is the resolved absolute host path.
+// Automatic marks server-side mounts (e.g. the Docker socket for runner
+// images) that are applied on every deploy without user input. They are
+// computed, never stored, and must be rendered read-only.
 type ProjectVolume struct {
 	ID            int64  `json:"id"`
 	ProjectID     int64  `json:"project_id"`
@@ -68,6 +71,7 @@ type ProjectVolume struct {
 	HostPath      string `json:"host_path"`
 	ContainerPath string `json:"container_path"`
 	HostDir       string `json:"host_dir,omitempty"`
+	Automatic     bool   `json:"automatic,omitempty"`
 	CreatedDate   string `json:"created_date"`
 	UpdatedDate   string `json:"updated_date"`
 }

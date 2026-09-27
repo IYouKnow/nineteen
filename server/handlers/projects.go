@@ -1646,6 +1646,13 @@ func imageDeploy(ctx context.Context, log func(string, string), d *services.Depl
 
 	syncProjectDataMount(project.ID, image, func(msg string) { log("info", msg) })
 	mounts := projectBindMounts(project.ID)
+	if auto := services.RequiredHostMounts(image, project.Image); len(auto) > 0 {
+		before := len(mounts)
+		mounts = services.AppendRequiredHostMounts(mounts, auto)
+		if len(mounts) > before {
+			log("info", "Mounting Docker socket (/var/run/docker.sock) — required by "+image)
+		}
+	}
 	if len(mounts) > 0 {
 		log("info", fmt.Sprintf("Mounting %d persistent volume(s)", len(mounts)))
 	}
@@ -1741,6 +1748,13 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 	// writes, so the Files tab reflects the app's real data directory.
 	syncProjectDataMount(project.ID, image, func(msg string) { log("info", msg) })
 	mounts := projectBindMounts(project.ID)
+	if auto := services.RequiredHostMounts(image, project.Image, dockerfileImageHint(dir, dockerfile)); len(auto) > 0 {
+		before := len(mounts)
+		mounts = services.AppendRequiredHostMounts(mounts, auto)
+		if len(mounts) > before {
+			log("info", "Mounting Docker socket (/var/run/docker.sock) — required by this image")
+		}
+	}
 	if len(mounts) > 0 {
 		log("info", fmt.Sprintf("Mounting %d persistent volume(s)", len(mounts)))
 	}
@@ -1790,6 +1804,13 @@ func composeDeploy(ctx context.Context, log func(string, string), d *services.De
 	// Prepare the persistent folder, then inject it (and env vars) into every
 	// service via a generated override.
 	mounts := projectBindMounts(project.ID)
+	if auto := services.RequiredHostMounts(project.Image, composeFileHint(dir, composeFile)); len(auto) > 0 {
+		before := len(mounts)
+		mounts = services.AppendRequiredHostMounts(mounts, auto)
+		if len(mounts) > before {
+			log("info", "Mounting Docker socket (/var/run/docker.sock) into compose services — runner image detected")
+		}
+	}
 	restartArg := services.RestartArg(project.RestartPolicy, project.RestartRetries)
 	overridePath := ""
 	if names := services.ComposeServiceNames(filepath.Join(dir, composeFile)); len(names) > 0 {
@@ -1971,6 +1992,49 @@ func validRestartPolicy(p string) bool {
 		return true
 	}
 	return false
+}
+
+// dockerfileImageHint returns the base image referenced by a Dockerfile's first
+// FROM instruction, so source builds of known socket consumers (e.g. a repo
+// building FROM gitea/runner) get the same automatic host mounts as prebuilt
+// image projects. Returns "" when it can't be determined.
+func dockerfileImageHint(dir, dockerfile string) string {
+	rel := strings.TrimSpace(filepath.ToSlash(dockerfile))
+	if rel == "" {
+		rel = "Dockerfile"
+	}
+	data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if fields := strings.Fields(trimmed); len(fields) >= 2 && strings.EqualFold(fields[0], "FROM") {
+			return fields[1]
+		}
+	}
+	return ""
+}
+
+// composeFileHint returns the compose file content for image-hint matching, so
+// stacks referencing known socket consumers get the same automatic host mounts
+// without user input. Returns "" when unreadable.
+func composeFileHint(dir, composeFile string) string {
+	rel := strings.TrimSpace(filepath.ToSlash(composeFile))
+	if rel == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+	if err != nil {
+		return ""
+	}
+	if len(data) > 64*1024 {
+		data = data[:64*1024]
+	}
+	return string(data)
 }
 
 func slugify(s string) string {

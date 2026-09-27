@@ -51,8 +51,15 @@ function VolumesTable({ volumes, onAdd, onRemove }) {
             <span className="col-span-1" />
           </div>
           {volumes.map((v) => (
-            <div key={v.id} className="grid grid-cols-12 items-center gap-2 px-3 py-2 text-xs">
-              <span className="col-span-3 truncate font-medium text-foreground/90">{v.name}</span>
+            <div key={v.automatic ? `auto-${v.container_path}` : v.id} className="grid grid-cols-12 items-center gap-2 px-3 py-2 text-xs">
+              <span className="col-span-3 truncate font-medium text-foreground/90">
+                {v.name}
+                {v.automatic && (
+                  <span className="ml-1.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
+                    automatic
+                  </span>
+                )}
+              </span>
               <code
                 className="col-span-5 truncate font-mono text-[11px] text-muted-foreground"
                 title={v.host_dir || v.host_path}
@@ -63,6 +70,7 @@ function VolumesTable({ volumes, onAdd, onRemove }) {
                 {v.container_path}
               </code>
               <div className="col-span-1 flex justify-end">
+                {!v.automatic && (
                 <ConfirmDialog
                   trigger={
                     <button
@@ -78,6 +86,7 @@ function VolumesTable({ volumes, onAdd, onRemove }) {
                   confirmLabel="Remove"
                   onConfirm={() => onRemove(v)}
                 />
+                )}
               </div>
             </div>
           ))}

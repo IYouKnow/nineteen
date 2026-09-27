@@ -2,11 +2,89 @@ package services
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path"
+	"runtime"
 	"sort"
 	"strings"
 )
+
+// DockerSockHostPath is the host Docker daemon socket. Mounting it into a
+// project container gives that container control over the host daemon
+// (equivalent to host root), so it is only auto-mounted for known images that
+// require it — never from user-supplied volume input.
+const DockerSockHostPath = "/var/run/docker.sock"
+
+// dockerSockImages are image-name substrings that require the host Docker
+// socket at runtime (CI runners, DinD helpers, …). Matched case-insensitively
+// against the image reference and, for source builds, the project's configured
+// image too.
+var dockerSockImages = []string{
+	"gitea/runner",
+	"gitea/act_runner",
+	"act_runner",
+	"act-runner",
+	"gitea-actions/runner",
+}
+
+// RequiresDockerSock reports whether an image reference is a known
+// Docker-socket consumer (e.g. a Gitea Actions runner).
+func RequiresDockerSock(image string) bool {
+	lowered := strings.ToLower(strings.TrimSpace(image))
+	if lowered == "" {
+		return false
+	}
+	for _, hint := range dockerSockImages {
+		if strings.Contains(lowered, hint) {
+			return true
+		}
+	}
+	return false
+}
+
+// RequiredHostMounts returns the automatic host→container mounts for the given
+// image references, without any user input. Currently this is just the Docker
+// socket for known runner images. On Linux the socket must exist, otherwise nil
+// is returned so `--mount type=bind` doesn't fail the deploy. On Windows
+// (Docker Desktop) the Linux VM socket doesn't exist as a host file but the
+// `-v /var/run/docker.sock` mapping still works, so the check is skipped.
+func RequiredHostMounts(images ...string) []BindMount {
+	need := false
+	for _, img := range images {
+		if RequiresDockerSock(img) {
+			need = true
+			break
+		}
+	}
+	if !need {
+		return nil
+	}
+	if runtime.GOOS != "windows" {
+		if _, err := os.Stat(DockerSockHostPath); err != nil {
+			return nil
+		}
+	}
+	return []BindMount{{Source: DockerSockHostPath, Target: DockerSockHostPath}}
+}
+
+// AppendRequiredHostMounts merges automatic host mounts into mounts, skipping
+// ones already covered by the same container target.
+func AppendRequiredHostMounts(mounts []BindMount, extra []BindMount) []BindMount {
+	for _, m := range extra {
+		dup := false
+		for _, cur := range mounts {
+			if cur.Target == m.Target {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			mounts = append(mounts, m)
+		}
+	}
+	return mounts
+}
 
 // dataEnvKeys are environment variable names that conventionally hold an
 // application's persistent data location — either a directory or a file inside

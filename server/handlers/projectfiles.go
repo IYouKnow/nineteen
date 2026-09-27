@@ -61,7 +61,10 @@ func loadProjectVolumes(projectID int64) ([]models.ProjectVolume, error) {
 }
 
 // projectBindMounts returns the host→container bind mounts for a project's
-// volumes, creating the host folders if needed. Used at deploy time.
+// volumes, creating the host folders if needed. Used at deploy time. Automatic
+// server-side mounts are excluded here — they are appended by the deploy path
+// via services.RequiredHostMounts — and only listed read-only by
+// appendAutomaticVolumes.
 func projectBindMounts(projectID int64) []services.BindMount {
 	vols, err := loadProjectVolumes(projectID)
 	if err != nil {
@@ -78,6 +81,46 @@ func projectBindMounts(projectID int64) []services.BindMount {
 		})
 	}
 	return mounts
+}
+
+// appendAutomaticVolumes adds read-only server-side mounts (e.g. the Docker
+// socket for runner images) to a volume listing so users can see what will be
+// mounted on every deploy. They are computed from the project's image, never
+// stored, and must not be deletable.
+func appendAutomaticVolumes(projectID int64, vols []models.ProjectVolume) []models.ProjectVolume {
+	var image string
+	_ = db.DB.QueryRow("SELECT image FROM projects WHERE id = ?", projectID).Scan(&image)
+	if image == "" {
+		return vols
+	}
+	for _, m := range services.RequiredHostMounts(image) {
+		covered := false
+		for _, v := range vols {
+			if v.ContainerPath == m.Target {
+				covered = true
+				break
+			}
+		}
+		if covered {
+			continue
+		}
+		name := "docker-sock"
+		if m.Source != services.DockerSockHostPath {
+			name = strings.Trim(strings.ReplaceAll(strings.Trim(m.Target, "/"), "/", "-"), "-")
+			if name == "" {
+				name = "host-mount"
+			}
+		}
+		vols = append(vols, models.ProjectVolume{
+			ProjectID:     projectID,
+			Name:          name,
+			HostPath:      m.Source,
+			ContainerPath: m.Target,
+			HostDir:       m.Source,
+			Automatic:     true,
+		})
+	}
+	return vols
 }
 
 // syncProjectDataMount points the project's default data volume at the folder
@@ -138,6 +181,7 @@ func ProjectVolumesHandler(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusInternalServerError, "Could not load volumes")
 			return
 		}
+		vols = appendAutomaticVolumes(projectID, vols)
 		respondJSON(w, http.StatusOK, vols)
 	case http.MethodPost:
 		var req struct {
