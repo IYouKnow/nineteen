@@ -56,7 +56,7 @@ func cleanupOrphans() {
 	projectTables := []string{
 		"project_members", "deployments", "runtime_logs", "env_vars",
 		"build_file_overrides", "database_connections", "project_volumes",
-		"project_triggers", "project_webhooks", "deploy_events",
+		"project_ports", "project_triggers", "project_webhooks", "deploy_events",
 	}
 	for _, t := range projectTables {
 		if _, err := DB.Exec("DELETE FROM " + t + " WHERE project_id NOT IN (SELECT id FROM projects)"); err != nil {
@@ -289,6 +289,18 @@ func runMigrations() {
 			updated_date DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_project_volumes_project ON project_volumes(project_id)`,
+		`CREATE TABLE IF NOT EXISTS project_ports (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			container_port INTEGER NOT NULL,
+			host_port INTEGER,
+			protocol TEXT DEFAULT 'tcp',
+			label TEXT DEFAULT '',
+			is_primary BOOLEAN DEFAULT FALSE,
+			created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_date DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_project_ports_project ON project_ports(project_id)`,
 		`CREATE TABLE IF NOT EXISTS project_triggers (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

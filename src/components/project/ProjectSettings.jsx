@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import EnvVarEditor from "./EnvVarEditor";
 import RuntimeControls from "./RuntimeControls";
+import ProjectPorts from "./ProjectPorts";
 import ConfirmDialog from "@/components/dev/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -95,6 +96,10 @@ export default function ProjectSettings({ project, envVars = [], environment, is
             </Button>
           </div>
         </div>
+      </div>
+
+      <div className="border-t border-border/60 pt-6">
+        <ProjectPorts project={project} />
       </div>
 
       <div className="border-t border-border/60 pt-6">

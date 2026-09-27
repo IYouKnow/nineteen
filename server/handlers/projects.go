@@ -1514,6 +1514,73 @@ func buildAndDeploy(deployID int64, project models.Project, ref string) {
 	dockerfileDeploy(ctx, log, d, deployID, project, dir, dockerfiles, composeFiles, envPath, version, start)
 }
 
+// assignHostPort returns a host port to publish a mapping on: the configured
+// port when it is free, otherwise a freshly reserved free port. used tracks the
+// ports already claimed in this deploy so two mappings never collide. A
+// configured port that had to be reassigned is reported via log.
+func assignHostPort(d *services.Deployer, configured *int, used map[int]bool, log func(string, string)) int {
+	if configured != nil && *configured > 0 {
+		if !used[*configured] && d.WaitHostPortAvailable(*configured, 5*time.Second) {
+			used[*configured] = true
+			log("info", fmt.Sprintf("Using configured port %d", *configured))
+			return *configured
+		}
+		log("warn", fmt.Sprintf("Configured port %d is already in use — assigning a free port instead", *configured))
+	}
+	for {
+		hp, err := d.FreePort()
+		if err != nil {
+			return 0
+		}
+		if !used[hp] {
+			used[hp] = true
+			return hp
+		}
+	}
+}
+
+// projectPortMappings resolves the concrete host→container port mappings to
+// publish for a project. When the project has explicit ports configured each is
+// published (auto-assigning a host port when one isn't set); otherwise a single
+// mapping publishes defaultContainerPort on the project's configured host port.
+// It returns the mappings and the index of the primary one, whose host port
+// backs the project URL.
+func projectPortMappings(d *services.Deployer, project models.Project, defaultContainerPort int, log func(string, string)) ([]services.PortMapping, int) {
+	rows, err := loadProjectPorts(project.ID)
+	if err != nil || len(rows) == 0 {
+		hostPort := assignHostPort(d, project.Port, map[int]bool{}, log)
+		if hostPort == 0 {
+			return nil, -1
+		}
+		return []services.PortMapping{{HostPort: hostPort, ContainerPort: defaultContainerPort}}, 0
+	}
+
+	used := map[int]bool{}
+	mappings := make([]services.PortMapping, 0, len(rows))
+	primary := -1
+	for _, row := range rows {
+		hostPort := assignHostPort(d, row.HostPort, used, log)
+		if hostPort == 0 {
+			continue
+		}
+		mappings = append(mappings, services.PortMapping{HostPort: hostPort, ContainerPort: row.ContainerPort})
+		if row.IsPrimary && primary < 0 {
+			primary = len(mappings) - 1
+		}
+		// Persist an auto-assigned host port so the UI shows the real URL.
+		if row.HostPort == nil || *row.HostPort != hostPort {
+			db.DB.Exec("UPDATE project_ports SET host_port = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?", hostPort, row.ID)
+		}
+	}
+	if len(mappings) == 0 {
+		return nil, -1
+	}
+	if primary < 0 {
+		primary = 0
+	}
+	return mappings, primary
+}
+
 // imageDeploy runs a prebuilt container image: it pulls the image, then starts
 // it with the project's env vars and persistent volumes. No repository is
 // cloned and nothing is built.
@@ -1553,53 +1620,39 @@ func imageDeploy(ctx context.Context, log func(string, string), d *services.Depl
 		defer os.Remove(envPath)
 	}
 
-	containerPort := d.ImagePort(image)
-	if containerPort == 0 {
-		containerPort = 3000
+	appPort := d.ImagePort(image)
+	if appPort == 0 {
+		appPort = 3000
 		log("warn", "The image does not declare an exposed port — assuming 3000. Set a port in the project settings if this is wrong.")
 	} else {
-		log("info", fmt.Sprintf("Image exposes port %d", containerPort))
+		log("info", fmt.Sprintf("Image exposes port %d", appPort))
 	}
 
 	containerName := services.ProjectContainerName(project.ID, project.Slug)
 	// Remove this project's previous containers before probing the configured
-	// port, so a redeploy doesn't mistake its own running container for a
+	// ports, so a redeploy doesn't mistake its own running container for a
 	// conflicting one.
 	d.CleanupContainer(containerName)
 	d.CleanupContainer("nineteen-" + project.Slug)
 	d.CleanupCompose(services.ProjectComposeName(project.ID, project.Slug), func(line string) { log("info", line) })
 
-	hostPort := 0
-	if project.Port != nil && *project.Port > 0 {
-		if d.WaitHostPortAvailable(*project.Port, 5*time.Second) {
-			hostPort = *project.Port
-			log("info", fmt.Sprintf("Using configured port %d", hostPort))
-		} else {
-			log("warn", fmt.Sprintf("Configured port %d is already in use — assigning a free port instead", *project.Port))
-		}
+	mappings, primary := projectPortMappings(d, project, appPort, log)
+	if len(mappings) == 0 {
+		log("error", "Failed to reserve a port")
+		finishDeployment(deployID, project.ID, statusError, 0, "")
+		return
 	}
-	if hostPort == 0 {
-		hp, err := d.FreePort()
-		if err != nil {
-			log("error", "Failed to reserve a port: "+err.Error())
-			finishDeployment(deployID, project.ID, statusError, 0, "")
-			return
-		}
-		hostPort = hp
-		if project.Port != nil && *project.Port > 0 {
-			// Persist the reassigned port so the UI shows the real URL.
-			db.DB.Exec("UPDATE projects SET port = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?", hostPort, project.ID)
-			log("info", fmt.Sprintf("Assigned free port %d", hostPort))
-		}
-	}
+	primaryHost := mappings[primary].HostPort
 
 	syncProjectDataMount(project.ID, image, func(msg string) { log("info", msg) })
 	mounts := projectBindMounts(project.ID)
 	if len(mounts) > 0 {
 		log("info", fmt.Sprintf("Mounting %d persistent volume(s)", len(mounts)))
 	}
-	log("info", fmt.Sprintf("Starting container on %s:%d", services.ProjectBindAddr(), hostPort))
-	if _, err := d.Run(ctx, image, containerName, hostPort, containerPort, envPath, mounts, services.RestartArg(project.RestartPolicy, project.RestartRetries), func(line string) { log("info", line) }); err != nil {
+	for _, m := range mappings {
+		log("info", fmt.Sprintf("Publishing %s:%d → container %d", services.ProjectBindAddr(), m.HostPort, m.ContainerPort))
+	}
+	if _, err := d.Run(ctx, image, containerName, mappings, envPath, mounts, services.RestartArg(project.RestartPolicy, project.RestartRetries), func(line string) { log("info", line) }); err != nil {
 		if ctx.Err() != nil {
 			log("warn", "Deployment cancelled")
 			finishDeploymentCancelled(deployID, project)
@@ -1611,11 +1664,11 @@ func imageDeploy(ctx context.Context, log func(string, string), d *services.Depl
 	}
 
 	duration := int64(time.Since(start).Seconds())
-	url := fmt.Sprintf("http://localhost:%d", hostPort)
+	url := fmt.Sprintf("http://localhost:%d", primaryHost)
 	db.DB.Exec("UPDATE deployments SET status = ?, port = ?, url = ?, duration = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
-		statusReady, hostPort, url, duration, deployID)
-	db.DB.Exec("UPDATE projects SET status = 'running', last_deployed_at = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
-		time.Now().UTC().Format(time.RFC3339), project.ID)
+		statusReady, primaryHost, url, duration, deployID)
+	db.DB.Exec("UPDATE projects SET status = 'running', port = ?, last_deployed_at = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
+		primaryHost, time.Now().UTC().Format(time.RFC3339), project.ID)
 	log("success", "Deployment ready at "+url)
 	services.EnsureTailed(project.ID, deployID, containerName)
 }
@@ -1655,20 +1708,20 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 	}
 	log("info", "Image built successfully")
 
-	containerPort := d.ParseExpose(dir, dockerfile)
-	if containerPort == 0 {
-		containerPort = d.ImagePort(image)
-		if containerPort > 0 {
-			log("info", fmt.Sprintf("No EXPOSE in the Dockerfile — image exposes port %d", containerPort))
+	appPort := d.ParseExpose(dir, dockerfile)
+	if appPort == 0 {
+		appPort = d.ImagePort(image)
+		if appPort > 0 {
+			log("info", fmt.Sprintf("No EXPOSE in the Dockerfile — image exposes port %d", appPort))
 		}
 	}
-	if containerPort == 0 {
-		containerPort = 3000
+	if appPort == 0 {
+		appPort = 3000
 		log("warn", "No EXPOSE found in the Dockerfile or the image — assuming port 3000. Add EXPOSE <port> to your Dockerfile if this is wrong.")
 	}
 
 	// Remove this project's previous containers before probing the configured
-	// port, so a redeploy doesn't mistake its own running container for a
+	// ports, so a redeploy doesn't mistake its own running container for a
 	// conflicting one.
 	d.CleanupContainer(containerName)
 	// Remove the legacy slug-only container left behind by older versions so it
@@ -1676,32 +1729,14 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 	d.CleanupContainer("nineteen-" + project.Slug)
 	d.CleanupCompose(services.ProjectComposeName(project.ID, project.Slug), func(line string) { log("info", line) })
 
-	hostPort := 0
-	if project.Port != nil && *project.Port > 0 {
-		// The previous container was just removed; give Docker a moment to
-		// release its published port (Docker Desktop on Windows can lag) so a
-		// redeploy reuses the configured port instead of drifting to a new one.
-		if d.WaitHostPortAvailable(*project.Port, 5*time.Second) {
-			hostPort = *project.Port
-			log("info", fmt.Sprintf("Using configured port %d", hostPort))
-		} else {
-			log("warn", fmt.Sprintf("Configured port %d is already in use — assigning a free port instead", *project.Port))
-		}
+	mappings, primary := projectPortMappings(d, project, appPort, log)
+	if len(mappings) == 0 {
+		log("error", "Failed to reserve a port")
+		finishDeployment(deployID, project.ID, statusError, 0, "")
+		return
 	}
-	if hostPort == 0 {
-		hp, err := d.FreePort()
-		if err != nil {
-			log("error", "Failed to reserve a port: "+err.Error())
-			finishDeployment(deployID, project.ID, statusError, 0, "")
-			return
-		}
-		hostPort = hp
-		if project.Port != nil && *project.Port > 0 {
-			// Persist the reassigned port so the UI shows the real URL.
-			db.DB.Exec("UPDATE projects SET port = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?", hostPort, project.ID)
-			log("info", fmt.Sprintf("Assigned free port %d", hostPort))
-		}
-	}
+	primaryHost := mappings[primary].HostPort
+
 	// Point the project's data volume at wherever the built image actually
 	// writes, so the Files tab reflects the app's real data directory.
 	syncProjectDataMount(project.ID, image, func(msg string) { log("info", msg) })
@@ -1709,8 +1744,10 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 	if len(mounts) > 0 {
 		log("info", fmt.Sprintf("Mounting %d persistent volume(s)", len(mounts)))
 	}
-	log("info", fmt.Sprintf("Starting container on %s:%d", services.ProjectBindAddr(), hostPort))
-	if _, err := d.Run(ctx, image, containerName, hostPort, containerPort, envPath, mounts, services.RestartArg(project.RestartPolicy, project.RestartRetries), func(line string) { log("info", line) }); err != nil {
+	for _, m := range mappings {
+		log("info", fmt.Sprintf("Publishing %s:%d → container %d", services.ProjectBindAddr(), m.HostPort, m.ContainerPort))
+	}
+	if _, err := d.Run(ctx, image, containerName, mappings, envPath, mounts, services.RestartArg(project.RestartPolicy, project.RestartRetries), func(line string) { log("info", line) }); err != nil {
 		if ctx.Err() != nil {
 			log("warn", "Deployment cancelled")
 			finishDeploymentCancelled(deployID, project)
@@ -1722,11 +1759,11 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 	}
 
 	duration := int64(time.Since(start).Seconds())
-	url := fmt.Sprintf("http://localhost:%d", hostPort)
+	url := fmt.Sprintf("http://localhost:%d", primaryHost)
 	db.DB.Exec("UPDATE deployments SET status = ?, port = ?, url = ?, duration = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
-		statusReady, hostPort, url, duration, deployID)
-	db.DB.Exec("UPDATE projects SET status = 'running', last_deployed_at = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
-		time.Now().UTC().Format(time.RFC3339), project.ID)
+		statusReady, primaryHost, url, duration, deployID)
+	db.DB.Exec("UPDATE projects SET status = 'running', port = ?, last_deployed_at = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
+		primaryHost, time.Now().UTC().Format(time.RFC3339), project.ID)
 	log("success", "Deployment ready at "+url)
 	services.EnsureTailed(project.ID, deployID, containerName)
 }

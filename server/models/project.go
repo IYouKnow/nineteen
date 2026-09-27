@@ -72,6 +72,21 @@ type ProjectVolume struct {
 	UpdatedDate   string `json:"updated_date"`
 }
 
+// ProjectPort is a container port published on the host for a project. HostPort
+// is optional: when nil (or 0) a free host port is assigned at deploy time.
+// Exactly one mapping is primary — its host port backs the project's URL.
+type ProjectPort struct {
+	ID            int64  `json:"id"`
+	ProjectID     int64  `json:"project_id"`
+	ContainerPort int    `json:"container_port"`
+	HostPort      *int   `json:"host_port"`
+	Protocol      string `json:"protocol"`
+	Label         string `json:"label"`
+	IsPrimary     bool   `json:"is_primary"`
+	CreatedDate   string `json:"created_date"`
+	UpdatedDate   string `json:"updated_date"`
+}
+
 type Deployment struct {
 	ID           int64  `json:"id"`
 	UserID       int64  `json:"user_id"`

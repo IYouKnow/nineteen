@@ -275,6 +275,22 @@ export const projectVolumes = {
     doFetch(`/api/projects/${projectId}/volumes/${volumeId}`, { method: "DELETE" }),
 };
 
+export const projectPorts = {
+  list: (projectId) => doFetch(`/api/projects/${projectId}/ports`),
+  create: (projectId, payload) =>
+    doFetch(`/api/projects/${projectId}/ports`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  update: (projectId, portId, payload) =>
+    doFetch(`/api/projects/${projectId}/ports/${portId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  remove: (projectId, portId) =>
+    doFetch(`/api/projects/${projectId}/ports/${portId}`, { method: "DELETE" }),
+};
+
 export const projectFiles = {
   list: (projectId) => doFetch(`/api/projects/${projectId}/files`),
   upload: (projectId, parent, files) => {

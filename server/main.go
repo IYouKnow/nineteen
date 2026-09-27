@@ -185,6 +185,11 @@ func projectRoutePermission(method string, seg []string) (string, bool) {
 			return "projects.volumes.read", true
 		}
 		return "projects.volumes.manage", true
+	case "ports":
+		if read {
+			return "projects.ports.read", true
+		}
+		return "projects.ports.manage", true
 	case "buildfile":
 		if read {
 			return "projects.buildfile.read", true
@@ -383,6 +388,8 @@ func main() {
 	mux.HandleFunc("/api/projects/{id}/container-files/download", handlers.ProjectContainerFileDownloadHandler)
 	mux.HandleFunc("/api/projects/{id}/volumes", handlers.ProjectVolumesHandler)
 	mux.HandleFunc("/api/projects/{id}/volumes/{volumeId}", handlers.ProjectVolumeHandler)
+	mux.HandleFunc("/api/projects/{id}/ports", handlers.ProjectPortsHandler)
+	mux.HandleFunc("/api/projects/{id}/ports/{portId}", handlers.ProjectPortHandler)
 	mux.HandleFunc("/api/projects/{id}/buildfile", handlers.ProjectBuildFileHandler)
 	mux.HandleFunc("/api/projects/{id}/triggers", handlers.ProjectTriggersHandler)
 	mux.HandleFunc("/api/projects/{id}/triggers/{triggerId}", handlers.ProjectTriggerItemHandler)

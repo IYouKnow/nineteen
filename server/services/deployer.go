@@ -225,22 +225,68 @@ func (d *Deployer) ParseExpose(dir, dockerfile string) int {
 	return ParseExposeContent(data)
 }
 
-// ImagePort returns the lowest port the built image EXPOSEs (inherited from a
-// base image counts too), or 0 if none.
-func (d *Deployer) ImagePort(image string) int {
+// ImagePorts returns every TCP port the image EXPOSEs (inherited from a base
+// image counts too), ascending. Returns nil if none.
+func (d *Deployer) ImagePorts(image string) []int {
 	out, err := exec.Command("docker", "inspect", "--format", "{{json .Config.ExposedPorts}}", image).Output()
 	if err != nil {
-		return 0
+		return nil
 	}
 	var ports map[string]struct{}
 	if json.Unmarshal(out, &ports) != nil {
-		return 0
+		return nil
 	}
-	best := 0
+	list := make([]int, 0, len(ports))
 	for k := range ports {
 		p := strings.SplitN(k, "/", 2)[0]
-		if n, err := strconv.Atoi(p); err == nil && (best == 0 || n < best) {
-			best = n
+		if n, err := strconv.Atoi(p); err == nil && n > 0 {
+			list = append(list, n)
+		}
+	}
+	sort.Ints(list)
+	return list
+}
+
+// ImagePort returns the port an image's web UI most likely listens on. It
+// prefers a well-known web port and never picks an SSH port while any other
+// option exists, so multi-port images such as gitea/gitea (22 + 3000) resolve
+// to their web port instead of SSH. Returns 0 when the image declares no ports.
+func (d *Deployer) ImagePort(image string) int {
+	return PickAppContainerPort(d.ImagePorts(image))
+}
+
+// knownWebPorts lists common HTTP(S) ports, most likely first, used to break
+// ties when an image exposes several non-SSH ports.
+var knownWebPorts = []int{80, 443, 3000, 5000, 8000, 8080, 8443, 9000, 9090, 10000, 8888}
+
+// PickAppContainerPort chooses the port most likely to serve an app's web UI
+// from an image's exposed ports. It ignores SSH ports (22) while any other
+// option exists, prefers a well-known web port, and otherwise falls back to the
+// lowest remaining port. Returns 0 for an empty list.
+func PickAppContainerPort(ports []int) int {
+	if len(ports) == 0 {
+		return 0
+	}
+	candidates := make([]int, 0, len(ports))
+	for _, p := range ports {
+		if p != 22 && p != 2222 {
+			candidates = append(candidates, p)
+		}
+	}
+	if len(candidates) == 0 {
+		candidates = ports
+	}
+	for _, want := range knownWebPorts {
+		for _, p := range candidates {
+			if p == want {
+				return p
+			}
+		}
+	}
+	best := candidates[0]
+	for _, p := range candidates {
+		if p < best {
+			best = p
 		}
 	}
 	return best
@@ -672,12 +718,21 @@ func (d *Deployer) ApplyRestartPolicy(projectID int64, slug, buildStrategy, rest
 	_ = exec.Command("docker", "update", "--restart", restartArg, name).Run()
 }
 
-// Run starts a published container and returns its id. If envFile is non-empty
-// its content is passed to the container via --env-file. Each bind mount maps a
-// host path into the container so data persists across redeploys. restartArg is
-// the Docker restart policy (see RestartArg); empty falls back to
+// PortMapping publishes one container port on the host. An entry with a
+// non-positive HostPort or ContainerPort is skipped.
+type PortMapping struct {
+	HostPort      int `json:"host_port"`
+	ContainerPort int `json:"container_port"`
+}
+
+// Run starts a published container and returns its id. Each mapping is
+// published as host:container so an app that listens on more than one port
+// (e.g. Gitea's 3000 web UI and 22 SSH) can expose them all. If envFile is
+// non-empty its content is passed to the container via --env-file. Each bind
+// mount maps a host path into the container so data persists across redeploys.
+// restartArg is the Docker restart policy (see RestartArg); empty falls back to
 // "unless-stopped".
-func (d *Deployer) Run(ctx context.Context, image, name string, hostPort, containerPort int, envFile string, mounts []BindMount, restartArg string, log func(string)) (string, error) {
+func (d *Deployer) Run(ctx context.Context, image, name string, ports []PortMapping, envFile string, mounts []BindMount, restartArg string, log func(string)) (string, error) {
 	if restartArg == "" {
 		restartArg = "unless-stopped"
 	}
@@ -685,7 +740,12 @@ func (d *Deployer) Run(ctx context.Context, image, name string, hostPort, contai
 		"run", "-d",
 		"--name", name,
 		"--restart", restartArg,
-		"-p", fmt.Sprintf("%s:%d:%d", ProjectBindAddr(), hostPort, containerPort),
+	}
+	for _, p := range ports {
+		if p.HostPort <= 0 || p.ContainerPort <= 0 {
+			continue
+		}
+		args = append(args, "-p", fmt.Sprintf("%s:%d:%d", ProjectBindAddr(), p.HostPort, p.ContainerPort))
 	}
 	if envFile != "" {
 		args = append(args, "--env-file", envFile)
