@@ -77,6 +77,8 @@ export const projects = {
       doFetch(`/api/projects/${id}/triggers/${triggerId}`, { method: "DELETE" }),
   },
   events: (id) => doFetch(`/api/projects/${id}/events`),
+  requiredEnv: (id, ref) =>
+    doFetch(`/api/projects/${id}/required-env${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`),
   members: {
     list: (id) => doFetch(`/api/projects/${id}/members`),
     add: (id, payload) =>

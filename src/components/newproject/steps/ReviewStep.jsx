@@ -1,4 +1,4 @@
-import { GitBranch, Layers, Rocket, Globe, Ship, HardDrive, Tag, Zap } from "lucide-react";
+import { GitBranch, Layers, Rocket, Globe, Ship, HardDrive, Tag, Zap, KeyRound } from "lucide-react";
 import { SOURCES, TEMPLATES } from "@/lib/newProject";
 import { getFramework, projectAddress } from "@/lib/devStatus";
 import { strategySummary } from "@/lib/strategies";
@@ -26,6 +26,9 @@ export default function ReviewStep({ source, config, repository, buildLabel, isI
     !st.type || st.type === "manual"
       ? "Manual only"
       : strategySummary({ ...st, strategy: st.type });
+  const envList = isImage ? source?.env || [] : source?.repoEnv || [];
+  const envSet = envList.filter((e) => String(e.value || "").trim()).length;
+  const envMissing = envList.filter((e) => e.required && !String(e.value || "").trim()).length;
 
   return (
     <div className="animate-fade-in">
@@ -76,6 +79,20 @@ export default function ReviewStep({ source, config, repository, buildLabel, isI
             <Row icon={<Ship className="h-3.5 w-3.5" />} label="Build" value={<span className="font-mono text-xs">{buildLabel || "Dockerfile · auto-detected"}</span>} />
             <Row icon={<Layers className="h-3.5 w-3.5" />} label="Framework" value={fw.label} />
             <Row icon={<Zap className="h-3.5 w-3.5" />} label="Deploy strategy" value={strategyLabel} />
+            {envList.length > 0 && (
+              <Row
+                icon={<KeyRound className="h-3.5 w-3.5" />}
+                label="Environment"
+                value={
+                  <span className="font-mono text-xs">
+                    {envSet}/{envList.length} set
+                    {envMissing > 0 && (
+                      <span className="ml-1.5 text-warning">({envMissing} required missing)</span>
+                    )}
+                  </span>
+                }
+              />
+            )}
           </div>
         </section>
 

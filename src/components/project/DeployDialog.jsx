@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { shortSha, timeAgo } from "@/lib/format";
+import EnvCheckSection from "@/components/project/EnvCheckSection";
 
 const SOURCES = [
   { id: "default", label: "Project default", icon: Wand2 },
@@ -73,6 +74,8 @@ export default function DeployDialog({ project, open, onOpenChange }) {
   const [ref, setRef] = useState("");
   const [branch, setBranch] = useState("");
   const [note, setNote] = useState("");
+  const [envValues, setEnvValues] = useState({});
+  const [deployAnyway, setDeployAnyway] = useState(false);
 
   const isBuilding = project?.status === "building";
 
@@ -98,6 +101,8 @@ export default function DeployDialog({ project, open, onOpenChange }) {
       setRef("");
       setNote("");
       setBranch("");
+      setEnvValues({});
+      setDeployAnyway(false);
     }
   }, [open]);
 
@@ -130,22 +135,62 @@ export default function DeployDialog({ project, open, onOpenChange }) {
     return ref;
   }, [source, ref]);
 
-  const canDeploy = !isBuilding && (source === "default" || !!selectedRef);
+  // Env vars the repo declares vs. what's already saved, so missing values can
+  // be filled in here instead of hunting through the repo. The required-env
+  // lookup is best-effort: repos without detectable vars (or unreadable refs)
+  // simply show no section.
+  const envRef = source === "commit" && !selectedRef ? branch : selectedRef;
+  const { data: requiredEnv } = useQuery({
+    queryKey: ["required-env", project?.id, envRef],
+    queryFn: () => api.projects.requiredEnv(project.id, envRef),
+    enabled: !!project?.id && open,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const { data: savedVars = [] } = useQuery({
+    queryKey: ["envvars", String(project?.id)],
+    queryFn: () => api.envVars.list(project.id),
+    enabled: !!project?.id && open,
+    staleTime: 30_000,
+  });
+
+  const required = requiredEnv?.required || [];
+  const savedKeys = useMemo(() => {
+    const s = new Set();
+    for (const v of savedVars || []) {
+      if (v.has_value || String(v.value || "").trim()) s.add(v.key);
+    }
+    for (const [k, val] of Object.entries(envValues)) {
+      if (String(val || "").trim()) s.add(k);
+    }
+    return s;
+  }, [savedVars, envValues]);
+
+  const missingCount = required.filter((r) => !savedKeys.has(r.key)).length;
+  const envBlocked = missingCount > 0 && !deployAnyway;
 
   const deployMutation = useMutation({
-    mutationFn: () =>
-      api.deployments.create(project.id, {
+    mutationFn: async () => {
+      // Persist any env values filled in here first (upsert), so the deploy
+      // that follows picks them up.
+      for (const [key, val] of Object.entries(envValues)) {
+        if (!String(val || "").trim()) continue;
+        await api.envVars.create(project.id, { key, value: val, is_secret: false });
+      }
+      return api.deployments.create(project.id, {
         source,
         ref: selectedRef,
         commit_message: note.trim() || undefined,
         author: "you",
         trigger: "manual",
-      }),
+      });
+    },
     onSuccess: (deployment) => {
       qc.invalidateQueries({ queryKey: ["deployments", project.id] });
       qc.invalidateQueries({ queryKey: ["deployments-recent"] });
       qc.invalidateQueries({ queryKey: ["project", project.id] });
       qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["envvars", String(project.id)] });
       onOpenChange(false);
       toast.success("Deployment started");
       navigate(`/projects/${project.id}/deployments/${deployment.id}`);
@@ -154,6 +199,9 @@ export default function DeployDialog({ project, open, onOpenChange }) {
       toast.error("Could not start deployment", { description: err?.message });
     },
   });
+
+  const canDeploy =
+    !isBuilding && (source === "default" || !!selectedRef) && !envBlocked && !deployMutation.isPending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -332,6 +380,28 @@ export default function DeployDialog({ project, open, onOpenChange }) {
             </div>
           )}
         </div>
+
+        {required.length > 0 && (
+          <div>
+            <EnvCheckSection
+              required={required}
+              values={envValues}
+              savedKeys={savedKeys}
+              onChange={(k, v) => setEnvValues((prev) => ({ ...prev, [k]: v }))}
+            />
+            {missingCount > 0 && (
+              <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={deployAnyway}
+                  onChange={(e) => setDeployAnyway(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-primary"
+                />
+                Deploy anyway with {missingCount} missing variable{missingCount === 1 ? "" : "s"}
+              </label>
+            )}
+          </div>
+        )}
 
         <div>
           <Label className="text-xs text-muted-foreground">Note (optional)</Label>

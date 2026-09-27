@@ -30,6 +30,7 @@ const emptySource = {
   imageTag: "latest",
   imageMeta: null,
   env: [],
+  repoEnv: [],
 };
 
 export default function NewProject() {
@@ -157,8 +158,30 @@ export default function NewProject() {
   // Reset build selections when the target repository or ref changes.
   useEffect(() => {
     setConfig((c) => ({ ...c, dockerMode: "dockerfile", dockerfilePath: "", composePath: "", port: "" }));
+    setSource((s) => ({ ...s, repoEnv: [] }));
     prefilledRef.current = false;
   }, [scanRepo, effectiveBranch]);
+
+  // Seed the repo env form from the scan's detected vars once it lands, so the
+  // user sees exactly what the repo expects instead of guessing.
+  useEffect(() => {
+    const detected = scan?.required_env || [];
+    if (!detected.length) return;
+    setSource((s) => {
+      if (s.repoEnv?.length) return s;
+      return {
+        ...s,
+        repoEnv: detected.map((r) => ({
+          key: r.key,
+          value: r.default || "",
+          required: !!r.required,
+          def: r.default || "",
+          source: r.source || "",
+        })),
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scan]);
 
   // Preselect the best build file once a scan lands.
   useEffect(() => {
@@ -315,6 +338,23 @@ export default function NewProject() {
           }
         }
       }
+      // Persist repo env values filled in during the wizard (detected from
+      // .env.example / Dockerfile / compose). Only non-empty values are saved;
+      // required-but-empty keys are left for the deploy dialog to catch.
+      if (!isImage && source.repoEnv?.length) {
+        for (const e of source.repoEnv) {
+          if (!e.key || !String(e.value || "").trim()) continue;
+          try {
+            await api.envVars.create(project.id, {
+              key: e.key,
+              value: e.value,
+              is_secret: false,
+            });
+          } catch (err) {
+            console.error("Failed to create env var", e.key, err);
+          }
+        }
+      }
       // Create the chosen automatic deployment strategy. Non-fatal: a failed
       // webhook registration must not block the initial deployment.
       if (wantsStrategy) {
@@ -401,6 +441,9 @@ export default function NewProject() {
               buildLabel={buildLabel}
               isImage={isImage}
               imageLabel={repository}
+              scan={scan}
+              source={source}
+              setSource={setSource}
             />
           )}
           {activeStep === "review" && (

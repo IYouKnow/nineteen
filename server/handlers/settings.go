@@ -829,6 +829,10 @@ type ScanResponse struct {
 	// BuildContexts suggests a build-context directory per Dockerfile
 	// (dockerfile path -> repo-relative context), so the wizard can pre-fill it.
 	BuildContexts map[string]string `json:"build_contexts"`
+	// RequiredEnv lists the environment variables the repo expects (from
+	// .env.example, the Dockerfile and compose interpolations), so the wizard
+	// and deploy dialog can prompt for them instead of letting the user guess.
+	RequiredEnv []services.RequiredEnvVar `json:"required_env"`
 }
 
 var repoNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
@@ -895,6 +899,7 @@ func IntegrationScanHandler(w http.ResponseWriter, r *http.Request) {
 	// a repo with many Dockerfile variants can't cause a burst of API calls.
 	port := 0
 	contexts := make(map[string]string, len(dockerfiles))
+	var firstDockerfile []byte
 	for i, df := range dockerfiles {
 		if i >= scanContextLimit {
 			break
@@ -905,9 +910,16 @@ func IntegrationScanHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if i == 0 {
 			port = services.ParseExposeContent(data)
+			firstDockerfile = data
 		}
 		contexts[df] = services.SuggestBuildContext(df, data, files)
 	}
+
+	// Detect required env vars from the repo: the first .env.example-style
+	// file, the best-ranked Dockerfile (already fetched above) and the
+	// best-ranked compose file. Capped at 3 extra file fetches so scans stay
+	// cheap; every fetch failure simply yields fewer detections, never an error.
+	requiredEnv := scanRequiredEnv(client, repo, branch, files, firstDockerfile, composeFiles)
 
 	if len(files) > scanFileLimit {
 		files = files[:scanFileLimit]
@@ -925,6 +937,7 @@ func IntegrationScanHandler(w http.ResponseWriter, r *http.Request) {
 		ComposeFiles:  composeFiles,
 		Port:          port,
 		BuildContexts: contexts,
+		RequiredEnv:   requiredEnv,
 	})
 }
 
@@ -1002,6 +1015,38 @@ func mergeRepoVersions(releases, tags []services.RepoVersion) []services.RepoVer
 		out = append(out, t)
 	}
 	return out
+}
+
+// scanRequiredEnv detects the env vars a repository expects without failing
+// the scan: it parses the first .env.example-style file, the already-fetched
+// best Dockerfile content and the best compose file (one extra fetch at most).
+// Any fetch error yields fewer detections, never a scan failure.
+func scanRequiredEnv(client repoClient, repo, branch string, files []string, firstDockerfile []byte, composeFiles []string) []services.RequiredEnvVar {
+	lower := map[string]string{}
+	for _, f := range files {
+		lower[strings.ToLower(f)] = f
+	}
+	var envBlob []byte
+	envSource := ".env.example"
+	for _, name := range []string{".env.example", ".env.sample", ".env.template", "example.env", ".env.example.dist"} {
+		if orig, ok := lower[strings.ToLower(name)]; ok {
+			if data, err := client.GetRepoFile(repo, branch, orig); err == nil && len(data) > 0 {
+				envBlob, envSource = data, orig
+			}
+			break
+		}
+	}
+	var composeBlob []byte
+	if len(composeFiles) > 0 {
+		if data, err := client.GetRepoFile(repo, branch, composeFiles[0]); err == nil && len(data) > 0 {
+			composeBlob = data
+		}
+	}
+	required := services.DetectRequiredEnvFromContents(envBlob, envSource, firstDockerfile, composeBlob)
+	if required == nil {
+		required = []services.RequiredEnvVar{}
+	}
+	return required
 }
 
 // IntegrationPortHandler fetches a single repository file (typically a

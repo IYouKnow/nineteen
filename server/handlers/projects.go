@@ -1500,6 +1500,17 @@ func buildAndDeploy(deployID int64, project models.Project, ref string) {
 	dockerfiles := d.FindDockerfiles(dir)
 	composeFiles := d.FindComposeFiles(dir)
 
+	// Compare the repo's declared env vars against the saved ones so a missing
+	// variable surfaces in the deploy log instead of failing obscurely at
+	// runtime. Detection never fails the deploy — it only warns.
+	dockerfileRel := ""
+	if project.DockerfilePath != "" {
+		dockerfileRel = project.DockerfilePath
+	} else if len(dockerfiles) > 0 {
+		dockerfileRel = dockerfiles[0]
+	}
+	logMissingRequiredEnv(log, dir, dockerfileRel, composeFiles, envVars)
+
 	useCompose := project.ComposePath != "" || project.BuildStrategy == "compose"
 	if !useCompose && project.DockerfilePath == "" && project.BuildStrategy != "dockerfile" && len(dockerfiles) == 0 && len(composeFiles) > 0 {
 		// auto mode: fall back to compose when the repo only has one
@@ -1512,6 +1523,31 @@ func buildAndDeploy(deployID int64, project models.Project, ref string) {
 		return
 	}
 	dockerfileDeploy(ctx, log, d, deployID, project, dir, dockerfiles, composeFiles, envPath, version, start)
+}
+
+// logMissingRequiredEnv detects the env vars declared by the cloned repo and
+// warns about the ones with no saved value, so the user knows exactly what to
+// set in Settings → Environment Variables. It never fails the deploy.
+func logMissingRequiredEnv(log func(string, string), dir, dockerfileRel string, composeFiles []string, saved []models.EnvVar) {
+	required := services.DetectRequiredEnvFromDir(dir, dockerfileRel, composeFiles)
+	if len(required) == 0 {
+		return
+	}
+	have := map[string]string{}
+	for _, v := range saved {
+		if strings.TrimSpace(v.Value) != "" {
+			have[v.Key] = v.Value
+		}
+	}
+	missing := services.MissingRequiredEnv(required, have)
+	if len(missing) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(missing))
+	for _, m := range missing {
+		keys = append(keys, m.Key)
+	}
+	log("warn", fmt.Sprintf("Missing environment variables: %s — set them in Settings → Environment Variables and redeploy if the app misbehaves", strings.Join(keys, ", ")))
 }
 
 // assignHostPort returns a host port to publish a mapping on: the configured

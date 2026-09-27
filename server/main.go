@@ -175,6 +175,8 @@ func projectRoutePermission(method string, seg []string) (string, bool) {
 			return "projects.env.read", true
 		}
 		return "projects.env.manage", true
+	case "required-env":
+		return "projects.read", true
 	case "files", "container-files":
 		if read {
 			return "projects.files.read", true
@@ -379,6 +381,7 @@ func main() {
 	mux.HandleFunc("/api/projects/{id}/refs", handlers.ProjectRefsHandler)
 	mux.HandleFunc("/api/projects/{id}/commits", handlers.ProjectCommitsHandler)
 	mux.HandleFunc("/api/projects/{id}/env-vars", handlers.ProjectEnvVarsHandler)
+	mux.HandleFunc("/api/projects/{id}/required-env", handlers.ProjectRequiredEnvHandler)
 	mux.HandleFunc("/api/projects/{id}/files", handlers.ProjectFilesHandler)
 	mux.HandleFunc("/api/projects/{id}/files/upload", handlers.ProjectFileUploadHandler)
 	mux.HandleFunc("/api/projects/{id}/files/folder", handlers.ProjectFolderHandler)

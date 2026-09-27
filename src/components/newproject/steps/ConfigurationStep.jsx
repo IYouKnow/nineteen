@@ -7,9 +7,16 @@ import { cn } from "@/lib/utils";
 const selectCls =
   "mt-1.5 h-9 w-full rounded-md border border-input bg-card px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
 
-export default function ConfigurationStep({ config, setConfig, sourceLabel, buildLabel, isImage, imageLabel }) {
+export default function ConfigurationStep({ config, setConfig, sourceLabel, buildLabel, isImage, imageLabel, scan, source, setSource }) {
   const update = (patch) => setConfig((c) => ({ ...c, ...patch }));
   const isRelease = config.deployType === "release" && !!config.deployRef;
+  const repoEnv = source?.repoEnv || [];
+  const setRepoEnvValue = (key, value) =>
+    setSource?.((s) => ({
+      ...s,
+      repoEnv: (s.repoEnv || []).map((e) => (e.key === key ? { ...e, value } : e)),
+    }));
+  const detectedSources = [...new Set((scan?.required_env || []).map((r) => r.source).filter(Boolean))];
 
   return (
     <div className="animate-fade-in">
@@ -108,6 +115,37 @@ export default function ConfigurationStep({ config, setConfig, sourceLabel, buil
           </p>
         </div>
       </div>
+
+      {!isImage && repoEnv.length > 0 && (
+        <div className="mt-5 rounded-lg border border-border bg-muted/15 p-4">
+          <p className="text-xs font-medium">
+            Environment variables
+            <span className="ml-1.5 font-mono text-muted-foreground">
+              {repoEnv.filter((e) => String(e.value || "").trim()).length}/{repoEnv.length} set
+            </span>
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            Detected from {detectedSources.join(", ") || "the repository"}. Fill in what you can —
+            anything left empty can still be set later before deploying.
+          </p>
+          <div className="mt-3 space-y-2">
+            {repoEnv.map((e) => (
+              <div key={e.key} className="grid grid-cols-[1fr_1.2fr] items-center gap-2">
+                <span className="truncate font-mono text-xs text-foreground" title={e.key}>
+                  {e.key}
+                  {e.required && <span className="ml-1.5 text-[10px] text-warning">required</span>}
+                </span>
+                <Input
+                  value={e.value || ""}
+                  onChange={(ev) => setRepoEnvValue(e.key, ev.target.value)}
+                  placeholder={e.def ? `e.g. ${e.def}` : e.required ? "required" : "optional"}
+                  className="h-8 font-mono text-xs"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
