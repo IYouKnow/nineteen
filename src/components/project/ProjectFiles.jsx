@@ -101,7 +101,7 @@ export default function ProjectFiles({ projectId }) {
   const [addOpen, setAddOpen] = useState(false);
   const [name, setName] = useState("");
   const [hostPath, setHostPath] = useState("");
-  const [containerPath, setContainerPath] = useState("/app/data");
+  const [containerPath, setContainerPath] = useState("");
   const [saving, setSaving] = useState(false);
   const [mode, setMode] = useState("persistent");
 
@@ -125,7 +125,7 @@ export default function ProjectFiles({ projectId }) {
   const openAdd = () => {
     setName("");
     setHostPath("");
-    setContainerPath("/app/data");
+    setContainerPath("");
     setAddOpen(true);
   };
 
@@ -309,11 +309,12 @@ export default function ProjectFiles({ projectId }) {
               <Input
                 value={containerPath}
                 onChange={(e) => setContainerPath(e.target.value)}
-                placeholder="/app/data"
+                placeholder="/workspace"
                 className="mt-1.5 font-mono"
               />
               <p className="mt-1 text-[11px] text-muted-foreground">
-                The path your app writes to inside the container.
+                The path your app writes to inside the container. Must not already be mounted
+                (e.g. the default data folder <span className="font-mono">/app/data</span>).
               </p>
             </div>
           </div>
