@@ -315,11 +315,20 @@ func DeleteProjectEntry(projectID int64, entryPath string) error {
 }
 
 // SaveProjectUpload streams an uploaded file into parentPath, de-duplicating the
-// name when it already exists.
-func SaveProjectUpload(projectID int64, parentPath, filename string, r io.Reader) error {
-	name := filepath.Base(strings.TrimSpace(filename))
-	if !validEntryName(name) {
+// name when it already exists. relName may contain subdirectories (e.g.
+// "sub/dir/file.txt") to support folder uploads; each segment is validated and
+// the intermediate folders are created as needed.
+func SaveProjectUpload(projectID int64, parentPath, relName string, r io.Reader) error {
+	relName = strings.TrimSpace(strings.ReplaceAll(relName, "\\", "/"))
+	clean := strings.TrimPrefix(path.Clean("/"+relName), "/")
+	if clean == "" || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "\x00") {
 		return fmt.Errorf("invalid file name")
+	}
+	segments := strings.Split(clean, "/")
+	for _, seg := range segments {
+		if !validEntryName(seg) {
+			return fmt.Errorf("invalid file name")
+		}
 	}
 	parent, err := resolveProjectPath(projectID, parentPath)
 	if err != nil {
@@ -329,8 +338,12 @@ func SaveProjectUpload(projectID int64, parentPath, filename string, r io.Reader
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf("target folder not found")
 	}
-	name = uniqueEntryName(parent, name)
-	dst, err := os.OpenFile(filepath.Join(parent, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	dir := filepath.Join(parent, filepath.FromSlash(path.Join(segments[:len(segments)-1]...)))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	name := uniqueEntryName(dir, segments[len(segments)-1])
+	dst, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err
 	}

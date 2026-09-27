@@ -267,13 +267,22 @@ func ProjectFileUploadHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "No files uploaded")
 		return
 	}
-	for _, header := range files {
+	// "paths" carries the per-file relative path (e.g. "sub/dir/file.txt") for
+	// folder uploads; the browser strips directory information from the file's
+	// own name, so it can't be recovered from header.Filename alone. The values
+	// are appended in the same order as "files".
+	paths := r.MultipartForm.Value["paths"]
+	for i, header := range files {
+		rel := header.Filename
+		if i < len(paths) && strings.TrimSpace(paths[i]) != "" {
+			rel = paths[i]
+		}
 		f, err := header.Open()
 		if err != nil {
 			respondError(w, http.StatusBadRequest, "Could not read upload")
 			return
 		}
-		err = services.SaveProjectUpload(projectID, parent, header.Filename, f)
+		err = services.SaveProjectUpload(projectID, parent, rel, f)
 		f.Close()
 		if err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())

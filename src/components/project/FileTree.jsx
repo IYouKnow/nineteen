@@ -11,6 +11,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  FolderUp,
   HardDrive,
   Image as ImageIcon,
   Pencil,
@@ -95,6 +96,7 @@ function FileRow({
   onDelete,
   onDownload,
   onUpload,
+  onUploadFolder,
 }) {
   const isFolder = node.type === "folder";
   const Icon = nodeIcon(node, expanded);
@@ -135,17 +137,30 @@ function FileRow({
         </span>
         <span className="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
           {isFolder ? (
-            <button
-              type="button"
-              title={`Upload to ${node.path}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onUpload(node.path);
-              }}
-              className={ACTION_BTN}
-            >
-              <Upload className="h-3.5 w-3.5" />
-            </button>
+            <>
+              <button
+                type="button"
+                title={`Upload files to ${node.path}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpload(node.path);
+                }}
+                className={ACTION_BTN}
+              >
+                <Upload className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                title={`Upload folder to ${node.path}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUploadFolder(node.path);
+                }}
+                className={ACTION_BTN}
+              >
+                <FolderUp className="h-3.5 w-3.5" />
+              </button>
+            </>
           ) : (
             <button
               type="button"
@@ -207,6 +222,7 @@ export default function FileTree({
   const [folderParent, setFolderParent] = useState(null);
   const [folderName, setFolderName] = useState("");
   const inputRef = useRef(null);
+  const folderInputRef = useRef(null);
   const targetRef = useRef(tree?.path || null);
 
   const rows = useMemo(() => {
@@ -232,6 +248,11 @@ export default function FileTree({
   const pickFiles = (targetPath) => {
     targetRef.current = targetPath || tree?.path;
     inputRef.current?.click();
+  };
+
+  const pickFolder = (targetPath) => {
+    targetRef.current = targetPath || tree?.path;
+    folderInputRef.current?.click();
   };
 
   const handleFiles = (event) => {
@@ -291,14 +312,32 @@ export default function FileTree({
             size="sm"
             variant="outline"
             className="h-7 gap-1.5 text-xs"
-            title={`Upload to ${uploadTarget}`}
+            title={`Upload files to ${uploadTarget}`}
             onClick={() => pickFiles(uploadTarget)}
           >
             <Upload className="h-3.5 w-3.5" />
             Upload
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5 text-xs"
+            title={`Upload a folder with its files to ${uploadTarget}`}
+            onClick={() => pickFolder(uploadTarget)}
+          >
+            <FolderUp className="h-3.5 w-3.5" />
+            Upload folder
+          </Button>
         </div>
         <input ref={inputRef} type="file" multiple className="hidden" onChange={handleFiles} />
+        <input
+          ref={folderInputRef}
+          type="file"
+          multiple
+          webkitdirectory=""
+          className="hidden"
+          onChange={handleFiles}
+        />
       </div>
 
       <div className="max-h-[26rem] overflow-auto py-1">
@@ -318,6 +357,7 @@ export default function FileTree({
               onDelete={onDelete}
               onDownload={onDownload}
               onUpload={pickFiles}
+              onUploadFolder={pickFolder}
             />
           ))
         )}

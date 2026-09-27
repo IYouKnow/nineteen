@@ -296,7 +296,13 @@ export const projectFiles = {
   upload: (projectId, parent, files) => {
     const form = new FormData();
     form.append("path", parent || "");
-    Array.from(files).forEach((file) => form.append("files", file, file.name));
+    Array.from(files).forEach((file) => {
+      // webkitRelativePath is set for folder uploads ("sub/dir/file.txt"); plain
+      // file uploads fall back to the bare name.
+      const rel = file.webkitRelativePath || file.name;
+      form.append("files", file, file.name);
+      form.append("paths", rel);
+    });
     return doUpload(`/api/projects/${projectId}/files/upload`, form);
   },
   createFolder: (projectId, parent, name) =>
