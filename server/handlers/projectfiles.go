@@ -257,37 +257,21 @@ func ProjectFileUploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	// Stream the body rather than ParseMultipartForm: the form parser rejects
+	// requests with more than 1000 parts, which large folder uploads exceed.
+	mr, err := r.MultipartReader()
+	if err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid upload")
 		return
 	}
-	parent := r.FormValue("path")
-	files := r.MultipartForm.File["files"]
-	if len(files) == 0 {
-		respondError(w, http.StatusBadRequest, "No files uploaded")
+	saved, err := services.SaveProjectUploadStream(projectID, mr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// "paths" carries the per-file relative path (e.g. "sub/dir/file.txt") for
-	// folder uploads; the browser strips directory information from the file's
-	// own name, so it can't be recovered from header.Filename alone. The values
-	// are appended in the same order as "files".
-	paths := r.MultipartForm.Value["paths"]
-	for i, header := range files {
-		rel := header.Filename
-		if i < len(paths) && strings.TrimSpace(paths[i]) != "" {
-			rel = paths[i]
-		}
-		f, err := header.Open()
-		if err != nil {
-			respondError(w, http.StatusBadRequest, "Could not read upload")
-			return
-		}
-		err = services.SaveProjectUpload(projectID, parent, rel, f)
-		f.Close()
-		if err != nil {
-			respondError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+	if saved == 0 {
+		respondError(w, http.StatusBadRequest, "No files uploaded")
+		return
 	}
 	respondTree(w, projectID)
 }

@@ -1,8 +1,10 @@
 package services
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"os"
 	"path"
 	"path/filepath"
@@ -350,6 +352,67 @@ func SaveProjectUpload(projectID int64, parentPath, relName string, r io.Reader)
 	defer dst.Close()
 	_, err = io.Copy(dst, r)
 	return err
+}
+
+// SaveProjectUploadStream consumes an upload multipart stream and writes every
+// file part to the project folder, preserving relative paths. It streams parts
+// instead of using ParseMultipartForm because Go's form parser caps requests at
+// 1000 parts; a folder upload sends two parts per file (the file plus its
+// relative path), so large folders would otherwise be rejected with
+// "multipart: message too large".
+//
+// Expected fields, in this order: "path" (target folder), "paths" (a JSON array
+// of relative paths, one per file, in the same order as the file parts), then
+// the "files" parts. When "paths" is missing or malformed each file falls back
+// to its own (base) name.
+func SaveProjectUploadStream(projectID int64, mr *multipart.Reader) (int, error) {
+	parent := ""
+	var relPaths []string
+	saved := 0
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return saved, err
+		}
+		name := part.FormName()
+		isFile := part.FileName() != ""
+		switch {
+		case !isFile && name == "path":
+			b, err := io.ReadAll(io.LimitReader(part, 64<<10))
+			part.Close()
+			if err != nil {
+				return saved, err
+			}
+			parent = string(b)
+		case !isFile && name == "paths":
+			b, err := io.ReadAll(io.LimitReader(part, 16<<20))
+			part.Close()
+			if err != nil {
+				return saved, err
+			}
+			var list []string
+			if json.Unmarshal(b, &list) == nil {
+				relPaths = list
+			}
+		case isFile && name == "files":
+			rel := part.FileName()
+			if saved < len(relPaths) && strings.TrimSpace(relPaths[saved]) != "" {
+				rel = relPaths[saved]
+			}
+			err := SaveProjectUpload(projectID, parent, rel, part)
+			part.Close()
+			if err != nil {
+				return saved, fmt.Errorf("%s: %w", rel, err)
+			}
+			saved++
+		default:
+			part.Close()
+		}
+	}
+	return saved, nil
 }
 
 // OpenProjectFile returns the host path and info of a downloadable file.

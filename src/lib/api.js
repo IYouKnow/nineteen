@@ -294,15 +294,17 @@ export const projectPorts = {
 export const projectFiles = {
   list: (projectId) => doFetch(`/api/projects/${projectId}/files`),
   upload: (projectId, parent, files) => {
+    const list = Array.from(files);
     const form = new FormData();
     form.append("path", parent || "");
-    Array.from(files).forEach((file) => {
-      // webkitRelativePath is set for folder uploads ("sub/dir/file.txt"); plain
-      // file uploads fall back to the bare name.
-      const rel = file.webkitRelativePath || file.name;
-      form.append("files", file, file.name);
-      form.append("paths", rel);
-    });
+    // Send every relative path in one JSON field instead of one field per file.
+    // Go's multipart form parser caps a request at 1000 parts, and a per-file
+    // path field would exceed that for folders with more than ~500 files.
+    form.append(
+      "paths",
+      JSON.stringify(list.map((file) => file.webkitRelativePath || file.name))
+    );
+    list.forEach((file) => form.append("files", file, file.name));
     return doUpload(`/api/projects/${projectId}/files/upload`, form);
   },
   createFolder: (projectId, parent, name) =>
