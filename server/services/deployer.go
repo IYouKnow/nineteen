@@ -966,6 +966,17 @@ func (d *Deployer) FreePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
+// ReservedHostPort reports whether a host port must never be published on. Port
+// 22 is reserved because it is almost always the host's own SSH daemon, and when
+// Nineteen runs in a container it cannot see host listeners from its own network
+// namespace — its availability probe would wrongly report 22 as free and the
+// deploy would then fail to bind ("address already in use"). Every other
+// privileged port (<1024) is reserved too, since auto-assigning a system port is
+// never safe. Callers reassign a free port when this is true.
+func ReservedHostPort(port int) bool {
+	return port > 0 && port < 1024
+}
+
 // HostPortAvailable reports whether a host port is free to publish: no running
 // container already publishes it and no other process holds it on localhost.
 // This lets a deploy avoid a "port is already allocated" failure by reassigning

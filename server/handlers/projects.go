@@ -1569,22 +1569,30 @@ func logMissingRequiredEnv(log func(string, string), dir, dockerfileRel string, 
 // configured port that had to be reassigned is reported via log.
 func assignHostPort(d *services.Deployer, configured *int, used map[int]bool, log func(string, string)) int {
 	if configured != nil && *configured > 0 {
-		if !used[*configured] && d.WaitHostPortAvailable(*configured, 5*time.Second) {
+		// Reserved ports (notably 22) are never published, even when the
+		// configured value asks for them: from inside a container the
+		// availability probe cannot see the host's own listeners, so trusting
+		// it here is what makes a Gitea-style deploy fail on host port 22.
+		if services.ReservedHostPort(*configured) {
+			log("warn", fmt.Sprintf("Host port %d is reserved for system services (e.g. the host SSH daemon) — assigning a free port instead", *configured))
+		} else if !used[*configured] && d.WaitHostPortAvailable(*configured, 5*time.Second) {
 			used[*configured] = true
 			log("info", fmt.Sprintf("Using configured port %d", *configured))
 			return *configured
+		} else {
+			log("warn", fmt.Sprintf("Configured port %d is already in use — assigning a free port instead", *configured))
 		}
-		log("warn", fmt.Sprintf("Configured port %d is already in use — assigning a free port instead", *configured))
 	}
 	for {
 		hp, err := d.FreePort()
 		if err != nil {
 			return 0
 		}
-		if !used[hp] {
-			used[hp] = true
-			return hp
+		if used[hp] || services.ReservedHostPort(hp) || !d.HostPortAvailable(hp) {
+			continue
 		}
+		used[hp] = true
+		return hp
 	}
 }
 
