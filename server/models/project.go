@@ -35,6 +35,10 @@ type Project struct {
 	// RestartRetries is the optional max-retry count for "on-failure" only.
 	RestartPolicy  string `json:"restart_policy"`
 	RestartRetries *int   `json:"restart_retries"`
+	// WorkingDir is the container working directory passed to `docker run -w`
+	// for image- and Dockerfile-based projects. Empty keeps the image's own
+	// WORKDIR. Used by apps (e.g. code-server) that must open a specific path.
+	WorkingDir string `json:"working_dir"`
 	LastDeployedAt *string  `json:"last_deployed_at"`
 	CreatedDate   string    `json:"created_date"`
 	UpdatedDate   string    `json:"updated_date"`

@@ -3,7 +3,7 @@ import * as api from "@/lib/api";
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { Plug2, RotateCcw } from "lucide-react";
+import { FolderTree, Plug2, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -20,11 +20,13 @@ export default function RuntimeControls({ project }) {
 
   const [policy, setPolicy] = useState(project.restart_policy || "unless-stopped");
   const [retries, setRetries] = useState(project.restart_retries ?? "");
+  const [workDir, setWorkDir] = useState(project.working_dir || "");
 
   useEffect(() => {
     setPolicy(project.restart_policy || "unless-stopped");
     setRetries(project.restart_retries ?? "");
-  }, [project.id, project.restart_policy, project.restart_retries]);
+    setWorkDir(project.working_dir || "");
+  }, [project.id, project.restart_policy, project.restart_retries, project.working_dir]);
 
   const updateConfig = async (field, value) => {
     await api.projects.update(project.id, { [field]: value });
@@ -44,11 +46,17 @@ export default function RuntimeControls({ project }) {
     updateConfig("restart_retries", v ? Number(v) : null);
   };
 
+  const saveWorkDir = (raw) => {
+    const v = raw.trim();
+    setWorkDir(v);
+    updateConfig("working_dir", v);
+  };
+
   return (
     <div className="space-y-5">
       <div>
         <h3 className="text-sm font-medium">Runtime</h3>
-        <p className="text-xs text-muted-foreground">Configure the public port and how the container restarts.</p>
+        <p className="text-xs text-muted-foreground">Configure the public port, working directory and how the container restarts.</p>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -110,6 +118,24 @@ export default function RuntimeControls({ project }) {
               </li>
             ))}
           </ul>
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-4">
+          <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <FolderTree className="h-3.5 w-3.5" />
+            Working directory
+          </label>
+          <Input
+            value={workDir}
+            onChange={(e) => setWorkDir(e.target.value)}
+            onBlur={(e) => saveWorkDir(e.target.value)}
+            placeholder="empty = image default"
+            className="mt-2 h-9 rounded-md font-mono text-sm"
+          />
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            Directory the container starts in (<span className="font-mono">docker run -w</span>). Set an absolute path such as{" "}
+            <span className="font-mono">/workspace</span> so apps like code-server open it. Applied on the next deployment.
+          </p>
         </div>
       </div>
     </div>

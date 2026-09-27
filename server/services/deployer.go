@@ -730,9 +730,10 @@ type PortMapping struct {
 // (e.g. Gitea's 3000 web UI and 22 SSH) can expose them all. If envFile is
 // non-empty its content is passed to the container via --env-file. Each bind
 // mount maps a host path into the container so data persists across redeploys.
-// restartArg is the Docker restart policy (see RestartArg); empty falls back to
-// "unless-stopped".
-func (d *Deployer) Run(ctx context.Context, image, name string, ports []PortMapping, envFile string, mounts []BindMount, restartArg string, log func(string)) (string, error) {
+// workDir, when non-empty, sets the container's working directory (`-w`); empty
+// keeps the image's own WORKDIR. restartArg is the Docker restart policy (see
+// RestartArg); empty falls back to "unless-stopped".
+func (d *Deployer) Run(ctx context.Context, image, name string, ports []PortMapping, envFile string, mounts []BindMount, workDir, restartArg string, log func(string)) (string, error) {
 	if restartArg == "" {
 		restartArg = "unless-stopped"
 	}
@@ -755,6 +756,9 @@ func (d *Deployer) Run(ctx context.Context, image, name string, ports []PortMapp
 			continue
 		}
 		args = append(args, "--mount", "type=bind,source="+filepath.ToSlash(m.Source)+",target="+m.Target)
+	}
+	if wd := strings.TrimSpace(workDir); wd != "" {
+		args = append(args, "-w", wd)
 	}
 	args = append(args, image)
 

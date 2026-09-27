@@ -362,6 +362,7 @@ func runMigrations() {
 		{"projects", "integration_id", `ALTER TABLE projects ADD COLUMN integration_id INTEGER`},
 		{"projects", "restart_policy", `ALTER TABLE projects ADD COLUMN restart_policy TEXT DEFAULT 'unless-stopped'`},
 		{"projects", "restart_retries", `ALTER TABLE projects ADD COLUMN restart_retries INTEGER`},
+		{"projects", "working_dir", `ALTER TABLE projects ADD COLUMN working_dir TEXT DEFAULT ''`},
 		{"deploy_events", "trigger_id", `ALTER TABLE deploy_events ADD COLUMN trigger_id INTEGER`},
 		{"users", "role", `ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'member'`},
 		{"users", "status", `ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'`},

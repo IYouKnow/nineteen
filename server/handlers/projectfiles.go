@@ -64,17 +64,27 @@ func loadProjectVolumes(projectID int64) ([]models.ProjectVolume, error) {
 // volumes, creating the host folders if needed. Used at deploy time. Automatic
 // server-side mounts are excluded here — they are appended by the deploy path
 // via services.RequiredHostMounts — and only listed read-only by
-// appendAutomaticVolumes.
-func projectBindMounts(projectID int64) []services.BindMount {
+// appendAutomaticVolumes. Two volumes that target the same container path would
+// make Docker reject the container ("Duplicate mount point"), so only the first
+// is mounted; later collisions are skipped and reported via log.
+func projectBindMounts(projectID int64, log func(string)) []services.BindMount {
 	vols, err := loadProjectVolumes(projectID)
 	if err != nil {
 		return nil
 	}
 	mounts := make([]services.BindMount, 0, len(vols))
+	seen := make(map[string]bool, len(vols))
 	for _, v := range vols {
+		if seen[v.ContainerPath] {
+			if log != nil {
+				log(fmt.Sprintf("Skipping volume %q: another volume is already mounted at %s", v.Name, v.ContainerPath))
+			}
+			continue
+		}
 		if _, err := services.EnsureProjectVolumeDir(projectID, v.HostPath); err != nil {
 			continue
 		}
+		seen[v.ContainerPath] = true
 		mounts = append(mounts, services.BindMount{
 			Source: services.HostProjectVolumeDir(projectID, v.HostPath),
 			Target: v.ContainerPath,
@@ -210,6 +220,14 @@ func ProjectVolumesHandler(w http.ResponseWriter, r *http.Request) {
 		containerPath := strings.TrimSpace(req.ContainerPath)
 		if !validContainerPath(containerPath) {
 			respondError(w, http.StatusBadRequest, "container path must be an absolute path like /app/data")
+			return
+		}
+		var dup bool
+		if err := db.DB.QueryRow(
+			"SELECT EXISTS(SELECT 1 FROM project_volumes WHERE project_id = ? AND container_path = ?)",
+			projectID, containerPath,
+		).Scan(&dup); err == nil && dup {
+			respondError(w, http.StatusBadRequest, "another volume is already mounted at "+containerPath)
 			return
 		}
 		res, err := db.DB.Exec(

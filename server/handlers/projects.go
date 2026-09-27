@@ -75,7 +75,7 @@ type rowScanner interface {
 const projectSelect = `SELECT id, user_id, name, slug, status, framework, repository, image, branch,
 	domain, description, auto_deploy, region, instance_type, build_strategy,
 	dockerfile_path, compose_path, build_context, port, last_deployed_at, created_date, updated_date,
-	provider, integration_id, deploy_type, deploy_ref, restart_policy, restart_retries FROM projects`
+	provider, integration_id, deploy_type, deploy_ref, restart_policy, restart_retries, working_dir FROM projects`
 
 func ProjectsHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -129,7 +129,7 @@ func listProjectsHandler(w http.ResponseWriter, r *http.Request) {
 			&p.Port,
 			&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
 			&p.Provider, &p.IntegrationID, &p.DeployType, &p.DeployRef,
-			&p.RestartPolicy, &p.RestartRetries); err != nil {
+			&p.RestartPolicy, &p.RestartRetries, &p.WorkingDir); err != nil {
 			continue
 		}
 		if p.UserID == claims.UserID {
@@ -176,6 +176,7 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 		IntegrationID *int64 `json:"integration_id"`
 		RestartPolicy  string `json:"restart_policy"`
 		RestartRetries *int   `json:"restart_retries"`
+		WorkingDir     string `json:"working_dir"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
@@ -242,6 +243,11 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 	if req.RestartPolicy != "on-failure" {
 		req.RestartRetries = nil
 	}
+	req.WorkingDir = strings.TrimSpace(req.WorkingDir)
+	if req.WorkingDir != "" && !validContainerPath(req.WorkingDir) {
+		respondError(w, http.StatusBadRequest, "working_dir must be an absolute path like /workspace")
+		return
+	}
 	if req.Status == "" {
 		req.Status = "idle"
 	}
@@ -262,13 +268,13 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 	result, err := db.DB.Exec(
 		`INSERT INTO projects (user_id, name, slug, status, framework, repository, image, branch, domain,
 			description, auto_deploy, region, instance_type, build_strategy, dockerfile_path, compose_path, build_context, port,
-			provider, integration_id, deploy_type, deploy_ref, restart_policy, restart_retries)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			provider, integration_id, deploy_type, deploy_ref, restart_policy, restart_retries, working_dir)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		claims.UserID, req.Name, req.Slug, req.Status, req.Framework, req.Repository, req.Image,
 		req.Branch, req.Domain, req.Description, req.AutoDeploy, req.Region, req.InstanceType,
 		req.BuildStrategy, req.DockerfilePath, req.ComposePath, req.BuildContext, req.Port,
 		req.Provider, req.IntegrationID, req.DeployType, req.DeployRef,
-		req.RestartPolicy, req.RestartRetries,
+		req.RestartPolicy, req.RestartRetries, req.WorkingDir,
 	)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to create project")
@@ -698,7 +704,7 @@ func getProject(userID, id int64) (models.Project, error) {
 		&p.Port,
 		&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
 		&p.Provider, &p.IntegrationID, &p.DeployType, &p.DeployRef,
-		&p.RestartPolicy, &p.RestartRetries,
+		&p.RestartPolicy, &p.RestartRetries, &p.WorkingDir,
 	)
 	reconcileProjectStatus(&p)
 	return p, err
@@ -717,7 +723,7 @@ func getProjectByID(id int64) (models.Project, error) {
 		&p.Port,
 		&p.LastDeployedAt, &p.CreatedDate, &p.UpdatedDate,
 		&p.Provider, &p.IntegrationID, &p.DeployType, &p.DeployRef,
-		&p.RestartPolicy, &p.RestartRetries,
+		&p.RestartPolicy, &p.RestartRetries, &p.WorkingDir,
 	)
 	return p, err
 }
@@ -732,6 +738,7 @@ var updatableProjectColumns = map[string]bool{
 	"last_deployed_at": true, "port": true,
 	"provider": true, "integration_id": true,
 	"restart_policy": true, "restart_retries": true,
+	"working_dir": true,
 }
 
 func updateProject(w http.ResponseWriter, r *http.Request, userID, id int64) (models.Project, error) {
@@ -765,6 +772,12 @@ func updateProject(w http.ResponseWriter, r *http.Request, userID, id int64) (mo
 				return models.Project{}, fmt.Errorf("restart_policy must be one of: no, always, unless-stopped, on-failure")
 			}
 			args = append(args, policy)
+		} else if col == "working_dir" {
+			wd := strings.TrimSpace(valueToString(val))
+			if wd != "" && !validContainerPath(wd) {
+				return models.Project{}, fmt.Errorf("working_dir must be an absolute path like /workspace")
+			}
+			args = append(args, wd)
 		} else if col == "integration_id" {
 			iv := intOrNil(val)
 			if iv != nil {
@@ -1681,7 +1694,7 @@ func imageDeploy(ctx context.Context, log func(string, string), d *services.Depl
 	primaryHost := mappings[primary].HostPort
 
 	syncProjectDataMount(project.ID, image, func(msg string) { log("info", msg) })
-	mounts := projectBindMounts(project.ID)
+	mounts := projectBindMounts(project.ID, func(msg string) { log("info", msg) })
 	if auto := services.RequiredHostMounts(image, project.Image); len(auto) > 0 {
 		before := len(mounts)
 		mounts = services.AppendRequiredHostMounts(mounts, auto)
@@ -1695,7 +1708,7 @@ func imageDeploy(ctx context.Context, log func(string, string), d *services.Depl
 	for _, m := range mappings {
 		log("info", fmt.Sprintf("Publishing %s:%d → container %d", services.ProjectBindAddr(), m.HostPort, m.ContainerPort))
 	}
-	if _, err := d.Run(ctx, image, containerName, mappings, envPath, mounts, services.RestartArg(project.RestartPolicy, project.RestartRetries), func(line string) { log("info", line) }); err != nil {
+	if _, err := d.Run(ctx, image, containerName, mappings, envPath, mounts, project.WorkingDir, services.RestartArg(project.RestartPolicy, project.RestartRetries), func(line string) { log("info", line) }); err != nil {
 		if ctx.Err() != nil {
 			log("warn", "Deployment cancelled")
 			finishDeploymentCancelled(deployID, project)
@@ -1783,7 +1796,7 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 	// Point the project's data volume at wherever the built image actually
 	// writes, so the Files tab reflects the app's real data directory.
 	syncProjectDataMount(project.ID, image, func(msg string) { log("info", msg) })
-	mounts := projectBindMounts(project.ID)
+	mounts := projectBindMounts(project.ID, func(msg string) { log("info", msg) })
 	if auto := services.RequiredHostMounts(image, project.Image, dockerfileImageHint(dir, dockerfile)); len(auto) > 0 {
 		before := len(mounts)
 		mounts = services.AppendRequiredHostMounts(mounts, auto)
@@ -1797,7 +1810,7 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 	for _, m := range mappings {
 		log("info", fmt.Sprintf("Publishing %s:%d → container %d", services.ProjectBindAddr(), m.HostPort, m.ContainerPort))
 	}
-	if _, err := d.Run(ctx, image, containerName, mappings, envPath, mounts, services.RestartArg(project.RestartPolicy, project.RestartRetries), func(line string) { log("info", line) }); err != nil {
+	if _, err := d.Run(ctx, image, containerName, mappings, envPath, mounts, project.WorkingDir, services.RestartArg(project.RestartPolicy, project.RestartRetries), func(line string) { log("info", line) }); err != nil {
 		if ctx.Err() != nil {
 			log("warn", "Deployment cancelled")
 			finishDeploymentCancelled(deployID, project)
@@ -1839,7 +1852,7 @@ func composeDeploy(ctx context.Context, log func(string, string), d *services.De
 
 	// Prepare the persistent folder, then inject it (and env vars) into every
 	// service via a generated override.
-	mounts := projectBindMounts(project.ID)
+	mounts := projectBindMounts(project.ID, func(msg string) { log("info", msg) })
 	if auto := services.RequiredHostMounts(project.Image, composeFileHint(dir, composeFile)); len(auto) > 0 {
 		before := len(mounts)
 		mounts = services.AppendRequiredHostMounts(mounts, auto)
