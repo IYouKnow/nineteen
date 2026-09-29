@@ -41,6 +41,7 @@ export function UpdateSection() {
   const logRef = useRef(null);
   const streamRef = useRef(null);
   const pollRef = useRef(null);
+  const reloadRef = useRef(null);
   const infoRef = useRef(null);
 
   infoRef.current = info;
@@ -92,7 +93,25 @@ export function UpdateSection() {
     return () => {
       if (streamRef.current) streamRef.current.close();
       if (pollRef.current) clearInterval(pollRef.current);
+      if (reloadRef.current) clearTimeout(reloadRef.current);
     };
+  }, []);
+
+  // The updated container serves a new frontend bundle, but the browser keeps
+  // running this (stale) one. Schedule a hard reload so the user picks up the
+  // new UI. Only called on the polling transition to a terminal state — never
+  // on initial mount — so a page load showing a persisted "success" won't loop.
+  const scheduleReload = useCallback((title) => {
+    toast.success(title, { description: "Reloading to load the new version…" });
+    if (reloadRef.current) clearTimeout(reloadRef.current);
+    reloadRef.current = setTimeout(() => {
+      window.location.reload();
+    }, 3500);
+  }, []);
+
+  const reloadNow = useCallback(() => {
+    if (reloadRef.current) clearTimeout(reloadRef.current);
+    window.location.reload();
   }, []);
 
   const openStream = useCallback(() => {
@@ -117,10 +136,15 @@ export function UpdateSection() {
           clearInterval(pollRef.current);
           pollRef.current = null;
           if (streamRef.current) streamRef.current.close();
+          if (data.state === "success") {
+            scheduleReload("Update complete");
+          } else if (data.state === "rolled_back") {
+            scheduleReload("Rolled back to previous version");
+          }
         }
       } catch { /* ignore transient network errors during swap */ }
     }, 2000);
-  }, []);
+  }, [scheduleReload]);
 
   const startUpdate = async () => {
     setStarting(true);
@@ -252,7 +276,8 @@ export function UpdateSection() {
           )}
 
           {terminal && (
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-sm">
                 {info.state === "success" && <CheckCircle2 className="h-4 w-4 text-success" />}
                 {info.state === "rolled_back" && <RotateCcw className="h-4 w-4 text-warning" />}
@@ -269,9 +294,20 @@ export function UpdateSection() {
                     <RotateCcw className="mr-1 h-4 w-4" /> Roll back
                   </Button>
                 )}
+                {(info.state === "success" || info.state === "rolled_back") && (
+                  <Button variant="default" onClick={reloadNow}>
+                    <RefreshCw className="mr-1 h-4 w-4" /> Reload now
+                  </Button>
+                )}
                 <Button variant="outline" onClick={loadStatus} disabled={checking}>
                   <RefreshCw className={`mr-1 h-4 w-4 ${checking ? "animate-spin" : ""}`} /> Check again
                 </Button>
+              </div>
+              {(info.state === "success" || info.state === "rolled_back") && (
+                <p className="text-xs text-muted-foreground">
+                  New code is live — the page reloads automatically to pick it up.
+                </p>
+              )}
               </div>
             </div>
           )}

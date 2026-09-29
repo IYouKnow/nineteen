@@ -471,10 +471,17 @@ func spaStatic(staticDir string) http.Handler {
 			return
 		}
 		if info, err := os.Stat(full); err == nil && !info.IsDir() {
+			// index.html must never be cached: it references content-hashed
+			// bundles, so a reload after a self-update has to revalidate it
+			// to pick up the new assets.
+			if filepath.Base(full) == "index.html" {
+				w.Header().Set("Cache-Control", "no-cache")
+			}
 			http.ServeFile(w, r, full)
 			return
 		}
 		if filepath.Ext(r.URL.Path) == "" {
+			w.Header().Set("Cache-Control", "no-cache")
 			http.ServeFile(w, r, filepath.Join(root, "index.html"))
 			return
 		}
