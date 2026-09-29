@@ -25,7 +25,8 @@ function providerLabel(provider) {
   return PROVIDER_LABELS[provider] || provider || "Git";
 }
 
-// The GitHub events the project webhook must subscribe to for its enabled rules.
+// The repository events the project webhook must subscribe to for its enabled rules.
+// GitHub and Gitea (type:gitea) share the same event names.
 function subscribedEvents(triggers) {
   const set = new Set();
   for (const t of triggers) {
@@ -39,8 +40,9 @@ function subscribedEvents(triggers) {
   return ["push", "create", "release"].filter((e) => set.has(e));
 }
 
-function WebhookPanel({ data, triggers }) {
+function WebhookPanel({ data, triggers, provider }) {
   const [copied, setCopied] = useState(false);
+  const label = providerLabel(provider);
 
   if (triggers.length === 0) return null;
 
@@ -52,7 +54,7 @@ function WebhookPanel({ data, triggers }) {
           <div className="space-y-1">
             <p className="text-sm font-medium text-foreground">A public base URL is required</p>
             <p className="text-xs text-muted-foreground">
-              GitHub cannot deliver webhooks to <code className="font-mono">localhost</code>. Add the domain or
+              {label} cannot deliver webhooks to <code className="font-mono">localhost</code>. Add the domain or
               public IP that reaches this server in Settings → Integrations, then save a strategy again.
             </p>
             <Button asChild variant="outline" size="sm" className="mt-1 gap-1.5">
@@ -87,7 +89,7 @@ function WebhookPanel({ data, triggers }) {
             <Webhook className="h-4 w-4" />
           </span>
           <div>
-            <p className="text-sm font-medium">GitHub webhook</p>
+            <p className="text-sm font-medium">{providerLabel(provider)} webhook</p>
             <p className="text-xs text-muted-foreground">
               One hook serves every strategy on this project; events are verified by signature.
             </p>
@@ -140,8 +142,7 @@ function ProviderWebhookNotice({ provider, triggers }) {
         <div className="space-y-1">
           <p className="text-sm font-medium">{label} webhook</p>
           <p className="text-xs text-muted-foreground">
-            This project is hosted on {label}, so the GitHub webhook is not used. Automatic
-            deployments require a {label} webhook, which isn't configured yet — strategies are saved
+            Automatic deployments are not wired up for {label} yet — strategies are saved
             but won't fire automatically.
           </p>
         </div>
@@ -157,7 +158,7 @@ export default function ProjectStrategy({ project }) {
   const [busyId, setBusyId] = useState(null);
 
   const provider = project.provider || "github";
-  const isGitHub = provider === "github";
+  const isAutoWebhook = provider === "github" || provider === "gitea";
 
   const { data, isLoading } = useQuery({
     queryKey: ["triggers", project.id],
@@ -277,8 +278,8 @@ export default function ProjectStrategy({ project }) {
             <StrategyRow
               key={t.id}
               trigger={t}
-              webhook={isGitHub ? webhook : null}
-              showWebhook={isGitHub}
+              webhook={isAutoWebhook ? webhook : null}
+              showWebhook={isAutoWebhook}
               lastEvent={lastEventByTrigger[t.id]}
               busy={busyId === t.id}
               onEdit={openEdit}
@@ -289,8 +290,8 @@ export default function ProjectStrategy({ project }) {
         </div>
       )}
 
-      {isGitHub ? (
-        <WebhookPanel data={webhook} triggers={triggers} />
+      {isAutoWebhook ? (
+        <WebhookPanel data={webhook} triggers={triggers} provider={provider} />
       ) : (
         <ProviderWebhookNotice provider={provider} triggers={triggers} />
       )}

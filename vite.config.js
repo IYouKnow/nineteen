@@ -11,6 +11,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
+    allowedHosts: ["ntest19.nortem.net"],
     proxy: {
       '/api': 'http://localhost:8080',
     },

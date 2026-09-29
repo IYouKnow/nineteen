@@ -16,13 +16,13 @@ type ProjectTrigger struct {
 	UpdatedAt  string `json:"updated_at"`
 }
 
-// ProjectWebhook is the single GitHub webhook shared by all of a project's
+// ProjectWebhook is the single repository webhook shared by all of a project's
 // triggers. It lives at the project level so adding or removing rules does not
 // churn repository hooks.
 type ProjectWebhook struct {
 	ProjectID int64  `json:"project_id"`
 	WebhookID *int64 `json:"webhook_id"`
-	// WebhookSecret is the HMAC secret shared with GitHub; never marshaled.
+	// WebhookSecret is the HMAC secret shared with the git provider; never marshaled.
 	WebhookSecret string `json:"-"`
 }
 

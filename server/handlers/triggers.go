@@ -47,10 +47,20 @@ func projectProvider(project models.Project) string {
 	return project.Provider
 }
 
-// isGitHubProject reports whether the project's repository is hosted on GitHub,
-// the only provider with automatic webhook delivery wired up.
+// isGitHubProject reports whether the project's repository is hosted on GitHub.
 func isGitHubProject(project models.Project) bool {
 	return projectProvider(project) == "github"
+}
+
+// isAutoWebhookProject reports whether the project's provider has automatic
+// webhook delivery wired up (GitHub and Gitea with type:gitea hooks).
+func isAutoWebhookProject(project models.Project) bool {
+	switch projectProvider(project) {
+	case "github", "gitea":
+		return true
+	default:
+		return false
+	}
 }
 
 type triggerPayload struct {
@@ -282,12 +292,12 @@ func buildTriggerListResponse(project models.Project, base string) triggerListRe
 		Provider:      projectProvider(project),
 		PublicBaseURL: base,
 	}
-	// Only GitHub projects have webhook delivery wired up; other providers
-	// (e.g. Gitea) must not surface or use the GitHub webhook endpoint.
-	if isGitHubProject(project) {
+	// Only providers with webhook delivery wired up (GitHub, Gitea) surface
+	// the inbound webhook endpoint; others must not.
+	if isAutoWebhookProject(project) {
 		wh := ensureProjectWebhookRow(project.ID)
 		if base != "" {
-			resp.WebhookURL = webhookURL(base, project.ID)
+			resp.WebhookURL = webhookURL(base, projectProvider(project), project.ID)
 		}
 		resp.Registered = wh.WebhookID != nil && *wh.WebhookID > 0
 	}
@@ -306,9 +316,8 @@ func syncProjectWebhook(userID int64, project models.Project, base string) strin
 	autoDeploy := len(events) > 0
 	db.DB.Exec("UPDATE projects SET auto_deploy = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", boolToInt(autoDeploy), project.ID)
 
-	// Non-GitHub providers (e.g. Gitea) do not use the GitHub webhook. Their
-	// provider-specific webhooks are not managed here, so leave GitHub untouched.
-	if !isGitHubProject(project) {
+	// Providers without webhook delivery wired up leave webhooks untouched.
+	if !isAutoWebhookProject(project) {
 		return ""
 	}
 
@@ -317,6 +326,9 @@ func syncProjectWebhook(userID int64, project models.Project, base string) strin
 		return ""
 	}
 	if base == "" {
+		if projectProvider(project) == "gitea" {
+			return "Set a public base URL in Settings → Integrations so Gitea can reach this server."
+		}
 		return "Set a public base URL in Settings → Integrations so GitHub can reach this server."
 	}
 	if err := ensureProjectWebhook(userID, project, base, events); err != nil {
@@ -325,8 +337,9 @@ func syncProjectWebhook(userID int64, project models.Project, base string) strin
 	return ""
 }
 
-// webhookEventsForTriggers returns the GitHub events needed to serve the enabled
-// rules, in a stable order.
+// webhookEventsForTriggers returns the repository events needed to serve the
+// enabled rules, in a stable order. GitHub and Gitea (type:gitea) share the
+// same event names: push, create, release.
 func webhookEventsForTriggers(triggers []models.ProjectTrigger) []string {
 	set := map[string]bool{}
 	for _, t := range triggers {
@@ -355,31 +368,61 @@ func webhookEventsForTriggers(triggers []models.ProjectTrigger) []string {
 // ensureProjectWebhook creates or updates the repository webhook so it points at
 // this project's inbound endpoint with the current secret and event set.
 func ensureProjectWebhook(userID int64, project models.Project, base string, events []string) error {
-	if !isGitHubProject(project) {
+	if !isAutoWebhookProject(project) {
 		return nil
 	}
 	if project.Repository == "" {
 		return fmt.Errorf("Link a repository before enabling automatic deployments")
 	}
-	token, err := githubToken(userID)
-	if err != nil {
-		return fmt.Errorf("Connect a GitHub integration before enabling automatic deployments")
-	}
 
-	hookURL := webhookURL(base, project.ID)
+	hookURL := webhookURL(base, projectProvider(project), project.ID)
 	wh := ensureProjectWebhookRow(project.ID)
 	secret := wh.WebhookSecret
 	if secret == "" {
 		secret = randomSecret()
 	}
-	client := services.NewGitHubClient(token)
+
+	if isGitHubProject(project) {
+		token, err := githubToken(userID)
+		if err != nil {
+			return fmt.Errorf("Connect a GitHub integration before enabling automatic deployments")
+		}
+		client := services.NewGitHubClient(token)
+
+		if wh.WebhookID != nil && *wh.WebhookID > 0 {
+			if err := client.UpdateWebhook(project.Repository, *wh.WebhookID, hookURL, secret, events); err == nil {
+				db.DB.Exec("UPDATE project_webhooks SET webhook_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE project_id = ?", secret, project.ID)
+				return nil
+			}
+			// The stored hook may have been deleted on GitHub — recreate it below.
+		}
+
+		id, err := client.CreateWebhook(project.Repository, hookURL, secret, events)
+		if err != nil {
+			return err
+		}
+		db.DB.Exec("UPDATE project_webhooks SET webhook_id = ?, webhook_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE project_id = ?", id, secret, project.ID)
+		return nil
+	}
+
+	// Gitea: resolve the per-project integration so multi-instance setups hit
+	// the right host with the right token.
+	_, token, cfg, err := projectIntegrationAuth(project)
+	if err != nil || token == "" {
+		return fmt.Errorf("Connect a Gitea integration before enabling automatic deployments")
+	}
+	giteaBase := giteaBaseURLFromConfig(cfg)
+	if giteaBase == "" {
+		return fmt.Errorf("Gitea integration is missing its base URL")
+	}
+	client := services.NewGiteaClient(giteaBase, token)
 
 	if wh.WebhookID != nil && *wh.WebhookID > 0 {
 		if err := client.UpdateWebhook(project.Repository, *wh.WebhookID, hookURL, secret, events); err == nil {
 			db.DB.Exec("UPDATE project_webhooks SET webhook_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE project_id = ?", secret, project.ID)
 			return nil
 		}
-		// The stored hook may have been deleted on GitHub — recreate it below.
+		// The stored hook may have been deleted on Gitea — recreate it below.
 	}
 
 	id, err := client.CreateWebhook(project.Repository, hookURL, secret, events)
@@ -391,18 +434,27 @@ func ensureProjectWebhook(userID int64, project models.Project, base string, eve
 }
 
 // removeProjectWebhook deletes the repository webhook and clears the stored
-// id/secret. Best-effort: a GitHub outage must not block disabling triggers.
+// id/secret. Best-effort: a provider outage must not block disabling triggers.
 func removeProjectWebhook(userID int64, project models.Project) {
-	if !isGitHubProject(project) {
+	if !isAutoWebhookProject(project) {
 		return
 	}
 	wh, err := loadProjectWebhook(project.ID)
 	if err != nil || wh.WebhookID == nil || *wh.WebhookID == 0 {
 		return
 	}
-	if token, err := githubToken(userID); err == nil {
-		client := services.NewGitHubClient(token)
-		_ = client.DeleteWebhook(project.Repository, *wh.WebhookID)
+	if isGitHubProject(project) {
+		if token, err := githubToken(userID); err == nil {
+			client := services.NewGitHubClient(token)
+			_ = client.DeleteWebhook(project.Repository, *wh.WebhookID)
+		}
+	} else {
+		if _, token, cfg, err := projectIntegrationAuth(project); err == nil && token != "" {
+			if base := giteaBaseURLFromConfig(cfg); base != "" {
+				client := services.NewGiteaClient(base, token)
+				_ = client.DeleteWebhook(project.Repository, *wh.WebhookID)
+			}
+		}
 	}
 	db.DB.Exec("UPDATE project_webhooks SET webhook_id = NULL, webhook_secret = '', updated_at = CURRENT_TIMESTAMP WHERE project_id = ?", project.ID)
 }
@@ -418,25 +470,43 @@ func publicBaseURL(userID int64) string {
 	return strings.TrimRight(strings.TrimSpace(v), "/")
 }
 
-func webhookURL(base string, projectID int64) string {
+func webhookURL(base, provider string, projectID int64) string {
+	if provider == "gitea" {
+		return fmt.Sprintf("%s/api/webhooks/gitea/%d", strings.TrimRight(base, "/"), projectID)
+	}
 	return fmt.Sprintf("%s/api/webhooks/github/%d", strings.TrimRight(base, "/"), projectID)
 }
 
-// ---- inbound GitHub webhook ----
+// ---- inbound webhooks (GitHub + Gitea) ----
 
 type ghPushPayload struct {
 	Ref        string `json:"ref"`
+	Before     string `json:"before"`
 	After      string `json:"after"`
 	Deleted    bool   `json:"deleted"`
 	HeadCommit *struct {
 		ID      string `json:"id"`
 		Message string `json:"message"`
 	} `json:"head_commit"`
+	// Gitea sends commits[] even when head_commit is absent.
+	Commits []struct {
+		ID      string `json:"id"`
+		SHA     string `json:"sha"`
+		Message string `json:"message"`
+		Author  struct {
+			Name     string `json:"name"`
+			Username string `json:"username"`
+		} `json:"author"`
+	} `json:"commits"`
 	Pusher struct {
-		Name string `json:"name"`
+		Name     string `json:"name"`
+		Login    string `json:"login"`
+		FullName string `json:"full_name"`
+		Username string `json:"username"`
 	} `json:"pusher"`
 	Sender struct {
-		Login string `json:"login"`
+		Login    string `json:"login"`
+		Username string `json:"username"`
 	} `json:"sender"`
 }
 
@@ -444,8 +514,16 @@ type ghCreatePayload struct {
 	Ref     string `json:"ref"`
 	RefType string `json:"ref_type"`
 	Sender  struct {
-		Login string `json:"login"`
+		Login    string `json:"login"`
+		Username string `json:"username"`
 	} `json:"sender"`
+}
+
+func (p ghCreatePayload) author() string {
+	if p.Sender.Login != "" {
+		return p.Sender.Login
+	}
+	return p.Sender.Username
 }
 
 type ghReleasePayload struct {
@@ -454,10 +532,19 @@ type ghReleasePayload struct {
 		TagName    string `json:"tag_name"`
 		Name       string `json:"name"`
 		Prerelease bool   `json:"prerelease"`
+		Draft      bool   `json:"draft"`
 	} `json:"release"`
 	Sender struct {
-		Login string `json:"login"`
+		Login    string `json:"login"`
+		Username string `json:"username"`
 	} `json:"sender"`
+}
+
+func (p ghReleasePayload) author() string {
+	if p.Sender.Login != "" {
+		return p.Sender.Login
+	}
+	return p.Sender.Username
 }
 
 type webhookMatch struct {
@@ -517,6 +604,68 @@ func GitHubWebhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	dispatchWebhookEvent(w, projectID, project, event, body)
+}
+
+// GiteaWebhookHandler receives Gitea (type:gitea) webhook deliveries. It is
+// unauthenticated by token but every request must carry a valid HMAC-SHA256
+// signature computed with the project's stored secret, sent as X-Gitea-Signature
+// (hex, no prefix) or the GitHub-compatible X-Hub-Signature-256 header.
+func GiteaWebhookHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	projectID, ok := pathID(r)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "Invalid project ID")
+		return
+	}
+
+	wh, err := loadProjectWebhook(projectID)
+	if err != nil || wh.WebhookSecret == "" {
+		respondError(w, http.StatusNotFound, "Webhook is not configured for this project")
+		return
+	}
+	project, err := getProjectByID(projectID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+	if projectProvider(project) != "gitea" {
+		respondError(w, http.StatusNotFound, "Webhook is not configured for this project")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 5<<20))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Failed to read payload")
+		return
+	}
+	if !verifyGiteaSignature(wh.WebhookSecret, body, r.Header.Get("X-Gitea-Signature"), r.Header.Get("X-Hub-Signature-256")) {
+		respondError(w, http.StatusUnauthorized, "Invalid webhook signature")
+		return
+	}
+
+	event := r.Header.Get("X-Gitea-Event")
+	if event == "" {
+		event = r.Header.Get("X-GitHub-Event")
+	}
+	if event == "" {
+		event = r.Header.Get("X-Gogs-Event")
+	}
+	if event == "ping" || event == "" {
+		logDeployEvent(projectID, "ping", "", "", true, "Webhook connected", "webhook", nil, nil)
+		respondJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "message": "pong"})
+		return
+	}
+
+	dispatchWebhookEvent(w, projectID, project, event, body)
+}
+
+// dispatchWebhookEvent tests the event against every enabled rule and deploys
+// on the first match. Shared by the GitHub and Gitea inbound handlers.
+func dispatchWebhookEvent(w http.ResponseWriter, projectID int64, project models.Project, event string, body []byte) {
 	triggers, _ := loadTriggers(projectID)
 	enabled := []models.ProjectTrigger{}
 	for _, t := range triggers {
@@ -579,6 +728,21 @@ func verifyWebhookSignature(secret string, body []byte, signature string) bool {
 	return hmac.Equal([]byte(expected), []byte(signature))
 }
 
+// verifyGiteaSignature checks the type:gitea signature headers. Gitea sends
+// X-Gitea-Signature (lowercase hex HMAC-SHA256, no prefix) plus the
+// GitHub-compatible X-Hub-Signature-256 (sha256=<hex>) header.
+func verifyGiteaSignature(secret string, body []byte, giteaSig, hubSig string) bool {
+	if giteaSig != "" {
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write(body)
+		expected := hex.EncodeToString(mac.Sum(nil))
+		if hmac.Equal([]byte(expected), []byte(strings.TrimSpace(giteaSig))) {
+			return true
+		}
+	}
+	return verifyWebhookSignature(secret, body, hubSig)
+}
+
 func matchWebhookEvent(t models.ProjectTrigger, event string, body []byte) webhookMatch {
 	switch event {
 	case "push":
@@ -597,9 +761,38 @@ func matchWebhookEvent(t models.ProjectTrigger, event string, body []byte) webho
 				sha = p.HeadCommit.ID
 			}
 		}
+		// Gitea fallback: first commit in commits[].
+		if (msg == "" || sha == "" || sha == "0000000000000000000000000000000000000000") && len(p.Commits) > 0 {
+			if msg == "" {
+				msg = firstLine(p.Commits[0].Message)
+			}
+			if id := p.Commits[0].ID; id != "" {
+				sha = id
+			} else if s := p.Commits[0].SHA; s != "" {
+				sha = s
+			}
+		}
 		author := p.Pusher.Name
 		if author == "" {
+			author = p.Pusher.Login
+		}
+		if author == "" {
+			author = p.Pusher.FullName
+		}
+		if author == "" {
+			author = p.Pusher.Username
+		}
+		if author == "" {
 			author = p.Sender.Login
+		}
+		if author == "" {
+			author = p.Sender.Username
+		}
+		if author == "" && len(p.Commits) > 0 {
+			author = p.Commits[0].Author.Name
+			if author == "" {
+				author = p.Commits[0].Author.Username
+			}
 		}
 
 		switch t.Strategy {
@@ -634,7 +827,7 @@ func matchWebhookEvent(t models.ProjectTrigger, event string, body []byte) webho
 		if !matchTag(t, p.Ref) {
 			return webhookMatch{Ref: p.Ref, Reason: fmt.Sprintf("Tag %s does not match pattern %s", p.Ref, t.TagPattern)}
 		}
-		return webhookMatch{Matched: true, Trigger: "tag", Branch: t.Branch, Ref: p.Ref, Message: "Tag " + p.Ref, Author: p.Sender.Login, Reason: fmt.Sprintf("Tag %s created", p.Ref)}
+		return webhookMatch{Matched: true, Trigger: "tag", Branch: t.Branch, Ref: p.Ref, Message: "Tag " + p.Ref, Author: p.author(), Reason: fmt.Sprintf("Tag %s created", p.Ref)}
 	case "release":
 		var p ghReleasePayload
 		if err := json.Unmarshal(body, &p); err != nil {
@@ -653,7 +846,7 @@ func matchWebhookEvent(t models.ProjectTrigger, event string, body []byte) webho
 		if name == "" {
 			name = p.Release.TagName
 		}
-		return webhookMatch{Matched: true, Trigger: "release", Branch: t.Branch, Ref: p.Release.TagName, Message: "Release " + name, Author: p.Sender.Login, Reason: fmt.Sprintf("Release %s published", name)}
+		return webhookMatch{Matched: true, Trigger: "release", Branch: t.Branch, Ref: p.Release.TagName, Message: "Release " + name, Author: p.author(), Reason: fmt.Sprintf("Release %s published", name)}
 	default:
 		return webhookMatch{Reason: fmt.Sprintf("Event %q is not handled", event)}
 	}

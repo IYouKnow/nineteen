@@ -23,7 +23,7 @@ export const STRATEGY_TYPES = [
     id: "release",
     icon: Rocket,
     title: "Release",
-    description: "Deploy when a GitHub release is published. Tied to your release workflow.",
+    description: "Deploy when a Git release is published. Tied to your release workflow.",
   },
 ];
 

@@ -195,6 +195,10 @@ func decodeEnvVar(w http.ResponseWriter, r *http.Request) (struct {
 		respondError(w, http.StatusBadRequest, "Invalid key — use A-Z, 0-9 and underscores, starting with a letter or underscore")
 		return req, false
 	}
+	if services.ReservedEnvKey(req.Key) {
+		respondError(w, http.StatusBadRequest, "PATH is reserved — overriding it breaks container startup (entrypoint executables stop resolving)")
+		return req, false
+	}
 	return req, true
 }
 

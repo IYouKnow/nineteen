@@ -20,6 +20,20 @@ func ValidateEnvKey(key string) bool {
 	return envKeyRe.MatchString(key)
 }
 
+// reservedEnvKeys may not be set as project env vars: they are injected via
+// --env-file at runtime and would clobber the container's own values.
+// PATH in particular breaks every image with a bare entrypoint executable
+// (runc: exec "docker-entrypoint.sh": executable file not found in $PATH).
+var reservedEnvKeys = map[string]bool{
+	"PATH": true,
+}
+
+// ReservedEnvKey reports whether key is reserved and must not be stored as a
+// project environment variable.
+func ReservedEnvKey(key string) bool {
+	return reservedEnvKeys[key]
+}
+
 // LoadEnvVars returns the project's env vars with plaintext values (decrypted),
 // ordered by key.
 func LoadEnvVars(projectID int64) ([]models.EnvVar, error) {
@@ -51,8 +65,16 @@ func LoadEnvVars(projectID int64) ([]models.EnvVar, error) {
 
 // WriteEnvFile writes KEY=VALUE lines to a temp file and returns its path.
 // Returns "" when there are no vars. Values are sanitized to a single line.
+// Reserved keys (e.g. PATH) are skipped defensively so legacy rows can never
+// break container startup.
 func WriteEnvFile(vars []models.EnvVar) (string, error) {
-	if len(vars) == 0 {
+	kept := vars[:0]
+	for _, v := range vars {
+		if !ReservedEnvKey(v.Key) {
+			kept = append(kept, v)
+		}
+	}
+	if len(kept) == 0 {
 		return "", nil
 	}
 	f, err := os.CreateTemp("", "nineteen-env-*.env")
@@ -63,7 +85,7 @@ func WriteEnvFile(vars []models.EnvVar) (string, error) {
 		s = strings.ReplaceAll(s, "\r", "")
 		return strings.ReplaceAll(s, "\n", "")
 	}
-	for _, v := range vars {
+	for _, v := range kept {
 		if _, err := fmt.Fprintf(f, "%s=%s\n", v.Key, clean(v.Value)); err != nil {
 			f.Close()
 			return "", err

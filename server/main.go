@@ -407,6 +407,7 @@ func main() {
 	mux.HandleFunc("/api/deployments/{id}/logs", handlers.DeploymentLogsHandler)
 	mux.HandleFunc("/api/deployments/{id}/cancel", handlers.CancelDeploymentHandler)
 	mux.HandleFunc("/api/webhooks/github/{id}", handlers.GitHubWebhookHandler)
+	mux.HandleFunc("/api/webhooks/gitea/{id}", handlers.GiteaWebhookHandler)
 	mux.HandleFunc("/api/databases", handlers.DatabasesHandler)
 	mux.HandleFunc("/api/databases/{id}", handlers.DatabaseHandler)
 	mux.HandleFunc("/api/databases/{id}/actions", handlers.DatabaseActionHandler)

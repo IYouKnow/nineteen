@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -382,4 +383,162 @@ func (g *GiteaClient) GetRepoFile(fullName, ref, path string) ([]byte, error) {
 
 func (g *GiteaClient) ValidateToken() (*GiteaUser, error) {
 	return g.GetCurrentUser()
+}
+
+// GiteaHook is the subset of Gitea's hook response the app cares about.
+type GiteaHook struct {
+	ID     int64             `json:"id"`
+	Type   string            `json:"type"`
+	Active bool              `json:"active"`
+	Events []string          `json:"events"`
+	Config map[string]string `json:"config"`
+}
+
+func (g *GiteaClient) doJSON(method, url string, payload interface{}) ([]byte, int, error) {
+	var body io.Reader
+	if payload != nil {
+		b, err := json.Marshal(payload)
+		if err != nil {
+			return nil, 0, err
+		}
+		body = bytes.NewReader(b)
+	}
+
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, 0, err
+	}
+	if g.Token != "" {
+		req.Header.Set("Authorization", "token "+g.Token)
+	}
+	req.Header.Set("Accept", "application/json")
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := g.Client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return data, resp.StatusCode, nil
+}
+
+func giteaWebhookPermissionError(status int, body []byte) error {
+	switch status {
+	case http.StatusForbidden:
+		return fmt.Errorf("Gitea refused to manage the webhook (403). The token needs admin access to the repository")
+	case http.StatusUnauthorized:
+		return fmt.Errorf("Gitea rejected the token (401) while managing the webhook")
+	case http.StatusNotFound:
+		return fmt.Errorf("repository not found or you do not have admin access (404)")
+	default:
+		msg := strings.TrimSpace(string(body))
+		if msg == "" {
+			msg = http.StatusText(status)
+		}
+		return fmt.Errorf("Gitea API returned status %d: %s", status, msg)
+	}
+}
+
+// CreateWebhook registers a type:gitea repository webhook that delivers the
+// given events to hookURL, signed with secret. It returns the new hook id.
+// Server-side filtering is used (no branch_filter), so one hook serves every
+// strategy on the project.
+func (g *GiteaClient) CreateWebhook(fullName, hookURL, secret string, events []string) (int64, error) {
+	if len(events) == 0 {
+		events = []string{"push"}
+	}
+	fullName = strings.Trim(strings.TrimSpace(fullName), "/")
+	payload := map[string]interface{}{
+		"type":   "gitea",
+		"active": true,
+		"events": events,
+		"config": map[string]string{
+			"url":          hookURL,
+			"content_type": "json",
+			"secret":       secret,
+		},
+	}
+	url := g.apiURL("/repos/" + fullName + "/hooks")
+	data, status, err := g.doJSON(http.MethodPost, url, payload)
+	if err != nil {
+		return 0, err
+	}
+	if status < 200 || status >= 300 {
+		return 0, giteaWebhookPermissionError(status, data)
+	}
+	var hook struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(data, &hook); err != nil {
+		return 0, err
+	}
+	return hook.ID, nil
+}
+
+// UpdateWebhook points an existing repository webhook at hookURL and refreshes
+// its secret and event list.
+func (g *GiteaClient) UpdateWebhook(fullName string, hookID int64, hookURL, secret string, events []string) error {
+	if len(events) == 0 {
+		events = []string{"push"}
+	}
+	fullName = strings.Trim(strings.TrimSpace(fullName), "/")
+	payload := map[string]interface{}{
+		"type":   "gitea",
+		"active": true,
+		"events": events,
+		"config": map[string]string{
+			"url":          hookURL,
+			"content_type": "json",
+			"secret":       secret,
+		},
+	}
+	url := g.apiURL(fmt.Sprintf("/repos/%s/hooks/%d", strings.Trim(fullName, "/"), hookID))
+	data, status, err := g.doJSON(http.MethodPatch, url, payload)
+	if err != nil {
+		return err
+	}
+	if status < 200 || status >= 300 {
+		return giteaWebhookPermissionError(status, data)
+	}
+	return nil
+}
+
+// DeleteWebhook removes a repository webhook.
+func (g *GiteaClient) DeleteWebhook(fullName string, hookID int64) error {
+	fullName = strings.Trim(strings.TrimSpace(fullName), "/")
+	url := g.apiURL(fmt.Sprintf("/repos/%s/hooks/%d", strings.Trim(fullName, "/"), hookID))
+	data, status, err := g.doJSON(http.MethodDelete, url, nil)
+	if err != nil {
+		return err
+	}
+	if status < 200 || status >= 300 {
+		return giteaWebhookPermissionError(status, data)
+	}
+	return nil
+}
+
+// ListWebhooks returns the repository's webhooks, used to detect an existing
+// hook for this app before creating a duplicate.
+func (g *GiteaClient) ListWebhooks(fullName string) ([]GiteaHook, error) {
+	fullName = strings.Trim(strings.TrimSpace(fullName), "/")
+	url := g.apiURL("/repos/" + fullName + "/hooks")
+	data, status, err := g.doJSON(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		return nil, giteaWebhookPermissionError(status, data)
+	}
+	var hooks []GiteaHook
+	if err := json.Unmarshal(data, &hooks); err != nil {
+		return nil, err
+	}
+	return hooks, nil
 }
