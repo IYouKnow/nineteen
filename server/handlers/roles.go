@@ -1,50 +1,20 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"nineteen-server/auth"
-	"nineteen-server/db"
+	"nineteen-server/authz"
 	"nineteen-server/permissions"
 )
 
-// roleExists reports whether a role name exists.
-func roleExists(name string) bool {
-	var exists bool
-	db.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM roles WHERE name = ?)", name).Scan(&exists)
-	return exists
-}
-
-// roleIsSuperuser reports whether a role name is the superuser role.
-func roleIsSuperuser(name string) bool {
-	var super bool
-	db.DB.QueryRow("SELECT is_superuser FROM roles WHERE name = ?", name).Scan(&super)
-	return super
-}
-
-// defaultRoleName returns the configured default role for new registrations,
-// falling back to member.
-func defaultRoleName() string {
-	var name string
-	if err := db.DB.QueryRow("SELECT name FROM roles WHERE is_default = TRUE LIMIT 1").Scan(&name); err == nil && name != "" {
-		return name
-	}
-	return auth.RoleMember
-}
-
-// superuserRoleName returns the name of the superuser role, falling back to
-// admin.
-func superuserRoleName() string {
-	var name string
-	if err := db.DB.QueryRow("SELECT name FROM roles WHERE is_superuser = TRUE LIMIT 1").Scan(&name); err == nil && name != "" {
-		return name
-	}
-	return auth.RoleAdmin
-}
+// This file is a translation layer only. Every authorization decision about
+// roles lives in the authz package, so there is exactly one place where the
+// rules are written down and exactly one place to audit them. Handlers map
+// authz's typed errors onto status codes and nothing more.
 
 type roleResponse struct {
 	ID          int64    `json:"id"`
@@ -52,22 +22,95 @@ type roleResponse struct {
 	Description string   `json:"description"`
 	IsSuperuser bool     `json:"is_superuser"`
 	IsDefault   bool     `json:"is_default"`
+	IsArchived  bool     `json:"is_archived"`
 	UserCount   int      `json:"user_count"`
 	Permissions []string `json:"permissions"`
 }
 
+func toRoleResponse(r authz.Role) roleResponse {
+	return roleResponse{
+		ID: r.ID, Name: r.Name, Description: r.Description,
+		IsSuperuser: r.IsSuperuser, IsDefault: r.IsDefault, IsArchived: r.IsArchived,
+		UserCount: r.UserCount, Permissions: r.Permissions,
+	}
+}
+
+// respondAuthzError maps an authz error onto a status code. The distinction
+// between "you may not" and "that would break an invariant" is preserved so
+// the client can react differently, and so a refused escalation is
+// distinguishable from a typo.
+func respondAuthzError(w http.ResponseWriter, err error) {
+	var inUse *authz.RoleInUseError
+	var grant *authz.ExceedsGrantError
+	switch {
+	case errors.Is(err, authz.ErrNotFound):
+		respondError(w, http.StatusNotFound, "Role not found")
+	case errors.Is(err, authz.ErrForbidden):
+		respondError(w, http.StatusForbidden, "You don't have permission to do that")
+	case errors.Is(err, authz.ErrProtectedRole):
+		respondError(w, http.StatusConflict, "The superuser role is protected and cannot be changed this way")
+	case errors.Is(err, authz.ErrLastSuperuser):
+		respondError(w, http.StatusConflict, "This is the last superuser; the instance would be locked out")
+	case errors.Is(err, authz.ErrRoleInUse):
+		if errors.As(err, &inUse) {
+			respondError(w, http.StatusConflict, inUse.Error())
+			return
+		}
+		respondError(w, http.StatusConflict, "This role is still assigned to users")
+	case errors.Is(err, authz.ErrArchivedRole):
+		respondError(w, http.StatusConflict, "This role is archived and cannot be assigned to anyone")
+	case errors.Is(err, authz.ErrExceedsGrant):
+		if errors.As(err, &grant) {
+			respondError(w, http.StatusForbidden, grant.Error())
+			return
+		}
+		respondError(w, http.StatusForbidden, "You can't grant permissions you don't have")
+	case errors.Is(err, authz.ErrSelfManaged):
+		respondError(w, http.StatusConflict, "This would leave you without any permission")
+	case errors.Is(err, authz.ErrConflict):
+		respondError(w, http.StatusConflict, "That conflicts with the current state")
+	default:
+		// Validation messages from authz are written for operators, so they pass
+		// through as-is; anything unrecognised is a 400.
+		respondError(w, http.StatusBadRequest, err.Error())
+	}
+}
+
 // PermissionCatalogHandler returns the full permission catalogue so the UI can
-// render the permission matrix.
+// render the permission matrix. Each entry is annotated with whether the calling
+// user may grant it, so the editor can disable what would be refused instead of
+// letting the operator fill in a form that fails on save.
 func PermissionCatalogHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	if _, err := extractUser(r); err != nil {
+	claims, err := extractUser(r)
+	if err != nil {
 		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
 		return
 	}
-	respondJSON(w, http.StatusOK, permissions.Catalog())
+
+	grantable := authz.GrantablePermissions(claims.UserID)
+	catalog := make([]map[string]interface{}, 0)
+	for _, g := range permissions.Catalog() {
+		defs := make([]map[string]interface{}, 0, len(g.Permissions))
+		for _, p := range g.Permissions {
+			defs = append(defs, map[string]interface{}{
+				"key":       p.Key,
+				"label":     p.Label,
+				"grantable": grantable[p.Key],
+				"is_write":  permissions.IsWriteKey(p.Key),
+			})
+		}
+		catalog = append(catalog, map[string]interface{}{
+			"id": g.ID, "label": g.Label, "description": g.Description, "permissions": defs,
+		})
+	}
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"groups":       catalog,
+		"is_superuser": authz.IsSuperuser(claims.UserID),
+	})
 }
 
 // AdminRolesHandler lists and creates roles.
@@ -89,7 +132,7 @@ func AdminRolesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// AdminRoleHandler updates or deletes a single role.
+// AdminRoleHandler updates, archives or deletes a single role.
 func AdminRoleHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPut:
@@ -109,47 +152,17 @@ func AdminRoleHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func rolePermissionsByID(roleID int64, isSuper bool) []string {
-	if isSuper {
-		return []string{"*"}
-	}
-	rows, err := db.DB.Query("SELECT permission FROM role_permissions WHERE role_id = ? ORDER BY permission", roleID)
-	if err != nil {
-		return []string{}
-	}
-	defer rows.Close()
-	out := []string{}
-	for rows.Next() {
-		var p string
-		if rows.Scan(&p) == nil {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
 func listRoles(w http.ResponseWriter) {
-	rows, err := db.DB.Query(`
-		SELECT r.id, r.name, r.description, r.is_superuser, r.is_default,
-			(SELECT COUNT(*) FROM users u WHERE u.role = r.name)
-		FROM roles r ORDER BY r.id ASC`)
+	roles, err := authz.ListRoles()
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
-	defer rows.Close()
-
-	roles := []roleResponse{}
-	for rows.Next() {
-		var role roleResponse
-		if err := rows.Scan(&role.ID, &role.Name, &role.Description, &role.IsSuperuser,
-			&role.IsDefault, &role.UserCount); err != nil {
-			continue
-		}
-		role.Permissions = rolePermissionsByID(role.ID, role.IsSuperuser)
-		roles = append(roles, role)
+	out := make([]roleResponse, 0, len(roles))
+	for _, r := range roles {
+		out = append(out, toRoleResponse(r))
 	}
-	respondJSON(w, http.StatusOK, roles)
+	respondJSON(w, http.StatusOK, out)
 }
 
 type roleWriteRequest struct {
@@ -157,21 +170,7 @@ type roleWriteRequest struct {
 	Description *string   `json:"description"`
 	Permissions *[]string `json:"permissions"`
 	IsDefault   *bool     `json:"is_default"`
-}
-
-func validateRoleName(name string) string {
-	if name == "" {
-		return "name is required"
-	}
-	if len(name) > 32 {
-		return "name must be 32 characters or fewer"
-	}
-	for _, r := range name {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
-			return "name may only contain letters, numbers, hyphens and underscores"
-		}
-	}
-	return ""
+	IsArchived  *bool     `json:"is_archived"`
 }
 
 func createRole(w http.ResponseWriter, r *http.Request, claims *Claims) {
@@ -184,45 +183,26 @@ func createRole(w http.ResponseWriter, r *http.Request, claims *Claims) {
 		respondError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	name := strings.TrimSpace(*req.Name)
-	if msg := validateRoleName(name); msg != "" {
-		respondError(w, http.StatusBadRequest, msg)
-		return
+	perms := []string{}
+	if req.Permissions != nil {
+		perms = *req.Permissions
 	}
-	description := ""
+	desc := ""
 	if req.Description != nil {
-		description = strings.TrimSpace(*req.Description)
+		desc = *req.Description
 	}
 
-	perms, msg := normalizePermissions(req.Permissions)
-	if msg != "" {
-		respondError(w, http.StatusBadRequest, msg)
-		return
-	}
-	if !canGrantAll(claims.UserID, perms) {
-		respondError(w, http.StatusForbidden, "You can't grant permissions you don't have")
-		return
-	}
-
-	result, err := db.DB.Exec(
-		"INSERT INTO roles (name, description, is_superuser, is_default) VALUES (?, ?, FALSE, FALSE)",
-		name, description,
-	)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint") {
-			respondError(w, http.StatusConflict, "A role with that name already exists")
-			return
-		}
-		respondError(w, http.StatusInternalServerError, "Failed to create role")
-		return
-	}
-	id, _ := result.LastInsertId()
-	replaceRolePermissions(id, perms)
-
-	logAudit(r, claims.UserID, claims.Username, "admin.role_create", "role", strconv.FormatInt(id, 10), name)
-	respondJSON(w, http.StatusCreated, roleResponse{
-		ID: id, Name: name, Description: description, Permissions: perms,
+	created, err := authz.CreateRole(claims.UserID, authz.CreateRoleInput{
+		Name: *req.Name, Description: desc, Permissions: perms,
 	})
+	if err != nil {
+		respondAuthzError(w, err)
+		return
+	}
+
+	logAudit(r, claims.UserID, claims.Username, "admin.role_create",
+		"role", strconv.FormatInt(created.ID, 10), created.Name)
+	respondJSON(w, http.StatusCreated, toRoleResponse(created))
 }
 
 func updateRole(w http.ResponseWriter, r *http.Request, claims *Claims) {
@@ -231,240 +211,128 @@ func updateRole(w http.ResponseWriter, r *http.Request, claims *Claims) {
 		respondError(w, http.StatusBadRequest, "Invalid role ID")
 		return
 	}
-
-	var currentName, currentDesc string
-	var isSuper, isDefault bool
-	err := db.DB.QueryRow(
-		"SELECT name, description, is_superuser, is_default FROM roles WHERE id = ?", id,
-	).Scan(&currentName, &currentDesc, &isSuper, &isDefault)
-	if err == sql.ErrNoRows {
-		respondError(w, http.StatusNotFound, "Role not found")
-		return
-	}
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Database error")
-		return
-	}
-	if isSuper && !isSuperuser(claims.UserID) {
-		respondError(w, http.StatusForbidden, "Only a superuser can modify the superuser role")
-		return
-	}
-
 	var req roleWriteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
-	newName := currentName
-	if req.Name != nil {
-		newName = strings.TrimSpace(*req.Name)
-		if msg := validateRoleName(newName); msg != "" {
-			respondError(w, http.StatusBadRequest, msg)
-			return
-		}
-	}
-	newDesc := currentDesc
-	if req.Description != nil {
-		newDesc = strings.TrimSpace(*req.Description)
-	}
-
-	tx, err := db.DB.Begin()
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Database error")
-		return
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.Exec("UPDATE roles SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-		newName, newDesc, id); err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint") {
-			respondError(w, http.StatusConflict, "A role with that name already exists")
-			return
-		}
-		respondError(w, http.StatusInternalServerError, "Failed to update role")
-		return
-	}
-
-	// Renaming a role must move every user assigned to it.
-	if newName != currentName {
-		if _, err := tx.Exec("UPDATE users SET role = ? WHERE role = ?", newName, currentName); err != nil {
-			respondError(w, http.StatusInternalServerError, "Failed to rename role")
-			return
-		}
-	}
-
-	if req.IsDefault != nil && *req.IsDefault && !isDefault {
-		if !isSuperuser(claims.UserID) {
-			respondError(w, http.StatusForbidden, "Only a superuser can change the default role")
-			return
-		}
-		if _, err := tx.Exec("UPDATE roles SET is_default = FALSE"); err != nil {
-			respondError(w, http.StatusInternalServerError, "Failed to set default role")
-			return
-		}
-		if _, err := tx.Exec("UPDATE roles SET is_default = TRUE WHERE id = ?", id); err != nil {
-			respondError(w, http.StatusInternalServerError, "Failed to set default role")
-			return
-		}
-		isDefault = true
-	}
-
-	if err := tx.Commit(); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to update role")
-		return
-	}
-
-	// The superuser role implicitly has every permission; its stored set is
-	// irrelevant, so it is never written.
-	perms := rolePermissionsByID(id, isSuper)
-	if !isSuper && req.Permissions != nil {
-		newPerms, msg := normalizePermissions(req.Permissions)
-		if msg != "" {
-			respondError(w, http.StatusBadRequest, msg)
-			return
-		}
-		if !canGrantAll(claims.UserID, newPerms) {
-			respondError(w, http.StatusForbidden, "You can't grant permissions you don't have")
-			return
-		}
-		replaceRolePermissions(id, newPerms)
-		perms = newPerms
-	}
-
-	logAudit(r, claims.UserID, claims.Username, "admin.role_update", "role", strconv.FormatInt(id, 10), newName)
-	respondJSON(w, http.StatusOK, roleResponse{
-		ID: id, Name: newName, Description: newDesc,
-		IsSuperuser: isSuper, IsDefault: isDefault, Permissions: perms,
+	updated, err := authz.UpdateRole(claims.UserID, id, authz.UpdateRoleInput{
+		Name: req.Name, Description: req.Description,
+		Permissions: req.Permissions, SetDefault: req.IsDefault, Archived: req.IsArchived,
 	})
+	if err != nil {
+		respondAuthzError(w, err)
+		return
+	}
+
+	logAudit(r, claims.UserID, claims.Username, "admin.role_update",
+		"role", strconv.FormatInt(id, 10), updated.Name)
+	respondJSON(w, http.StatusOK, toRoleResponse(updated))
 }
 
+// deleteRole removes a role that has no members.
+//
+// There is no replacement_role_id parameter. Choosing where a role's members go
+// is a privilege change, and the original endpoint let a caller smuggle one in
+// through a query string on a DELETE, writing a resolved role name straight
+// into users.role with no check that the caller was allowed to grant it. Mass
+// reassignment is now ReassignRoleMembersHandler: a named, separately audited
+// operation that runs the same containment check as every other grant.
 func deleteRole(w http.ResponseWriter, r *http.Request, claims *Claims) {
 	id, ok := pathID(r)
 	if !ok {
 		respondError(w, http.StatusBadRequest, "Invalid role ID")
 		return
 	}
+	if err := authz.DeleteRole(claims.UserID, id); err != nil {
+		respondAuthzError(w, err)
+		return
+	}
 
-	var name string
-	var isSuper, isDefault bool
-	err := db.DB.QueryRow("SELECT name, is_superuser, is_default FROM roles WHERE id = ?", id).
-		Scan(&name, &isSuper, &isDefault)
-	if err == sql.ErrNoRows {
+	logAudit(r, claims.UserID, claims.Username, "admin.role_delete",
+		"role", strconv.FormatInt(id, 10), "")
+	respondJSON(w, http.StatusOK, map[string]string{"message": "Role deleted"})
+}
+
+type reassignRequest struct {
+	ToRoleID int64 `json:"to_role_id"`
+}
+
+// ReassignRoleMembersHandler moves every member of one role into another.
+func ReassignRoleMembersHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	claims, ok := requirePermission(w, r, "admin.roles.manage")
+	if !ok {
+		return
+	}
+	fromID, ok := pathID(r)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "Invalid role ID")
+		return
+	}
+	var req reassignRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if req.ToRoleID == 0 {
+		respondError(w, http.StatusBadRequest, "to_role_id is required")
+		return
+	}
+
+	moved, err := authz.ReassignMembers(claims.UserID, fromID, req.ToRoleID)
+	if err != nil {
+		respondAuthzError(w, err)
+		return
+	}
+
+	to, _ := authz.RoleByID(req.ToRoleID)
+	logAudit(r, claims.UserID, claims.Username, "admin.role_reassign",
+		"role", strconv.FormatInt(fromID, 10),
+		"moved="+strconv.Itoa(moved)+" to_role_id="+strconv.FormatInt(req.ToRoleID, 10)+
+			" to="+to.Name)
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Reassigned " + strconv.Itoa(moved) + " user(s) to " + to.Name,
+		"moved":   moved,
+	})
+}
+
+// RoleMembersHandler lists the accounts holding a role, so the UI can show
+// exactly who a delete or an archive would affect.
+func RoleMembersHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if _, ok := requirePermission(w, r, "admin.roles.read"); !ok {
+		return
+	}
+	id, ok := pathID(r)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "Invalid role ID")
+		return
+	}
+	if _, ok := authz.RoleByID(id); !ok {
 		respondError(w, http.StatusNotFound, "Role not found")
 		return
 	}
+	members, err := authz.MembersOfRole(id, 500)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
-	if isSuper {
-		respondError(w, http.StatusConflict, "The superuser role cannot be deleted")
-		return
-	}
-
-	var userCount int
-	db.DB.QueryRow("SELECT COUNT(*) FROM users WHERE role = ?", name).Scan(&userCount)
-
-	replacementID := int64(0)
-	if raw := strings.TrimSpace(r.URL.Query().Get("replacement_role_id")); raw != "" {
-		replacementID, _ = strconv.ParseInt(raw, 10, 64)
-	}
-
-	if userCount > 0 {
-		if replacementID == 0 {
-			respondError(w, http.StatusConflict,
-				"This role is assigned to "+strconv.Itoa(userCount)+" user(s). Choose a replacement role first.")
-			return
-		}
-		if replacementID == id {
-			respondError(w, http.StatusBadRequest, "Replacement role must be different")
-			return
-		}
-		var replacementName string
-		if err := db.DB.QueryRow("SELECT name FROM roles WHERE id = ?", replacementID).Scan(&replacementName); err != nil {
-			respondError(w, http.StatusBadRequest, "Replacement role not found")
-			return
-		}
-		if _, err := db.DB.Exec("UPDATE users SET role = ? WHERE role = ?", replacementName, name); err != nil {
-			respondError(w, http.StatusInternalServerError, "Failed to reassign users")
-			return
-		}
-	}
-
-	if isDefault && replacementID != 0 {
-		db.DB.Exec("UPDATE roles SET is_default = TRUE WHERE id = ?", replacementID)
-	}
-
-	if _, err := db.DB.Exec("DELETE FROM roles WHERE id = ?", id); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to delete role")
-		return
-	}
-
-	logAudit(r, claims.UserID, claims.Username, "admin.role_delete", "role", strconv.FormatInt(id, 10), name)
-	respondJSON(w, http.StatusOK, map[string]string{"message": "Role deleted"})
+	respondJSON(w, http.StatusOK, members)
 }
 
-// normalizePermissions validates a permission list, returning a message when
-// any entry is unknown. The global wildcard "*" is never assignable through the
-// API — it is reserved for the superuser role, which is evaluated implicitly.
-func normalizePermissions(input *[]string) ([]string, string) {
-	if input == nil {
-		return []string{}, ""
+// defaultRoleName keeps the registration path working for callers that only
+// have the role name to hand.
+func defaultRoleName() string {
+	if r, ok := authz.DefaultRole(); ok {
+		return r.Name
 	}
-	out := []string{}
-	seen := map[string]bool{}
-	for _, p := range *input {
-		p = strings.TrimSpace(p)
-		if p == "" || seen[p] {
-			continue
-		}
-		if p == "*" {
-			return nil, "the global wildcard permission cannot be assigned to a role"
-		}
-		if !permissions.ValidGrant(p) {
-			return nil, "Unknown permission: " + p
-		}
-		seen[p] = true
-		out = append(out, p)
-	}
-	return out, ""
-}
-
-// callerCanGrant reports whether userID may grant perm to a role. Superusers may
-// grant anything; everyone else may only grant permissions they already hold, so
-// a delegated role manager cannot escalate their own or another role beyond
-// their current access.
-func callerCanGrant(userID int64, perm string) bool {
-	if isSuperuser(userID) {
-		return true
-	}
-	if strings.HasSuffix(perm, ".*") {
-		prefix := strings.TrimSuffix(perm, ".*")
-		for _, key := range permissions.All() {
-			if (key == prefix || strings.HasPrefix(key, prefix+".")) && !hasPermission(userID, key) {
-				return false
-			}
-		}
-		return true
-	}
-	return hasPermission(userID, perm)
-}
-
-// canGrantAll reports whether userID may grant every permission in perms.
-func canGrantAll(userID int64, perms []string) bool {
-	for _, p := range perms {
-		if !callerCanGrant(userID, p) {
-			return false
-		}
-	}
-	return true
-}
-
-// replaceRolePermissions swaps a role's permission set.
-func replaceRolePermissions(roleID int64, perms []string) {
-	db.DB.Exec("DELETE FROM role_permissions WHERE role_id = ?", roleID)
-	for _, p := range perms {
-		db.DB.Exec("INSERT OR IGNORE INTO role_permissions (role_id, permission) VALUES (?, ?)", roleID, p)
-	}
+	return auth.RoleMember
 }

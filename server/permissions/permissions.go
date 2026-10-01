@@ -168,6 +168,30 @@ func Allows(granted []string, required string) bool {
 	return false
 }
 
+// Expand returns every concrete catalogue key satisfied by granted, with
+// wildcards resolved. The server hands this to the client so the browser never
+// has to reimplement Covers: it can test membership in a flat set.
+func Expand(granted []string) []string {
+	out := []string{}
+	for _, key := range All() {
+		if Allows(granted, key) {
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
+// IsWriteKey reports whether a permission key grants mutating access, matching
+// the suffixes the UI uses to decide whether the current user is read-only.
+func IsWriteKey(key string) bool {
+	for _, suffix := range []string{".create", ".update", ".delete", ".manage", ".deploy", ".run"} {
+		if strings.HasSuffix(key, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 // MemberDefaults is the permission set seeded for the built-in member role so
 // existing installs keep working: everything on their own resources, but no
 // admin panel access and no self-update.

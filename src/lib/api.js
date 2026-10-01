@@ -369,10 +369,16 @@ export const admin = {
     doFetch("/api/admin/roles", { method: "POST", body: JSON.stringify(payload) }),
   updateRole: (id, patch) =>
     doFetch(`/api/admin/roles/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
-  deleteRole: (id, replacementRoleId) => {
-    const qs = replacementRoleId ? `?replacement_role_id=${replacementRoleId}` : "";
-    return doFetch(`/api/admin/roles/${id}${qs}`, { method: "DELETE" });
-  },
+  // Deleting a role that still has members is refused by the server, so there
+  // is no replacement parameter here: moving a role's members is its own
+  // operation with its own permission check and its own audit entry.
+  deleteRole: (id) => doFetch(`/api/admin/roles/${id}`, { method: "DELETE" }),
+  roleMembers: (id) => doFetch(`/api/admin/roles/${id}/members`),
+  reassignRoleMembers: (id, toRoleId) =>
+    doFetch(`/api/admin/roles/${id}/reassign`, {
+      method: "POST",
+      body: JSON.stringify({ to_role_id: toRoleId }),
+    }),
   invites: () => doFetch("/api/admin/invites"),
   createInvite: (payload) =>
     doFetch("/api/admin/invites", { method: "POST", body: JSON.stringify(payload) }),

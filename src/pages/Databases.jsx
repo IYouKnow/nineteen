@@ -15,6 +15,7 @@ import DatabaseRow from "@/components/db/DatabaseRow";
 import { DB_TYPE_LIST } from "@/lib/databases";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
+import { PERM } from "@/lib/permissions";
 
 const STATUS_FILTERS = [
   { id: "all", label: "All" },
@@ -30,7 +31,7 @@ export default function Databases() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [view, setView] = useState("grid");
   const { hasPermission } = useAuth();
-  const canCreate = hasPermission("databases.create");
+  const canCreate = hasPermission(PERM.DATABASES_CREATE);
   const [searchParams] = useSearchParams();
   const urlFilter = searchParams.get("filter");
 

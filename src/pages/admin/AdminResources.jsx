@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/table";
 import ConfirmDialog from "@/components/dev/ConfirmDialog";
 import { FolderGit2, Database, Play, Square, RotateCw, Trash2 } from "lucide-react";
+import { PERM } from "@/lib/permissions";
 
 function statusVariant(status) {
   if (status === "running" || status === "ready") return "outline";
@@ -51,7 +52,7 @@ function ActionButtons({ onAction, onDelete, pending, showRestart = true, readOn
 export default function AdminResources() {
   const qc = useQueryClient();
   const { hasPermission } = useAuth();
-  const canManage = hasPermission("admin.resources.manage");
+  const canManage = hasPermission(PERM.ADMIN_RESOURCES_MANAGE);
 
   const { data, isLoading } = useQuery({
     queryKey: ["admin-resources"],

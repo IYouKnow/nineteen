@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { admin } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
+import { PERM } from "@/lib/permissions";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,12 +16,10 @@ import {
 import ConfirmDialog from "@/components/dev/ConfirmDialog";
 import { Trash2, ShieldCheck, UserX, UserCheck } from "lucide-react";
 
-const ROLE_FALLBACK = ["admin", "member", "viewer"];
-
 export default function AdminUsers() {
   const qc = useQueryClient();
-  const { user: me, hasPermission } = useAuth();
-  const canManage = hasPermission("admin.users.manage");
+  const { user: me, hasPermission, isSuperuser } = useAuth();
+  const canManage = hasPermission(PERM.ADMIN_USERS_MANAGE);
 
   const { data: users = [], isLoading } = useQuery({
     queryKey: ["admin-users"],
@@ -31,7 +30,13 @@ export default function AdminUsers() {
     queryKey: ["admin-roles"],
     queryFn: () => admin.roles(),
   });
-  const roleNames = roles.length ? roles.map((r) => r.name) : ROLE_FALLBACK;
+
+  // The role list comes from the server, so it cannot go stale the way a
+  // hardcoded fallback could. Archived roles are hidden because the server
+  // refuses new assignments to them; existing members keep theirs, which is
+  // why an archived role's members still resolve here.
+  const assignableRoles = roles.filter((r) => !r.is_archived);
+  const roleByName = new Map(roles.map((r) => [r.name, r]));
 
   const updateUser = useMutation({
     mutationFn: ({ id, patch }) => admin.updateUser(id, patch),
@@ -83,6 +88,12 @@ export default function AdminUsers() {
                 {users.map((u) => {
                   const isSelf = me?.id === u.id;
                   const disabled = u.status === "disabled";
+                  const currentRole = roleByName.get(u.role);
+                  // A superuser account is off limits to a delegated manager, so
+                  // the control is disabled rather than offering a change the
+                  // server will refuse. Showing this is what makes the
+                  // restriction visible instead of a surprise 403.
+                  const roleLocked = !!currentRole?.is_superuser && !isSuperuser;
                   return (
                     <TableRow key={u.id} className={disabled ? "opacity-60" : undefined}>
                       <TableCell>
@@ -95,18 +106,26 @@ export default function AdminUsers() {
                       <TableCell>
                         <Select
                           value={u.role}
-                          disabled={isSelf || !canManage || updateUser.isPending}
+                          disabled={isSelf || roleLocked || !canManage || updateUser.isPending}
                           onValueChange={(role) => updateUser.mutate({ id: u.id, patch: { role } })}
                         >
-                          <SelectTrigger className="h-8 w-[120px]">
+                          <SelectTrigger className="h-8 w-[130px]">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {roleNames.map((r) => (
-                              <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>
+                            {assignableRoles.map((r) => (
+                              <SelectItem key={r.id} value={r.name} className="capitalize">
+                                {r.name}
+                                {r.is_superuser ? " (superuser)" : ""}
+                              </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
+                        {roleLocked && (
+                          <p className="mt-1 text-[11px] text-muted-foreground">
+                            Only a superuser can change this account
+                          </p>
+                        )}
                       </TableCell>
                       <TableCell>
                         {disabled ? (

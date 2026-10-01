@@ -19,8 +19,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { Plus, Ticket, Trash2, Copy, CheckCircle2, Link2 } from "lucide-react";
-
-const ROLE_FALLBACK = ["member", "viewer", "admin"];
+import { PERM } from "@/lib/permissions";
 
 function inviteState(inv) {
   if (inv.revoked) return { label: "revoked", variant: "destructive" };
@@ -33,8 +32,8 @@ function inviteState(inv) {
 
 export default function AdminInvites() {
   const qc = useQueryClient();
-  const { hasPermission } = useAuth();
-  const canManage = hasPermission("admin.invites.manage");
+  const { hasPermission, isSuperuser } = useAuth();
+  const canManage = hasPermission(PERM.ADMIN_INVITES_MANAGE);
   const [open, setOpen] = useState(false);
   const [created, setCreated] = useState(null);
   const [form, setForm] = useState({ role: "member", label: "", max_uses: 1, expires_at: "" });
@@ -48,7 +47,17 @@ export default function AdminInvites() {
     queryKey: ["admin-roles"],
     queryFn: () => admin.roles(),
   });
-  const roleNames = roles.length ? roles.map((r) => r.name) : ROLE_FALLBACK;
+  // An invite decides what its holder becomes, so the options come from the
+  // server's role list and exclude archived roles, which can no longer be
+  // assigned. A role the caller may not grant is rejected by the server, so it
+  // is left out of the picker rather than offered and then refused.
+  const roleNames = roles
+    .filter((r) => !r.is_archived)
+    .map((r) => r.name)
+    .filter((name) => {
+      const role = roles.find((r) => r.name === name);
+      return !role?.is_superuser || isSuperuser;
+    });
 
   const createInvite = useMutation({
     mutationFn: (payload) => admin.createInvite(payload),

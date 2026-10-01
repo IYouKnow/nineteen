@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { BadgeCheck, Search, Sparkles, Store, Zap } from "lucide-react";
 import DockerHubBrowser from "@/components/newproject/DockerHubBrowser";
 import { useAuth } from "@/hooks/useAuth";
+import { PERM } from "@/lib/permissions";
 
 const HERO_FEATURES = [
   { icon: Zap, label: "One-click deploy" },
@@ -12,7 +13,7 @@ const HERO_FEATURES = [
 export default function AppStore() {
   const navigate = useNavigate();
   const { hasPermission } = useAuth();
-  const canCreate = hasPermission("projects.create");
+  const canCreate = hasPermission(PERM.PROJECTS_CREATE);
 
   const install = (app) => {
     if (!canCreate) return;

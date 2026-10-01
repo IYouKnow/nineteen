@@ -354,6 +354,11 @@ func main() {
 	mux.HandleFunc("/api/admin/invites/{id}", handlers.AdminInviteHandler)
 	mux.HandleFunc("/api/admin/roles", handlers.AdminRolesHandler)
 	mux.HandleFunc("/api/admin/roles/{id}", handlers.AdminRoleHandler)
+	// Mass reassignment is a named, separately audited operation rather than a
+	// side effect of DELETE ?replacement_role_id=, which let a caller smuggle a
+	// privilege change past the checks that guard a direct role assignment.
+	mux.HandleFunc("/api/admin/roles/{id}/reassign", handlers.ReassignRoleMembersHandler)
+	mux.HandleFunc("/api/admin/roles/{id}/members", handlers.RoleMembersHandler)
 	mux.HandleFunc("/api/admin/audit", handlers.AdminAuditHandler)
 	mux.HandleFunc("/api/admin/system", handlers.AdminSystemHandler)
 	mux.HandleFunc("/api/admin/resources", handlers.AdminResourcesHandler)

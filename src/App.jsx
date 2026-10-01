@@ -33,6 +33,7 @@ import AdminResources from "@/pages/admin/AdminResources";
 import AdminSystem from "@/pages/admin/AdminSystem";
 import AdminAudit from "@/pages/admin/AdminAudit";
 import { Navigate } from "react-router-dom";
+import { PERM } from "@/lib/permissions";
 
 function LoadingScreen() {
   return (
@@ -66,15 +67,15 @@ function AppRoutes() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/store" element={<AppStore />} />
-        <Route path="/projects/new" element={<WriteRoute permission="projects.create"><NewProject /></WriteRoute>} />
+        <Route path="/projects/new" element={<WriteRoute permission={PERM.PROJECTS_CREATE}><NewProject /></WriteRoute>} />
         <Route path="/projects/:projectId" element={<ProjectDetail />} />
         <Route path="/projects/:projectId/deployments/:deploymentId" element={<DeploymentDetail />} />
         <Route path="/databases" element={<Databases />} />
-        <Route path="/databases/new" element={<WriteRoute permission="databases.create"><NewDatabase /></WriteRoute>} />
+        <Route path="/databases/new" element={<WriteRoute permission={PERM.DATABASES_CREATE}><NewDatabase /></WriteRoute>} />
         <Route path="/databases/:databaseId" element={<DatabaseDetail />} />
         <Route path="/storage" element={<Storage />} />
-        <Route path="/storage/buckets/new" element={<WriteRoute permission="storage.create"><NewBucket /></WriteRoute>} />
-        <Route path="/storage/volumes/new" element={<WriteRoute permission="storage.create"><NewVolume /></WriteRoute>} />
+        <Route path="/storage/buckets/new" element={<WriteRoute permission={PERM.STORAGE_CREATE}><NewBucket /></WriteRoute>} />
+        <Route path="/storage/volumes/new" element={<WriteRoute permission={PERM.STORAGE_CREATE}><NewVolume /></WriteRoute>} />
         <Route path="/storage/buckets/:bucketId" element={<BucketDetail />} />
         <Route path="/storage/volumes/:volumeId" element={<VolumeDetail />} />
         <Route path="/profile" element={<Profile />} />

@@ -22,6 +22,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Skeleton } from "@/components/ui/skeleton";
 import { timeAgo, formatDuration, shortSha } from "@/lib/format";
 import { getFramework } from "@/lib/devStatus";
+import { PERM } from "@/lib/permissions";
 
 function StatCard({ icon: Icon, label, value, sub, accent }) {
   return (
@@ -87,7 +88,7 @@ function DeploymentRow({ deployment }) {
 
 export default function Dashboard() {
   const { hasPermission } = useAuth();
-  const canCreate = hasPermission("projects.create");
+  const canCreate = hasPermission(PERM.PROJECTS_CREATE);
   const { data: projects, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["projects"],
     queryFn: () => api.projects.list(),

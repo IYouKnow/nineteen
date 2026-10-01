@@ -17,6 +17,7 @@ import { timeAgo } from "@/lib/format";
 import { getFramework } from "@/lib/devStatus";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
+import { PERM } from "@/lib/permissions";
 
 const FILTERS = [
   { id: "all", label: "All" },
@@ -110,7 +111,7 @@ export default function Projects() {
   const [filter, setFilter] = useState("all");
   const [view, setView] = useState("grid");
   const { hasPermission } = useAuth();
-  const canCreate = hasPermission("projects.create");
+  const canCreate = hasPermission(PERM.PROJECTS_CREATE);
   const [searchParams] = useSearchParams();
   const urlFilter = searchParams.get("filter") || "all";
 

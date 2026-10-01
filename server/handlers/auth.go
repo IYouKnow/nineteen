@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"nineteen-server/auth"
+	"nineteen-server/authz"
 	"nineteen-server/db"
 	"nineteen-server/models"
-	"nineteen-server/permissions"
 )
 
 type RegisterRequest struct {
@@ -94,49 +94,16 @@ func logAudit(r *http.Request, userID int64, username, action, targetType, targe
 }
 
 // isSuperuser reports whether the user's role is the all-powerful superuser.
+// Resolution lives in authz so the role_id foreign key and its legacy name
+// fallback are honoured in exactly one place.
 func isSuperuser(userID int64) bool {
-	var super bool
-	db.DB.QueryRow(
-		`SELECT r.is_superuser FROM users u JOIN roles r ON r.name = u.role WHERE u.id = ?`, userID,
-	).Scan(&super)
-	return super
-}
-
-// rolePermissions resolves a user's effective permissions from their role.
-// Superusers get the global wildcard.
-func rolePermissions(userID int64) []string {
-	var roleID int64
-	var super bool
-	err := db.DB.QueryRow(
-		`SELECT r.id, r.is_superuser FROM users u JOIN roles r ON r.name = u.role WHERE u.id = ?`, userID,
-	).Scan(&roleID, &super)
-	if err != nil {
-		return nil
-	}
-	if super {
-		return []string{"*"}
-	}
-
-	rows, err := db.DB.Query("SELECT permission FROM role_permissions WHERE role_id = ?", roleID)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
-	var perms []string
-	for rows.Next() {
-		var p string
-		if rows.Scan(&p) == nil {
-			perms = append(perms, p)
-		}
-	}
-	return perms
+	return authz.IsSuperuser(userID)
 }
 
 // hasPermission reports whether a user is granted a permission (directly, via a
 // wildcard, or as a superuser).
 func hasPermission(userID int64, perm string) bool {
-	return permissions.Allows(rolePermissions(userID), perm)
+	return authz.Can(userID, perm)
 }
 
 // requirePermission extracts the caller and confirms they hold perm, writing an
@@ -156,12 +123,7 @@ func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (*Cl
 
 // activeAdminCount returns how many enabled superusers remain.
 func activeAdminCount() int {
-	var n int
-	db.DB.QueryRow(
-		`SELECT COUNT(*) FROM users u JOIN roles r ON r.name = u.role
-		 WHERE r.is_superuser = TRUE AND u.status = 'active'`,
-	).Scan(&n)
-	return n
+	return authz.ActiveSuperuserCount()
 }
 
 // AuthFromRequest exposes token extraction to the server's middleware.
@@ -228,8 +190,31 @@ func ValidateInviteHandler(w http.ResponseWriter, r *http.Request) {
 type inviteInfo struct {
 	ID      int64
 	Role    string
+	roleID  sql.NullInt64
 	MaxUses int
 	Uses    int
+}
+
+// roleForNewAccount decides the role a registration receives. The first account
+// on an instance is always the superuser; everyone else takes the invite's role,
+// falling back to the default. Resolution is delegated to authz so the
+// role_id/name fallback is honoured in one place.
+func roleForNewAccount(isFirstAccount bool, inviteRole string, inviteRoleID sql.NullInt64) authz.Role {
+	if isFirstAccount {
+		if su, ok := authz.SuperuserRole(); ok {
+			return su
+		}
+	}
+	role, _, err := authz.RoleForRegistration(inviteRoleID, inviteRole)
+	if err == nil && role.Name != "" {
+		return role
+	}
+	// Belt and braces: if somehow nothing resolved, fall back to the
+	// superuser role so a fresh instance is never left without an admin.
+	if su, ok := authz.SuperuserRole(); ok {
+		return su
+	}
+	return authz.Role{}
 }
 
 // validateInvite resolves a usable invite code, returning a human-readable
@@ -238,16 +223,21 @@ func validateInvite(code string) (inviteInfo, string) {
 	var info inviteInfo
 	var used, revoked bool
 	var expiresAt sql.NullString
+	var roleID sql.NullInt64
+	var roleName sql.NullString
 	err := db.DB.QueryRow(
-		`SELECT id, used, revoked, expires_at, max_uses, uses, role FROM invite_codes WHERE code = ?`,
+		`SELECT id, used, revoked, expires_at, max_uses, uses, role_id, role
+		 FROM invite_codes WHERE code = ?`,
 		code,
-	).Scan(&info.ID, &used, &revoked, &expiresAt, &info.MaxUses, &info.Uses, &info.Role)
+	).Scan(&info.ID, &used, &revoked, &expiresAt, &info.MaxUses, &info.Uses, &roleID, &roleName)
 	if err == sql.ErrNoRows {
 		return info, "Invalid invite code"
 	}
 	if err != nil {
 		return info, "Database error"
 	}
+	info.roleID = roleID
+	info.Role = roleName.String
 	if revoked {
 		return info, "Invite code has been revoked"
 	}
@@ -298,7 +288,8 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The very first account on the instance becomes the admin regardless of
-	// the invite's configured role.
+	// the invite's configured role, otherwise the instance would have nobody
+	// who can administer it.
 	var userCount int
 	if err := db.DB.QueryRow("SELECT COUNT(*) FROM users").Scan(&userCount); err != nil {
 		respondError(w, http.StatusInternalServerError, "Database error")
@@ -315,12 +306,8 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role := info.Role
-	if userCount == 0 {
-		role = superuserRoleName()
-	} else if !roleExists(role) {
-		role = defaultRoleName()
-	}
+	var inviteRoleID sql.NullInt64
+	assigned := roleForNewAccount(userCount == 0, info.Role, inviteRoleID)
 
 	// Hash password
 	hash, err := auth.HashPassword(req.Password)
@@ -329,10 +316,11 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Insert user
+	// Insert user. role_id and the legacy name column are written together so
+	// name-based reads stay correct during the compatibility window.
 	result, err := db.DB.Exec(
-		"INSERT INTO users (username, email, password_hash, display_name, role, status) VALUES (?, ?, ?, ?, ?, 'active')",
-		req.Username, req.Email, hash, req.DisplayName, role,
+		"INSERT INTO users (username, email, password_hash, display_name, role, role_id, status) VALUES (?, ?, ?, ?, ?, ?, 'active')",
+		req.Username, req.Email, hash, req.DisplayName, assigned.Name, assigned.ID,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
@@ -355,7 +343,7 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	)
 
 	// Generate JWT
-	token, err := auth.GenerateToken(userID, req.Username, req.Email, role)
+	token, err := auth.GenerateToken(userID, req.Username, req.Email, assigned.Name)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to generate token")
 		return
@@ -366,17 +354,17 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		Username:    req.Username,
 		Email:       req.Email,
 		DisplayName: req.DisplayName,
-		Role:        role,
+		Role:        assigned.Name,
 		Status:      "active",
 	}
 
 	logAudit(r, userID, req.Username, "user.register", "user", strconv.FormatInt(userID, 10),
-		"role="+role)
+		"role="+assigned.Name)
 
 	respondJSON(w, http.StatusCreated, AuthResponse{
 		User:        user,
 		Token:       token,
-		Permissions: rolePermissions(userID),
+		Permissions: authz.ExpandedPermissions(userID),
 		IsSuperuser: isSuperuser(userID),
 	})
 }
@@ -439,7 +427,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, AuthResponse{
 		User:        &user,
 		Token:       token,
-		Permissions: rolePermissions(user.ID),
+		Permissions: authz.ExpandedPermissions(user.ID),
 		IsSuperuser: isSuperuser(user.ID),
 	})
 }
@@ -482,7 +470,7 @@ func getMeHandler(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, meResponse{
 		User:        user,
-		Permissions: rolePermissions(claims.UserID),
+		Permissions: authz.ExpandedPermissions(claims.UserID),
 		IsSuperuser: isSuperuser(claims.UserID),
 	})
 }

@@ -3,6 +3,7 @@ import { Boxes, LayoutDashboard, FolderGit2, Database, HardDrive, Plus, X, Serve
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
+import { PERM } from "@/lib/permissions";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
@@ -35,7 +36,7 @@ function NavItem({ to, label, icon: Icon, end }) {
 export default function Sidebar({ mobileOpen, onClose }) {
   const navigate = useNavigate();
   const { canAccessAdmin, hasPermission } = useAuth();
-  const canCreateProject = hasPermission("projects.create");
+  const canCreateProject = hasPermission(PERM.PROJECTS_CREATE);
   return (
     <>
       {mobileOpen && (

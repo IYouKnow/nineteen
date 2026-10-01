@@ -433,10 +433,106 @@ func runMigrations() {
 	// with no trigger rows now means "manual deployments only".
 	migrateProjectTriggers()
 
+	migrateRoleReferences()
 	seedRoles()
+	backfillRoleReferences()
 	seedRolePermissions()
 	promoteFirstUserToAdmin()
+	recoverSuperuserAccess()
 	encryptLegacySecrets()
+}
+
+// migrateRoleReferences adds the role_id columns that make user -> role
+// assignment a real foreign key instead of a name matched on
+// roles.name = users.role. See the column entries above for why the columns are
+// nullable.
+func migrateRoleReferences() {
+	for _, c := range []struct{ table, column, ddl string }{
+		{"users", "role_id", `ALTER TABLE users ADD COLUMN role_id INTEGER REFERENCES roles(id)`},
+		{"invite_codes", "role_id", `ALTER TABLE invite_codes ADD COLUMN role_id INTEGER REFERENCES roles(id)`},
+		{"roles", "is_archived", `ALTER TABLE roles ADD COLUMN is_archived BOOLEAN DEFAULT FALSE`},
+	} {
+		exists, err := columnExists(c.table, c.column)
+		if err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
+		if exists {
+			continue
+		}
+		if _, err := DB.Exec(c.ddl); err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
+	}
+
+	// Indexed here rather than alongside the CREATE TABLE statements, because
+	// those run before the columns above are added.
+	for _, idx := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_users_role_id ON users(role_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_invite_codes_role_id ON invite_codes(role_id)`,
+	} {
+		if _, err := DB.Exec(idx); err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
+	}
+}
+
+// backfillRoleReferences populates role_id from the legacy name column for any
+// row that has not been migrated yet. It runs on every boot so rows written by
+// an older binary during a rolling deploy are picked up, and it repairs users
+// whose role name no longer matches any role (a role deleted out from under
+// them) by pinning them to the default role instead of leaving them with an
+// unresolvable assignment.
+func backfillRoleReferences() {
+	if _, err := DB.Exec(
+		`UPDATE users SET role_id = (SELECT r.id FROM roles r WHERE r.name = users.role)
+		 WHERE role_id IS NULL AND role IN (SELECT name FROM roles)`,
+	); err != nil {
+		log.Fatalf("Migration failed: %v", err)
+	}
+	if _, err := DB.Exec(
+		`UPDATE invite_codes SET role_id = (SELECT r.id FROM roles r WHERE r.name = invite_codes.role)
+		 WHERE role_id IS NULL AND role IN (SELECT name FROM roles)`,
+	); err != nil {
+		log.Fatalf("Migration failed: %v", err)
+	}
+
+	// A user pinned to a role that no longer exists would silently resolve to
+	// zero permissions. Move them to the default role and record it.
+	//
+	// Both columns must be written. Resolution prefers role_id, so leaving the
+	// legacy name stale would still work today, but the two disagreeing is
+	// exactly the failure mode this migration exists to remove: any older
+	// binary, or any future code path that consults the name, would resolve
+	// these users to a role that does not exist.
+	orphaned, err := orphanedUserCount()
+	if err != nil {
+		log.Fatalf("Migration failed: %v", err)
+	}
+	if orphaned > 0 {
+		log.Printf("Repairing %d user(s) with a missing role assignment", orphaned)
+		if _, err := DB.Exec(
+			`UPDATE users SET
+				role = COALESCE((SELECT r.name FROM roles r WHERE r.is_default = TRUE
+					ORDER BY r.id ASC LIMIT 1), role),
+				role_id = (SELECT r.id FROM roles r WHERE r.is_default = TRUE
+					ORDER BY r.id ASC LIMIT 1)
+			 WHERE role_id IS NULL
+			   AND NOT EXISTS (SELECT 1 FROM roles r WHERE r.name = users.role)`,
+		); err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
+	}
+}
+
+func orphanedUserCount() (int, error) {
+	var n int
+	err := DB.QueryRow(
+		`SELECT COUNT(*) FROM users u
+		 WHERE u.role_id IS NULL
+		   AND NOT EXISTS (SELECT 1 FROM roles r WHERE r.name = u.role)
+		   AND EXISTS (SELECT 1 FROM roles r WHERE r.is_default = TRUE)`,
+	).Scan(&n)
+	return n, err
 }
 
 // encryptLegacySecrets encrypts secrets that were written before encryption at
@@ -549,12 +645,12 @@ func seedRolePermissions() {
 // On a fresh install the first registered user is promoted at registration; on
 // an existing install (created before roles existed) the oldest user is
 // promoted here so the instance is never locked out of the admin panel.
+//
+// It counts superusers through role_id rather than the literal name 'admin' so
+// a renamed superuser role is still recognised, and writes both columns so the
+// name-based fallback stays in sync.
 func promoteFirstUserToAdmin() {
-	var admins int
-	if err := DB.QueryRow("SELECT COUNT(*) FROM users WHERE role = 'admin'").Scan(&admins); err != nil {
-		log.Fatalf("Migration failed: %v", err)
-	}
-	if admins > 0 {
+	if countSuperusers() > 0 {
 		return
 	}
 
@@ -563,10 +659,65 @@ func promoteFirstUserToAdmin() {
 		// No users yet — the first registration will become admin.
 		return
 	}
-	if _, err := DB.Exec("UPDATE users SET role = 'admin' WHERE id = ?", id); err != nil {
-		log.Fatalf("Migration failed: %v", err)
+	promoteToSuperuserRole(id, "first user")
+}
+
+// countSuperusers reports how many active users hold a superuser role.
+func countSuperusers() int {
+	var n int
+	DB.QueryRow(
+		`SELECT COUNT(*) FROM users u JOIN roles r ON r.id = u.role_id
+		 WHERE r.is_superuser = TRUE AND u.status = 'active'`,
+	).Scan(&n)
+	return n
+}
+
+// promoteToSuperuserRole assigns the superuser role to a user, writing both the
+// role_id reference and the legacy name column.
+func promoteToSuperuserRole(userID int64, reason string) {
+	var roleID int64
+	var name string
+	if err := DB.QueryRow(
+		`SELECT id, name FROM roles WHERE is_superuser = TRUE ORDER BY id ASC LIMIT 1`,
+	).Scan(&roleID, &name); err != nil {
+		log.Printf("Cannot promote user %d: no superuser role exists", userID)
+		return
 	}
-	log.Printf("Promoted user %d to admin (first user)", id)
+	if _, err := DB.Exec(
+		`UPDATE users SET role_id = ?, role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		roleID, name, userID,
+	); err != nil {
+		log.Printf("Cannot promote user %d: %v", userID, err)
+		return
+	}
+	log.Printf("Promoted user %d to superuser role %q (%s)", userID, name, reason)
+}
+
+// recoverSuperuserAccess is the escape hatch for an instance that has lost every
+// superuser, which the last-superuser guard makes possible to reach through
+// ordinary role changes. Setting NINETEEN_BOOTSTRAP_ADMIN to a username grants
+// that account the superuser role on the next boot. It is a no-op whenever the
+// instance already has an active superuser, so leaving it set is harmless.
+//
+// This is deliberately env-only: it is not reachable from the API, so it cannot
+// be used to escalate over a healthy instance.
+func recoverSuperuserAccess() {
+	username := strings.TrimSpace(os.Getenv("NINETEEN_BOOTSTRAP_ADMIN"))
+	if username == "" {
+		return
+	}
+	if countSuperusers() > 0 {
+		log.Printf("NINETEEN_BOOTSTRAP_ADMIN is set but the instance already has an active superuser; ignoring")
+		return
+	}
+	var id int64
+	if err := DB.QueryRow(
+		`SELECT id FROM users WHERE username = ? AND status = 'active'`, username,
+	).Scan(&id); err != nil {
+		log.Printf("NINETEEN_BOOTSTRAP_ADMIN=%q did not match an active account; cannot recover admin access", username)
+		return
+	}
+	promoteToSuperuserRole(id, "NINETEEN_BOOTSTRAP_ADMIN recovery")
 }
 
 // migrateProjectTriggers upgrades the original one-trigger-per-project schema to

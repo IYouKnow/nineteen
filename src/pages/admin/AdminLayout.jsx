@@ -2,14 +2,15 @@ import { NavLink, Outlet, Navigate, useLocation } from "react-router-dom";
 import { Users, Ticket, Boxes, Server, ScrollText, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
+import { PERM } from "@/lib/permissions";
 
 const TABS = [
-  { to: "/admin/users", label: "Users", icon: Users, permission: "admin.users.read" },
-  { to: "/admin/invites", label: "Invites", icon: Ticket, permission: "admin.invites.read" },
-  { to: "/admin/roles", label: "Roles", icon: ShieldCheck, permission: "admin.roles.read" },
-  { to: "/admin/resources", label: "Resources", icon: Boxes, permission: "admin.resources.read" },
-  { to: "/admin/system", label: "System", icon: Server, permission: "admin.system.read" },
-  { to: "/admin/audit", label: "Audit Log", icon: ScrollText, permission: "admin.audit.read" },
+  { to: "/admin/users", label: "Users", icon: Users, permission: PERM.ADMIN_USERS_READ },
+  { to: "/admin/invites", label: "Invites", icon: Ticket, permission: PERM.ADMIN_INVITES_READ },
+  { to: "/admin/roles", label: "Roles", icon: ShieldCheck, permission: PERM.ADMIN_ROLES_READ },
+  { to: "/admin/resources", label: "Resources", icon: Boxes, permission: PERM.ADMIN_RESOURCES_READ },
+  { to: "/admin/system", label: "System", icon: Server, permission: PERM.ADMIN_SYSTEM_READ },
+  { to: "/admin/audit", label: "Audit Log", icon: ScrollText, permission: PERM.ADMIN_AUDIT_READ },
 ];
 
 export default function AdminLayout() {

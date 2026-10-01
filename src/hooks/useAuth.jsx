@@ -1,5 +1,10 @@
-import { createContext, useContext, useState, useCallback, useEffect } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, useMemo } from "react";
 import { queryClientInstance } from "@/lib/query-client";
+import { ADMIN_PERMISSIONS } from "@/lib/permissions";
+
+// Mirrors permissions.IsWriteKey on the server, so the read-only banner agrees
+// with the catalogue rather than carrying its own notion of what "write" means.
+const WRITE_SUFFIX = /\.(create|update|delete|manage|deploy|run)$/;
 
 const AuthContext = createContext(null);
 
@@ -35,17 +40,6 @@ function getStoredPermissions() {
   }
 }
 
-// Covers checks a granted permission against a required key, honouring the
-// global "*" and prefix wildcards such as "projects.*".
-export function permissionCovers(granted, required) {
-  if (granted === "*" || granted === required) return true;
-  if (granted.endsWith(".*")) {
-    const prefix = granted.slice(0, -2);
-    return required === prefix || required.startsWith(prefix + ".");
-  }
-  return false;
-}
-
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(getStoredUser);
   const [token, setToken] = useState(getStoredToken);
@@ -58,25 +52,29 @@ export function AuthProvider({ children }) {
   const isAuthenticated = !!token && !!user;
   const role = user?.role || "member";
 
+  // The server hands us permissions with every wildcard already expanded, so
+  // checking access is a set lookup. There is deliberately no client-side
+  // wildcard matching: that logic used to be duplicated from the server here,
+  // which meant the two copies had to be kept in step and a permission renamed
+  // on one side could silently diverge from the other.
+  const permissionSet = useMemo(() => new Set(permissions), [permissions]);
+
   const hasPermission = useCallback(
-    (key) => {
-      if (isSuperuser) return true;
-      return permissions.some((p) => permissionCovers(p, key));
-    },
-    [permissions, isSuperuser]
+    (key) => isSuperuser || permissionSet.has(key),
+    [permissionSet, isSuperuser]
   );
 
   // Whether the user can see the Admin section at all.
-  const canAccessAdmin =
-    isSuperuser || permissions.some((p) => p === "*" || p.startsWith("admin"));
+  const canAccessAdmin = useMemo(
+    () => isSuperuser || ADMIN_PERMISSIONS.some((p) => permissionSet.has(p)),
+    [permissionSet, isSuperuser]
+  );
 
   // Coarse "can do anything mutating" flag used for the read-only banner.
-  const canWrite =
-    isSuperuser ||
-    permissions.some((p) => {
-      if (p === "*" || p.endsWith(".*")) return true;
-      return /\.(create|update|delete|manage|deploy|run)$/.test(p);
-    });
+  const canWrite = useMemo(
+    () => isSuperuser || permissions.some((p) => p.endsWith("*") || WRITE_SUFFIX.test(p)),
+    [permissions, isSuperuser]
+  );
 
   const isAdmin = isSuperuser;
 

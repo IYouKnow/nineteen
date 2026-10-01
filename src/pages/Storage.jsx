@@ -16,6 +16,7 @@ import VolumeRow from "@/components/storage/VolumeRow";
 import { BUCKET_PROVIDER_LIST, VOLUME_TYPE_LIST } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
+import { PERM } from "@/lib/permissions";
 
 const STATUS_FILTERS = [
   { id: "all", label: "All" },
@@ -40,7 +41,7 @@ export default function Storage() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [view, setView] = useState("grid");
   const { hasPermission } = useAuth();
-  const canCreate = hasPermission("storage.create");
+  const canCreate = hasPermission(PERM.STORAGE_CREATE);
 
   useEffect(() => {
     setType(urlType);

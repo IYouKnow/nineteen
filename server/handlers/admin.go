@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"nineteen-server/auth"
+	"nineteen-server/authz"
 	"nineteen-server/db"
 	"nineteen-server/models"
 	"nineteen-server/services"
@@ -78,6 +79,14 @@ type adminUserUpdate struct {
 }
 
 // AdminUserHandler updates a user's role/status or soft-deletes the account.
+//
+// The authorization rules live in authz.AssignRole and authz.SetUserStatus;
+// this handler only decides which one applies and maps the result to a status
+// code. The guards that used to be re-implemented here — superuser accounts are
+// off limits to delegated managers, the last superuser cannot be demoted or
+// disabled, nobody may grant a role carrying access they lack — all live in
+// those two functions now, which is also what the reassign endpoint goes
+// through.
 func AdminUserHandler(w http.ResponseWriter, r *http.Request) {
 	claims, ok := requirePermission(w, r, "admin.users.manage")
 	if !ok {
@@ -89,12 +98,13 @@ func AdminUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var targetRole, targetStatus, targetUsername string
+	var targetUsername string
 	var targetSuper bool
 	err := db.DB.QueryRow(
-		`SELECT u.role, u.status, u.username, COALESCE(r.is_superuser, FALSE)
-		 FROM users u LEFT JOIN roles r ON r.name = u.role WHERE u.id = ?`, id,
-	).Scan(&targetRole, &targetStatus, &targetUsername, &targetSuper)
+		`SELECT u.username, COALESCE((SELECT r.is_superuser FROM roles r WHERE r.id = u.role_id),
+			COALESCE((SELECT r2.is_superuser FROM roles r2 WHERE r2.name = u.role), FALSE))
+		 FROM users u WHERE u.id = ?`, id,
+	).Scan(&targetUsername, &targetSuper)
 	if err == sql.ErrNoRows {
 		respondError(w, http.StatusNotFound, "User not found")
 		return
@@ -104,10 +114,8 @@ func AdminUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A delegated user manager must not be able to touch superuser accounts or
-	// elevate anyone (including themselves) to the superuser role.
-	callerSuper := isSuperuser(claims.UserID)
-	if targetSuper && !callerSuper {
+	// A delegated user manager must not be able to touch superuser accounts.
+	if targetSuper && !isSuperuser(claims.UserID) {
 		respondError(w, http.StatusForbidden, "Only a superuser can manage a superuser account")
 		return
 	}
@@ -119,60 +127,38 @@ func AdminUserHandler(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusBadRequest, "Invalid request body")
 			return
 		}
-
-		sets := []string{}
-		args := []interface{}{}
-
-		if req.Role != nil {
-			role := strings.TrimSpace(*req.Role)
-			if !roleExists(role) {
-				respondError(w, http.StatusBadRequest, "Unknown role: "+role)
-				return
-			}
-			if roleIsSuperuser(role) && !callerSuper {
-				respondError(w, http.StatusForbidden, "Only a superuser can grant the superuser role")
-				return
-			}
-			if targetSuper && !roleIsSuperuser(role) && activeAdminCount() <= 1 {
-				respondError(w, http.StatusConflict, "Cannot demote the last admin")
-				return
-			}
-			sets = append(sets, "role = ?")
-			args = append(args, role)
-		}
-
-		if req.Status != nil {
-			status := strings.TrimSpace(*req.Status)
-			if status != "active" && status != "disabled" {
-				respondError(w, http.StatusBadRequest, "status must be active or disabled")
-				return
-			}
-			if id == claims.UserID && status == "disabled" {
-				respondError(w, http.StatusConflict, "You cannot disable your own account")
-				return
-			}
-			if targetSuper && status == "disabled" && activeAdminCount() <= 1 {
-				respondError(w, http.StatusConflict, "Cannot disable the last admin")
-				return
-			}
-			sets = append(sets, "status = ?")
-			args = append(args, status)
-		}
-
-		if len(sets) == 0 {
+		if req.Role == nil && req.Status == nil {
 			respondError(w, http.StatusBadRequest, "Nothing to update")
 			return
 		}
 
-		sets = append(sets, "updated_at = CURRENT_TIMESTAMP")
-		args = append(args, id)
-		if _, err := db.DB.Exec("UPDATE users SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...); err != nil {
-			respondError(w, http.StatusInternalServerError, "Failed to update user")
-			return
+		changes := []string{}
+
+		if req.Role != nil {
+			roleName := strings.TrimSpace(*req.Role)
+			role, found := authz.RoleByName(roleName)
+			if !found {
+				respondError(w, http.StatusBadRequest, "Unknown role: "+roleName)
+				return
+			}
+			if err := authz.AssignRole(claims.UserID, id, role.ID); err != nil {
+				respondAuthzError(w, err)
+				return
+			}
+			changes = append(changes, "role="+role.Name)
 		}
 
-		details := strings.TrimPrefix(strings.Join(sets, "; "), "updated_at = CURRENT_TIMESTAMP; ")
-		logAudit(r, claims.UserID, claims.Username, "admin.user_update", "user", strconv.FormatInt(id, 10), details)
+		if req.Status != nil {
+			status := strings.TrimSpace(*req.Status)
+			if err := authz.SetUserStatus(claims.UserID, id, status); err != nil {
+				respondAuthzError(w, err)
+				return
+			}
+			changes = append(changes, "status="+status)
+		}
+
+		logAudit(r, claims.UserID, claims.Username, "admin.user_update",
+			"user", strconv.FormatInt(id, 10), strings.Join(changes, "; "))
 
 		var u models.User
 		db.DB.QueryRow(
@@ -281,13 +267,16 @@ func AdminInvitesHandler(w http.ResponseWriter, r *http.Request) {
 		req.Label = strings.TrimSpace(req.Label)
 		req.ExpiresAt = strings.TrimSpace(req.ExpiresAt)
 
-		if req.Role == "" {
-			req.Role = defaultRoleName()
-		}
-		if !roleExists(req.Role) {
-			respondError(w, http.StatusBadRequest, "Unknown role: "+req.Role)
+		// An invite is a grant mechanism: whoever can mint one chooses who joins
+		// and with what access. The role therefore goes through the same
+		// containment check as a direct assignment, which is what stops a
+		// delegated manager from minting themselves an admin account.
+		roleID, roleName, err := authz.SetInviteRole(claims.UserID, req.Role)
+		if err != nil {
+			respondAuthzError(w, err)
 			return
 		}
+		req.Role = roleName
 		if req.MaxUses <= 0 {
 			req.MaxUses = 1
 		}
@@ -306,9 +295,9 @@ func AdminInvitesHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		result, err := db.DB.Exec(
-			`INSERT INTO invite_codes (code, role, label, expires_at, max_uses, created_by)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
-			req.Code, req.Role, req.Label, expires, req.MaxUses, claims.UserID,
+			`INSERT INTO invite_codes (code, role, role_id, label, expires_at, max_uses, created_by)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			req.Code, req.Role, roleID, req.Label, expires, req.MaxUses, claims.UserID,
 		)
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE constraint") {
