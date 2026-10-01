@@ -422,9 +422,12 @@ func bulkCreateConnections(w http.ResponseWriter, r *http.Request, userID, dbID 
 
 	created := []models.DatabaseConnection{}
 	for _, it := range items {
-		if it.DatabaseID == 0 {
-			it.DatabaseID = dbID
-		}
+		// The path database is ownership-checked by the caller; a
+		// client-supplied database_id is untrusted and must never override
+		// it. Accepting it verbatim let any user plant a connection row
+		// pointing at another tenant's database (IDOR), attached to their
+		// own project.
+		it.DatabaseID = dbID
 		if it.ProjectID == 0 {
 			continue
 		}
