@@ -369,10 +369,12 @@ type stateMigrateTarget struct {
 }
 
 // ensureStateVolumes auto-mounts known state directories (CasaOS AppData
-// style): for every auto-suggestion of the given images that no volume
-// covers, it creates the host folder, migrates existing container content
-// into it when a container is present, and inserts the volume row so the
-// upcoming Run/Up mounts it in the same operation.
+// style) as Docker named volumes: for every auto-suggestion of the given
+// images that no volume covers, it creates the volume, migrates existing
+// container content into it when a container is present, and inserts the
+// volume row so the upcoming Run/Up mounts it in the same operation. Named
+// volumes live in the VM with native Linux semantics, unlike Windows bind
+// mounts (which reject non-empty directory renames on Docker Desktop).
 //
 // New projects get persistence before any state exists; old projects get
 // their ephemeral state migrated instead of wiped. It is a no-op when
@@ -394,7 +396,7 @@ func ensureStateVolumes(projectID int64, targets []stateMigrateTarget, stop func
 	vols, _ := loadProjectVolumes(projectID)
 	type item struct {
 		suggestion services.StateDirSuggestion
-		hostPath   string // project-relative host folder to copy into
+		hostPath   string // bind staging folder (bind rows only)
 		needRow    bool   // false when the volume row already exists
 	}
 	var items []item
@@ -412,11 +414,15 @@ func ensureStateVolumes(projectID int64, targets []stateMigrateTarget, stop func
 			}
 		}
 		switch {
+		case covering != nil && covering.Kind == "volume":
+			// Named rows are populated at creation time (auto flow below or
+			// the volumes endpoint), so a covered path needs nothing.
+			continue
 		case covering != nil:
-			// Exact volume exists — but when its host folder is still empty
-			// (e.g. the user clicked "Add volume" and hasn't applied yet),
-			// the live container content must still be migrated into it.
-			// A non-empty folder is never touched: it already holds the
+			// Exact bind volume exists — but when its host folder is still
+			// empty (e.g. the user clicked "Add volume" and hasn't applied
+			// yet), the live container content must still be migrated into
+			// it. A non-empty folder is never touched: it already holds the
 			// truth and copying over it could destroy real data.
 			hostDir := services.HostProjectVolumeDir(projectID, covering.HostPath)
 			if entries, err := os.ReadDir(hostDir); err != nil || len(entries) > 0 {
@@ -426,7 +432,7 @@ func ensureStateVolumes(projectID int64, targets []stateMigrateTarget, stop func
 		case parentCovered:
 			continue
 		default:
-			items = append(items, item{suggestion: s, hostPath: s.HostSubdir, needRow: true})
+			items = append(items, item{suggestion: s, needRow: true})
 		}
 	}
 	if len(items) == 0 {
@@ -439,24 +445,24 @@ func ensureStateVolumes(projectID int64, targets []stateMigrateTarget, stop func
 	stopped := false
 	for _, it := range items {
 		s := it.suggestion
+		if it.needRow {
+			ensureNamedStateVolume(projectID, s, targets, stop, &stopped, log)
+			continue
+		}
+		// Bind refresh: migrate into the existing (empty) host folder.
 		hostDir, err := services.EnsureProjectVolumeDir(projectID, it.hostPath)
 		if err != nil {
 			log("warn", fmt.Sprintf("Could not prepare AppData folder %s: %s", it.hostPath, err.Error()))
 			continue
 		}
-		migrated := false
-		if container := migrationContainer(s, targets); container != "" {
+		if container, _ := migrationContainerImage(s, targets); container != "" {
 			if stop != nil && !stopped {
 				stop()
 				stopped = true
 			}
-			// A successful copy of an empty directory is not a migration —
-			// only claim it when files actually landed, so the log can't
-			// pretend ephemeral state was saved when there was nothing there
-			// (e.g. suggesting /config to an image that keeps state in $HOME).
 			if err := services.CopyFromContainer(container, s.ContainerPath, hostDir); err == nil {
 				if entries, rerr := os.ReadDir(hostDir); rerr == nil && len(entries) > 0 {
-					migrated = true
+					log("info", fmt.Sprintf("Migrated existing data from %s into %s — it now survives recreates", s.ContainerPath, it.hostPath))
 				} else {
 					log("info", fmt.Sprintf("No data found in %s — volume %s prepared empty", s.ContainerPath, it.hostPath))
 				}
@@ -464,48 +470,73 @@ func ensureStateVolumes(projectID int64, targets []stateMigrateTarget, stop func
 				log("info", fmt.Sprintf("Nothing to migrate from %s (%s)", s.ContainerPath, err.Error()))
 			}
 		}
-		if it.needRow {
-			name := s.HostSubdir
-			if i := strings.LastIndex(name, "/"); i >= 0 {
-				name = name[i+1:]
-			}
-			var dup bool
-			if err := db.DB.QueryRow(
-				"SELECT EXISTS(SELECT 1 FROM project_volumes WHERE project_id = ? AND container_path = ?)",
-				projectID, s.ContainerPath,
-			).Scan(&dup); err == nil && dup {
-				continue
-			}
-			if _, err := db.DB.Exec(
-				"INSERT INTO project_volumes (project_id, name, host_path, container_path) VALUES (?, ?, ?, ?)",
-				projectID, name, s.HostSubdir, s.ContainerPath,
-			); err != nil {
-				log("warn", fmt.Sprintf("Could not save AppData volume for %s: %s", s.ContainerPath, err.Error()))
-				continue
-			}
-		}
-		if migrated {
-			log("info", fmt.Sprintf("Migrated existing data from %s into %s — it now survives recreates", s.ContainerPath, it.hostPath))
-		} else if it.needRow {
-			log("info", fmt.Sprintf("Added persistent volume %s → %s (%s)", s.HostSubdir, s.ContainerPath, s.Reason))
-		}
 	}
 }
 
-// migrationContainer finds a container whose image declares the suggestion's
-// path, so live content can be copied out before the container is replaced.
-func migrationContainer(s services.StateDirSuggestion, targets []stateMigrateTarget) string {
+// ensureNamedStateVolume creates a Docker named volume for a suggested state
+// dir, migrates live container content into it when present, and stores the
+// row so the upcoming Run/Up mounts it in the same operation.
+func ensureNamedStateVolume(projectID int64, s services.StateDirSuggestion, targets []stateMigrateTarget, stop func(), stopped *bool, log func(string, string)) {
+	name := s.HostSubdir
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	var dup bool
+	if err := db.DB.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM project_volumes WHERE project_id = ? AND container_path = ?)",
+		projectID, s.ContainerPath,
+	).Scan(&dup); err == nil && dup {
+		return
+	}
+	volName := services.UniqueVolumeName(projectID, name)
+	if err := services.EnsureNamedVolume(volName); err != nil {
+		log("warn", fmt.Sprintf("Could not create Docker volume for %s: %s", s.ContainerPath, err.Error()))
+		return
+	}
+	migrated := false
+	if container, image := migrationContainerImage(s, targets); container != "" && image != "" {
+		if stop != nil && stopped != nil && !*stopped {
+			stop()
+			*stopped = true
+		}
+		if tmp, err := os.MkdirTemp("", "nineteen-migrate-*"); err == nil {
+			if cerr := services.CopyFromContainer(container, s.ContainerPath, tmp); cerr == nil {
+				if entries, rerr := os.ReadDir(tmp); rerr == nil && len(entries) > 0 {
+					migrated = services.PopulateNamedVolume(volName, image, tmp) == nil
+				}
+			}
+			os.RemoveAll(tmp)
+		}
+	}
+	if _, err := db.DB.Exec(
+		"INSERT INTO project_volumes (project_id, name, host_path, container_path, kind, volume_name) VALUES (?, ?, '', ?, 'volume', ?)",
+		projectID, name, s.ContainerPath, volName,
+	); err != nil {
+		log("warn", fmt.Sprintf("Could not save AppData volume for %s: %s", s.ContainerPath, err.Error()))
+		return
+	}
+	if migrated {
+		log("info", fmt.Sprintf("Migrated existing data from %s into Docker volume %s — it now survives recreates", s.ContainerPath, volName))
+	} else {
+		log("info", fmt.Sprintf("Added persistent Docker volume %s → %s (%s)", volName, s.ContainerPath, s.Reason))
+	}
+}
+
+// migrationContainerImage finds a container whose image declares the
+// suggestion's path, returning the container and image for copy-out and
+// holder use.
+func migrationContainerImage(s services.StateDirSuggestion, targets []stateMigrateTarget) (string, string) {
 	for _, t := range targets {
 		if t.Container == "" || t.Image == "" {
 			continue
 		}
 		for _, cand := range services.SuggestStateDirs(t.Image) {
 			if cand.ContainerPath == s.ContainerPath {
-				return t.Container
+				return t.Container, t.Image
 			}
 		}
 	}
-	return ""
+	return "", ""
 }
 
 var composeImageRe = regexp.MustCompile(`(?m)^\s*image\s*:\s*["']?(\S+?)["']?\s*(?:#.*)?$`)

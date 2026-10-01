@@ -285,6 +285,8 @@ func runMigrations() {
 			name TEXT NOT NULL,
 			host_path TEXT NOT NULL,
 			container_path TEXT NOT NULL,
+			kind TEXT DEFAULT 'bind',
+			volume_name TEXT DEFAULT '',
 			created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_date DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -400,6 +402,8 @@ func runMigrations() {
 		{"database_connections", "project_name", `ALTER TABLE database_connections ADD COLUMN project_name TEXT DEFAULT ''`},
 		{"deployments", "deploy_source", `ALTER TABLE deployments ADD COLUMN deploy_source TEXT DEFAULT 'default'`},
 		{"deployments", "deploy_ref", `ALTER TABLE deployments ADD COLUMN deploy_ref TEXT DEFAULT ''`},
+		{"project_volumes", "kind", `ALTER TABLE project_volumes ADD COLUMN kind TEXT DEFAULT 'bind'`},
+		{"project_volumes", "volume_name", `ALTER TABLE project_volumes ADD COLUMN volume_name TEXT DEFAULT ''`},
 	}
 
 	for _, c := range columns {

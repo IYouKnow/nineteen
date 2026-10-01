@@ -21,10 +21,13 @@ export default function StateDirsWarning({ projectId }) {
 
   if (uncovered.length === 0) return null;
 
+  // State dirs become Docker named volumes (native Linux semantics — unlike
+  // Windows bind mounts, directory renames work). The server migrates live
+  // content into the volume at creation when the container is running.
   const volumePayload = (dir) => {
-    const hostSubdir = dir.host_subdir || `appdata/${dir.container_path.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "")}`;
-    const name = hostSubdir.split("/").pop() || "appdata";
-    return { name, host_path: hostSubdir, container_path: dir.container_path };
+    const fallback = dir.host_subdir || `appdata/${dir.container_path.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "")}`;
+    const name = fallback.split("/").pop() || "appdata";
+    return { name, container_path: dir.container_path, kind: "volume" };
   };
 
   const refresh = () => {
@@ -35,9 +38,13 @@ export default function StateDirsWarning({ projectId }) {
   const addVolumeFor = async (dir) => {
     const payload = volumePayload(dir);
     try {
-      await api.projectVolumes.create(projectId, payload);
+      const res = await api.projectVolumes.create(projectId, payload);
       refresh();
-      toast.success("Volume added", { description: `${payload.host_path} → ${dir.container_path}. Apply to mount it.` });
+      toast.success("Volume added", {
+        description: res?.migrated
+          ? `Live data migrated into ${res.volume?.volume_name}. Apply to mount it.`
+          : `${dir.container_path} will persist in a Docker volume. Apply to mount it.`,
+      });
     } catch (e) {
       toast.error("Could not add volume", { description: e?.message });
     }
@@ -46,8 +53,7 @@ export default function StateDirsWarning({ projectId }) {
   const addAndApplyFor = async (dir) => {
     setBusyKey(dir.container_path);
     try {
-      const payload = volumePayload(dir);
-      await api.projectVolumes.create(projectId, payload);
+      await api.projectVolumes.create(projectId, volumePayload(dir));
       refresh();
       await performRecreate(projectId, { qc, navigate });
     } catch (e) {
@@ -65,7 +71,7 @@ export default function StateDirsWarning({ projectId }) {
           {uncovered.length} app director{uncovered.length === 1 ? "y lives" : "ies live"} on the ephemeral filesystem
         </p>
         <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
-          Apply or redeploy migrates what&apos;s there into a persistent volume automatically — or add one now.
+          Apply or redeploy migrates what&apos;s there into a persistent Docker volume automatically — or add one now.
         </p>
         <div className="mt-2 space-y-1.5">
           {uncovered.map((d) => {

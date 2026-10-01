@@ -60,13 +60,27 @@ function VolumesTable({ volumes, onAdd, onRemove }) {
                     automatic
                   </span>
                 )}
+                {v.kind === "volume" && (
+                  <span className="ml-1.5 rounded bg-foreground px-1.5 py-0.5 text-[10px] font-normal text-background">
+                    volume
+                  </span>
+                )}
               </span>
-              <code
-                className="col-span-5 truncate font-mono text-[11px] text-muted-foreground"
-                title={v.host_dir || v.host_path}
-              >
-                {v.host_dir || v.host_path}
-              </code>
+              {v.kind === "volume" ? (
+                <code
+                  className="col-span-5 truncate font-mono text-[11px] text-muted-foreground"
+                  title={`Docker named volume ${v.volume_name} — managed by Docker, not browsable here`}
+                >
+                  {v.volume_name}
+                </code>
+              ) : (
+                <code
+                  className="col-span-5 truncate font-mono text-[11px] text-muted-foreground"
+                  title={v.host_dir || v.host_path}
+                >
+                  {v.host_dir || v.host_path}
+                </code>
+              )}
               <code className="col-span-3 truncate font-mono text-[11px] text-foreground/90">
                 {v.container_path}
               </code>
@@ -83,7 +97,11 @@ function VolumesTable({ volumes, onAdd, onRemove }) {
                     </button>
                   }
                   title="Remove volume?"
-                  description={`"${v.name}" will no longer be mounted. Its files stay on disk.`}
+                  description={
+                    v.kind === "volume"
+                      ? `"${v.name}" will no longer be mounted. Its data stays in the Docker volume ${v.volume_name}.`
+                      : `"${v.name}" will no longer be mounted. Its files stay on disk.`
+                  }
                   confirmLabel="Remove"
                   onConfirm={() => onRemove(v)}
                 />

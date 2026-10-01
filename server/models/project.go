@@ -62,18 +62,23 @@ type ProjectMember struct {
 	CreatedAt   string `json:"created_at"`
 }
 
-// ProjectVolume maps a folder inside a project's persistent directory to a path
-// inside the running container. The host folder always lives under the
-// project's data directory; HostDir is the resolved absolute host path.
-// Automatic marks server-side mounts (e.g. the Docker socket for runner
-// images) that are applied on every deploy without user input. They are
-// computed, never stored, and must be rendered read-only.
+// ProjectVolume maps persistent storage to a path inside the running
+// container. Kind is "bind" (a folder inside the project's data directory;
+// HostDir is the resolved absolute host path) or "volume" (a Docker named
+// volume holding VolumeName, which lives in the VM with native Linux
+// semantics — required for state dirs on Docker Desktop, where Windows bind
+// mounts reject non-empty directory renames). Automatic marks server-side
+// mounts (e.g. the Docker socket for runner images) that are applied on every
+// deploy without user input. They are computed, never stored, and must not be
+// deletable.
 type ProjectVolume struct {
 	ID            int64  `json:"id"`
 	ProjectID     int64  `json:"project_id"`
 	Name          string `json:"name"`
 	HostPath      string `json:"host_path"`
 	ContainerPath string `json:"container_path"`
+	Kind          string `json:"kind"`
+	VolumeName    string `json:"volume_name,omitempty"`
 	HostDir       string `json:"host_dir,omitempty"`
 	Automatic     bool   `json:"automatic,omitempty"`
 	CreatedDate   string `json:"created_date"`

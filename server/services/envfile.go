@@ -110,6 +110,8 @@ func WriteComposeOverride(serviceNames []string, envFile string, mounts []BindMo
 	}
 	var b strings.Builder
 	b.WriteString("services:\n")
+	named := []string{}
+	seenNamed := map[string]bool{}
 	for _, s := range serviceNames {
 		b.WriteString("  " + s + ":\n")
 		if envFile != "" {
@@ -121,13 +123,28 @@ func WriteComposeOverride(serviceNames []string, envFile string, mounts []BindMo
 				if m.Source == "" || m.Target == "" {
 					continue
 				}
-				b.WriteString("      - type: bind\n")
+				kind := "bind"
+				if m.Named {
+					kind = "volume"
+					if !seenNamed[m.Source] {
+						seenNamed[m.Source] = true
+						named = append(named, m.Source)
+					}
+				}
+				b.WriteString("      - type: " + kind + "\n")
 				b.WriteString("        source: " + filepath.ToSlash(m.Source) + "\n")
 				b.WriteString("        target: " + m.Target + "\n")
 			}
 		}
 		if restart != "" {
 			b.WriteString("    restart: " + restart + "\n")
+		}
+	}
+	// Named volumes must be declared top-level or compose rejects the file.
+	if len(named) > 0 {
+		b.WriteString("volumes:\n")
+		for _, n := range named {
+			b.WriteString("  " + n + ":\n")
 		}
 	}
 	if _, err := f.WriteString(b.String()); err != nil {

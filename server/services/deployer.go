@@ -661,10 +661,22 @@ func ProjectBindAddr() string {
 	return "0.0.0.0"
 }
 
-// BindMount maps a host path to a path inside a container.
+// BindMount maps storage to a path inside a container: either a host bind
+// (Named=false, Source is a host path) or a Docker named volume (Named=true,
+// Source is the volume name, with native Linux semantics).
 type BindMount struct {
 	Source string
 	Target string
+	Named  bool
+}
+
+// MountArgs renders a --mount flag for docker run.
+func (m BindMount) MountArgs() []string {
+	kind := "bind"
+	if m.Named {
+		kind = "volume"
+	}
+	return []string{"--mount", "type=" + kind + ",source=" + filepath.ToSlash(m.Source) + ",target=" + m.Target}
 }
 
 // RestartArg converts a project's restart policy into the value Docker expects
@@ -755,7 +767,7 @@ func (d *Deployer) Run(ctx context.Context, image, name string, ports []PortMapp
 		if m.Source == "" || m.Target == "" {
 			continue
 		}
-		args = append(args, "--mount", "type=bind,source="+filepath.ToSlash(m.Source)+",target="+m.Target)
+		args = append(args, m.MountArgs()...)
 	}
 	if wd := strings.TrimSpace(workDir); wd != "" {
 		args = append(args, "-w", wd)

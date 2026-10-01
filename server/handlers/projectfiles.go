@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -40,7 +41,7 @@ func projectForFiles(w http.ResponseWriter, r *http.Request) (int64, bool) {
 
 func loadProjectVolumes(projectID int64) ([]models.ProjectVolume, error) {
 	rows, err := db.DB.Query(
-		"SELECT id, project_id, name, host_path, container_path, created_date, updated_date FROM project_volumes WHERE project_id = ? ORDER BY id ASC",
+		"SELECT id, project_id, name, host_path, container_path, kind, volume_name, created_date, updated_date FROM project_volumes WHERE project_id = ? ORDER BY id ASC",
 		projectID,
 	)
 	if err != nil {
@@ -51,10 +52,15 @@ func loadProjectVolumes(projectID int64) ([]models.ProjectVolume, error) {
 	vols := []models.ProjectVolume{}
 	for rows.Next() {
 		var v models.ProjectVolume
-		if err := rows.Scan(&v.ID, &v.ProjectID, &v.Name, &v.HostPath, &v.ContainerPath, &v.CreatedDate, &v.UpdatedDate); err != nil {
+		if err := rows.Scan(&v.ID, &v.ProjectID, &v.Name, &v.HostPath, &v.ContainerPath, &v.Kind, &v.VolumeName, &v.CreatedDate, &v.UpdatedDate); err != nil {
 			continue
 		}
-		v.HostDir = services.HostProjectVolumeDir(projectID, v.HostPath)
+		if v.Kind == "" {
+			v.Kind = "bind"
+		}
+		if v.Kind == "bind" {
+			v.HostDir = services.HostProjectVolumeDir(projectID, v.HostPath)
+		}
 		vols = append(vols, v)
 	}
 	return vols, rows.Err()
@@ -79,6 +85,18 @@ func projectBindMounts(projectID int64, log func(string)) []services.BindMount {
 			if log != nil {
 				log(fmt.Sprintf("Skipping volume %q: another volume is already mounted at %s", v.Name, v.ContainerPath))
 			}
+			continue
+		}
+		if v.Kind == "volume" {
+			if strings.TrimSpace(v.VolumeName) == "" {
+				continue
+			}
+			seen[v.ContainerPath] = true
+			mounts = append(mounts, services.BindMount{
+				Source: v.VolumeName,
+				Target: v.ContainerPath,
+				Named:  true,
+			})
 			continue
 		}
 		if _, err := services.EnsureProjectVolumeDir(projectID, v.HostPath); err != nil {
@@ -198,6 +216,7 @@ func ProjectVolumesHandler(w http.ResponseWriter, r *http.Request) {
 			Name          string `json:"name"`
 			HostPath      string `json:"host_path"`
 			ContainerPath string `json:"container_path"`
+			Kind          string `json:"kind"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			respondError(w, http.StatusBadRequest, "Invalid request body")
@@ -208,13 +227,12 @@ func ProjectVolumesHandler(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusBadRequest, "name is required")
 			return
 		}
-		hostPath := strings.TrimSpace(req.HostPath)
-		if hostPath == "" {
-			hostPath = slugify(name)
+		kind := strings.TrimSpace(req.Kind)
+		if kind == "" {
+			kind = "bind"
 		}
-		hostPath, err := services.ValidHostPath(hostPath)
-		if err != nil {
-			respondError(w, http.StatusBadRequest, err.Error())
+		if kind != "bind" && kind != "volume" {
+			respondError(w, http.StatusBadRequest, "kind must be one of: bind, volume")
 			return
 		}
 		containerPath := strings.TrimSpace(req.ContainerPath)
@@ -230,8 +248,21 @@ func ProjectVolumesHandler(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusBadRequest, "another volume is already mounted at "+containerPath)
 			return
 		}
+		if kind == "volume" {
+			respondVolumeCreated(w, projectID, name, containerPath)
+			return
+		}
+		hostPath := strings.TrimSpace(req.HostPath)
+		if hostPath == "" {
+			hostPath = slugify(name)
+		}
+		hostPath, err := services.ValidHostPath(hostPath)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		res, err := db.DB.Exec(
-			"INSERT INTO project_volumes (project_id, name, host_path, container_path) VALUES (?, ?, ?, ?)",
+			"INSERT INTO project_volumes (project_id, name, host_path, container_path, kind) VALUES (?, ?, ?, ?, 'bind')",
 			projectID, name, hostPath, containerPath,
 		)
 		if err != nil {
@@ -249,11 +280,82 @@ func ProjectVolumesHandler(w http.ResponseWriter, r *http.Request) {
 			Name:          name,
 			HostPath:      hostPath,
 			ContainerPath: containerPath,
+			Kind:          "bind",
 			HostDir:       services.HostProjectVolumeDir(projectID, hostPath),
 		})
 	default:
 		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
+}
+
+// respondVolumeCreated creates a Docker named volume, migrates any live
+// content of containerPath from the running container into it, and stores the
+// row. Named volumes live in the Docker VM with native Linux semantics, so
+// they work where Windows bind mounts don't (e.g. non-empty directory
+// renames). Migration is best-effort: the row is created regardless, and the
+// response reports whether data was copied.
+func respondVolumeCreated(w http.ResponseWriter, projectID int64, name, containerPath string) {
+	volName := services.UniqueVolumeName(projectID, name)
+	if err := services.EnsureNamedVolume(volName); err != nil {
+		respondError(w, http.StatusInternalServerError, "Could not create Docker volume: "+err.Error())
+		return
+	}
+	migrated := populateNamedVolumeFromContainer(projectID, volName, containerPath)
+	res, err := db.DB.Exec(
+		"INSERT INTO project_volumes (project_id, name, host_path, container_path, kind, volume_name) VALUES (?, ?, '', ?, 'volume', ?)",
+		projectID, name, containerPath, volName,
+	)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Could not create volume")
+		return
+	}
+	id, _ := res.LastInsertId()
+	respondJSON(w, http.StatusCreated, map[string]interface{}{
+		"volume": models.ProjectVolume{
+			ID:            id,
+			ProjectID:     projectID,
+			Name:          name,
+			ContainerPath: containerPath,
+			Kind:          "volume",
+			VolumeName:    volName,
+		},
+		"migrated": migrated,
+	})
+}
+
+// populateNamedVolumeFromContainer copies containerPath out of the project's
+// running container into a named volume (via temp host staging). It reports
+// whether files actually landed; anything else means "nothing to migrate".
+func populateNamedVolumeFromContainer(projectID int64, volName, containerPath string) bool {
+	var slug, image, strategy string
+	if err := db.DB.QueryRow(
+		"SELECT slug, image, build_strategy FROM projects WHERE id = ?", projectID,
+	).Scan(&slug, &image, &strategy); err != nil {
+		return false
+	}
+	container := services.ResolveContainer(projectID, slug, strategy)
+	if container == "" {
+		return false
+	}
+	holderImage := image
+	if cfg := services.InspectContainerConfig(container); cfg != nil && cfg.Image != "" {
+		holderImage = cfg.Image
+	}
+	if holderImage == "" {
+		return false
+	}
+	tmp, err := os.MkdirTemp("", "nineteen-populate-*")
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(tmp)
+	if err := services.CopyFromContainer(container, containerPath, tmp); err != nil {
+		return false
+	}
+	if entries, err := os.ReadDir(tmp); err != nil || len(entries) == 0 {
+		return false
+	}
+	return services.PopulateNamedVolume(volName, holderImage, tmp) == nil
 }
 
 // ProjectVolumeHandler deletes a volume mapping.
@@ -271,6 +373,9 @@ func ProjectVolumeHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Invalid volume ID")
 		return
 	}
+	var kind, volName string
+	_ = db.DB.QueryRow("SELECT kind, volume_name FROM project_volumes WHERE id = ? AND project_id = ?",
+		volumeID, projectID).Scan(&kind, &volName)
 	res, err := db.DB.Exec("DELETE FROM project_volumes WHERE id = ? AND project_id = ?", volumeID, projectID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Could not remove volume")
@@ -280,7 +385,13 @@ func ProjectVolumeHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "Volume not found")
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]string{"message": "Volume removed"})
+	// Named Docker volumes are kept so data survives the unmount — like CasaOS
+	// keeping AppData on uninstall. Bind folders stay on disk untouched.
+	msg := "Volume removed"
+	if kind == "volume" {
+		msg = "Volume unmounted — data is preserved in Docker volume " + volName
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"message": msg})
 }
 
 // --- files ---
