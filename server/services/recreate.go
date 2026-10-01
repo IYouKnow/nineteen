@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // ContainerConfig is the live configuration of a running project container
@@ -110,9 +112,11 @@ var imageStateDirs = []struct {
 	{"uptime-kuma", "/app/data", "appdata/uptime-kuma-data", "monitors and status history", true},
 }
 
-// SuggestStateDirs returns the known state directories for an image
+// SuggestStateDirs returns the curated state directories for an image
 // reference (matched case-insensitively by substring), or nil when the image
-// has no curated suggestions.
+// has no curated suggestions. Curated entries cover images that declare
+// nothing themselves (e.g. codercom/code-server); images with declared
+// VOLUMEs are handled by AllStateSuggestions below.
 func SuggestStateDirs(image string) []StateDirSuggestion {
 	lowered := strings.ToLower(strings.TrimSpace(image))
 	if lowered == "" {
@@ -129,6 +133,98 @@ func SuggestStateDirs(image string) []StateDirSuggestion {
 		}
 	}
 	return nil
+}
+
+// imageVolumesCache memoizes declared image volumes: env-sync polls
+// frequently and `docker inspect` would otherwise run on every poll.
+var imageVolumesCache = struct {
+	sync.Mutex
+	entries map[string]cachedImageVolumes
+}{entries: map[string]cachedImageVolumes{}}
+
+type cachedImageVolumes struct {
+	volumes []string
+	expires time.Time
+}
+
+const imageVolumesCacheTTL = 5 * time.Minute
+
+// ImageDeclaredVolumes returns the VOLUME paths an image declares in its
+// config (e.g. postgres declares /var/lib/postgresql/data) — ground truth
+// from the image author, no curation needed. Results are cached for a few
+// minutes; uninspectable images (not pulled yet) yield nil.
+func ImageDeclaredVolumes(image string) []string {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return nil
+	}
+	now := time.Now()
+	imageVolumesCache.Lock()
+	if e, ok := imageVolumesCache.entries[image]; ok && now.Before(e.expires) {
+		vols := e.volumes
+		imageVolumesCache.Unlock()
+		return vols
+	}
+	imageVolumesCache.Unlock()
+
+	var vols []string
+	if out, err := exec.Command("docker", "inspect", "--format", "{{json .Config.Volumes}}", image).Output(); err == nil {
+		var declared map[string]struct{}
+		if json.Unmarshal(out, &declared) == nil {
+			for p := range declared {
+				if strings.HasPrefix(p, "/") {
+					vols = append(vols, p)
+				}
+			}
+			sort.Strings(vols)
+		}
+	}
+
+	imageVolumesCache.Lock()
+	imageVolumesCache.entries[image] = cachedImageVolumes{volumes: vols, expires: now.Add(imageVolumesCacheTTL)}
+	imageVolumesCache.Unlock()
+	return vols
+}
+
+// declaredSuggestion turns an image-declared volume path into a suggestion
+// with a generated AppData subdir.
+func declaredSuggestion(containerPath string) StateDirSuggestion {
+	sub := strings.ToLower(volumeNameRe.ReplaceAllString(strings.Trim(containerPath, "/"), "-"))
+	sub = strings.Trim(sub, "-._")
+	if sub == "" {
+		sub = "data"
+	}
+	return StateDirSuggestion{
+		ContainerPath: containerPath,
+		HostSubdir:    "appdata/" + sub,
+		Reason:        "declared by the image",
+		Auto:          true,
+	}
+}
+
+// AllStateSuggestions merges curated entries (first match per image wins)
+// with image-declared VOLUMEs for every image, deduped by container path
+// with curated entries taking precedence (better reasons and folder names).
+func AllStateSuggestions(images []string) []StateDirSuggestion {
+	merged := map[string]StateDirSuggestion{}
+	for _, img := range images {
+		for _, s := range SuggestStateDirs(img) {
+			if _, ok := merged[s.ContainerPath]; !ok {
+				merged[s.ContainerPath] = s
+			}
+		}
+		for _, p := range ImageDeclaredVolumes(img) {
+			if _, ok := merged[p]; !ok {
+				merged[p] = declaredSuggestion(p)
+			}
+		}
+	}
+	out := make([]StateDirSuggestion, 0, len(merged))
+	for _, s := range merged {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ContainerPath < out[j].ContainerPath })
+	return out
 }
 
 // EnsureProjectAppDataDir creates (if needed) the project's AppData folder —

@@ -33,3 +33,28 @@ func TestSuggestStateDirs(t *testing.T) {
 		t.Fatalf("empty image should have no suggestions")
 	}
 }
+
+func TestDeclaredSuggestion(t *testing.T) {
+	s := declaredSuggestion("/var/lib/postgresql/data")
+	if s.HostSubdir != "appdata/var-lib-postgresql-data" || !s.Auto || s.Reason == "" {
+		t.Fatalf("declared suggestion: %+v", s)
+	}
+}
+
+func TestAllStateSuggestionsCuratedFallback(t *testing.T) {
+	// Unknown image, nothing declared: curated fallback (or empty) but never
+	// an error. linuxserver/code-server resolves without docker.
+	got := AllStateSuggestions([]string{"lscr.io/linuxserver/code-server:4.96"})
+	found := false
+	for _, s := range got {
+		if s.ContainerPath == "/config" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected /config suggestion: %+v", got)
+	}
+	if got := AllStateSuggestions([]string{"no-such-image-xyz:latest"}); len(got) != 0 {
+		t.Fatalf("unknown image should yield nothing: %+v", got)
+	}
+}

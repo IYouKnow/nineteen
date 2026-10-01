@@ -382,12 +382,20 @@ type stateMigrateTarget struct {
 // before the copy so live data (e.g. databases) is consistent; it runs at
 // most once and only when a migration will actually copy.
 func ensureStateVolumes(projectID int64, targets []stateMigrateTarget, stop func(), log func(string, string)) {
-	suggestions := map[string]services.StateDirSuggestion{}
+	images := []string{}
+	seenImg := map[string]bool{}
 	for _, t := range targets {
-		for _, s := range services.SuggestStateDirs(t.Image) {
-			if s.Auto {
-				suggestions[s.ContainerPath] = s
-			}
+		if t.Image != "" && !seenImg[t.Image] {
+			seenImg[t.Image] = true
+			images = append(images, t.Image)
+		}
+	}
+	// Curated entries plus the images' own declared VOLUMEs — no per-app
+	// mapping needed for images that declare their state (e.g. postgres).
+	suggestions := map[string]services.StateDirSuggestion{}
+	for _, s := range services.AllStateSuggestions(images) {
+		if s.Auto {
+			suggestions[s.ContainerPath] = s
 		}
 	}
 	if len(suggestions) == 0 {
@@ -523,14 +531,14 @@ func ensureNamedStateVolume(projectID int64, s services.StateDirSuggestion, targ
 }
 
 // migrationContainerImage finds a container whose image declares the
-// suggestion's path, returning the container and image for copy-out and
-// holder use.
+// suggestion's path (curated or image-declared VOLUMEs), returning the
+// container and image for copy-out and holder use.
 func migrationContainerImage(s services.StateDirSuggestion, targets []stateMigrateTarget) (string, string) {
 	for _, t := range targets {
 		if t.Container == "" || t.Image == "" {
 			continue
 		}
-		for _, cand := range services.SuggestStateDirs(t.Image) {
+		for _, cand := range services.AllStateSuggestions([]string{t.Image}) {
 			if cand.ContainerPath == s.ContainerPath {
 				return t.Container, t.Image
 			}
@@ -632,7 +640,9 @@ func ProjectEnvSyncHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Candidate images for state-dir suggestions: the running container, the
-	// project's image reference, and (compose) every service image.
+	// project's image reference, and (compose) every service image. Curated
+	// entries merge with each image's declared VOLUMEs, so most apps need no
+	// per-app mapping at all.
 	images := []string{containerImage, project.Image}
 	if project.BuildStrategy == "compose" {
 		for _, p := range services.NewDeployer().ComposePorts(services.ProjectComposeName(project.ID, project.Slug)) {
@@ -640,10 +650,8 @@ func ProjectEnvSyncHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	suggestions := map[string]services.StateDirSuggestion{}
-	for _, img := range images {
-		for _, s := range services.SuggestStateDirs(img) {
-			suggestions[s.ContainerPath] = s
-		}
+	for _, s := range services.AllStateSuggestions(images) {
+		suggestions[s.ContainerPath] = s
 	}
 	vols, _ := loadProjectVolumes(project.ID)
 	stateDirs := []stateDirStatus{}
