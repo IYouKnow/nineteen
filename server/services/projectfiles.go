@@ -143,6 +143,14 @@ func HostProjectVolumeDir(projectID int64, hostPath string) string {
 // resolveProjectPath maps a client-supplied path (relative to the project
 // folder, e.g. "data/uploads/hero.jpg") to an absolute host path, rejecting
 // anything that would escape the project folder.
+//
+// This check is lexical only: it cannot see symlinks. A deployed container
+// shares the project folder over a read-write bind mount and can plant
+// `ln -s /etc/shadow data/leak`; the cleaned string still starts with the
+// root while the kernel would resolve it to the host's /etc/shadow. Every
+// operation that touches the filesystem must therefore go through
+// resolveExisting (or resolveParentDir) below, which re-validates the
+// symlink-resolved location.
 func resolveProjectPath(projectID int64, clientPath string) (string, error) {
 	root, err := EnsureProjectDataDir(projectID)
 	if err != nil {
@@ -155,6 +163,71 @@ func resolveProjectPath(projectID int64, clientPath string) (string, error) {
 		return "", fmt.Errorf("path escapes the project folder")
 	}
 	return full, nil
+}
+
+// containedIn reports whether p is root or lives under it. Both arguments
+// must already be canonical (symlink-free); use canonRoot and
+// filepath.EvalSymlinks at the call site.
+func containedIn(root, p string) bool {
+	if p == root {
+		return true
+	}
+	return strings.HasPrefix(p, root+string(os.PathSeparator))
+}
+
+// canonRoot returns the symlink-resolved project folder, creating it first.
+// The root itself is resolved because the data directory may live under a
+// symlinked prefix (e.g. /var -> /private/var on macOS, /data mounts), and
+// comparing an unresolved root against resolved targets would false-positive.
+func canonRoot(projectID int64) (lexRoot, canon string, err error) {
+	lexRoot, err = EnsureProjectDataDir(projectID)
+	if err != nil {
+		return "", "", err
+	}
+	canon, err = filepath.EvalSymlinks(lexRoot)
+	if err != nil {
+		return "", "", err
+	}
+	return lexRoot, canon, nil
+}
+
+// resolveExisting maps a client path to its canonical on-disk location and
+// rejects anything that resolves outside the project folder — including via
+// symlinks planted by a deployed container. The target must exist.
+func resolveExisting(projectID int64, clientPath string) (lexFull, canon string, err error) {
+	lexFull, err = resolveProjectPath(projectID, clientPath)
+	if err != nil {
+		return "", "", err
+	}
+	_, root, err := canonRoot(projectID)
+	if err != nil {
+		return "", "", err
+	}
+	canon, err = filepath.EvalSymlinks(lexFull)
+	if err != nil {
+		return "", "", fmt.Errorf("not found")
+	}
+	if !containedIn(root, canon) {
+		return "", "", fmt.Errorf("path escapes the project folder")
+	}
+	return lexFull, canon, nil
+}
+
+// resolveParentDir resolves a client-supplied parent folder to its canonical
+// location for writes (mkdir, upload). The folder must already exist as a
+// real directory inside the project — traversal through a symlink is
+// rejected rather than followed, so MkdirAll/OpenFile can never be steered
+// at host paths.
+func resolveParentDir(projectID int64, parentPath string) (string, error) {
+	_, canon, err := resolveExisting(projectID, parentPath)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(canon)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("target folder not found")
+	}
+	return canon, nil
 }
 
 // FileNode is one entry in a project's file tree.
@@ -207,7 +280,10 @@ func buildChildren(dir, base string, depth int) []*FileNode {
 		if len(nodes) >= maxTreeEntries {
 			break
 		}
-		info, err := entry.Info()
+		// Lstat, not Stat: a symlink must be reported as itself — never
+		// followed (which would leak the target's size/mtime) and never
+		// descended into (which would expose host directories in the tree).
+		info, err := os.Lstat(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			continue
 		}
@@ -217,10 +293,13 @@ func buildChildren(dir, base string, depth int) []*FileNode {
 			Path:     path.Join(base, name),
 			Modified: info.ModTime().UTC().Format(time.RFC3339),
 		}
-		if entry.IsDir() {
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			node.Type = "symlink"
+		case info.IsDir():
 			node.Type = "folder"
 			node.Children = buildChildren(filepath.Join(dir, name), node.Path, depth+1)
-		} else {
+		default:
 			node.Type = "file"
 			node.Size = info.Size()
 		}
@@ -243,14 +322,16 @@ func validEntryName(name string) bool {
 }
 
 func uniqueEntryName(dir, name string) string {
-	if _, err := os.Stat(filepath.Join(dir, name)); os.IsNotExist(err) {
+	// Lstat, not Stat: a dangling symlink must count as "taken". Otherwise
+	// O_CREATE|O_EXCL would follow it and create the link's target.
+	if _, err := os.Lstat(filepath.Join(dir, name)); os.IsNotExist(err) {
 		return name
 	}
 	ext := filepath.Ext(name)
 	stem := strings.TrimSuffix(name, ext)
 	for i := 1; ; i++ {
 		candidate := fmt.Sprintf("%s-%d%s", stem, i, ext)
-		if _, err := os.Stat(filepath.Join(dir, candidate)); os.IsNotExist(err) {
+		if _, err := os.Lstat(filepath.Join(dir, candidate)); os.IsNotExist(err) {
 			return candidate
 		}
 	}
@@ -262,15 +343,18 @@ func CreateProjectFolder(projectID int64, parentPath, name string) error {
 	if !validEntryName(name) {
 		return fmt.Errorf("invalid folder name")
 	}
-	parent, err := resolveProjectPath(projectID, parentPath)
+	parent, err := resolveParentDir(projectID, parentPath)
 	if err != nil {
 		return err
 	}
 	full := filepath.Join(parent, name)
-	if _, err := os.Stat(full); err == nil {
+	// Lstat: never mkdir through (or over) a planted link.
+	if _, err := os.Lstat(full); err == nil {
 		return fmt.Errorf("a file or folder with that name already exists")
+	} else if !os.IsNotExist(err) {
+		return err
 	}
-	return os.MkdirAll(full, 0o755)
+	return os.Mkdir(full, 0o755)
 }
 
 // RenameProjectEntry renames a file or folder. The project root can't be renamed.
@@ -279,23 +363,25 @@ func RenameProjectEntry(projectID int64, entryPath, newName string) error {
 	if !validEntryName(newName) {
 		return fmt.Errorf("invalid name")
 	}
-	full, err := resolveProjectPath(projectID, entryPath)
+	full, canon, err := resolveExisting(projectID, entryPath)
+	if err != nil {
+		return fmt.Errorf("not found")
+	}
+	_, root, err := canonRoot(projectID)
 	if err != nil {
 		return err
 	}
-	root := ProjectDataDir(projectID)
-	if full == root {
+	if canon == root {
 		return fmt.Errorf("cannot rename the project folder")
-	}
-	if _, err := os.Stat(full); err != nil {
-		return fmt.Errorf("not found")
 	}
 	target := filepath.Join(filepath.Dir(full), newName)
 	if target == full {
 		return nil
 	}
-	if _, err := os.Stat(target); err == nil {
+	if _, err := os.Lstat(target); err == nil {
 		return fmt.Errorf("a file or folder with that name already exists")
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 	return os.Rename(full, target)
 }
@@ -306,12 +392,27 @@ func DeleteProjectEntry(projectID int64, entryPath string) error {
 	if err != nil {
 		return err
 	}
-	root := ProjectDataDir(projectID)
-	if full == root {
+	lexRoot, root, err := canonRoot(projectID)
+	if err != nil {
+		return err
+	}
+	if full == lexRoot {
 		return fmt.Errorf("cannot delete the project folder")
 	}
-	if _, err := os.Stat(full); err != nil {
+	link, err := os.Lstat(full)
+	if err != nil {
 		return fmt.Errorf("not found")
+	}
+	if link.Mode()&os.ModeSymlink != 0 {
+		// A link is removed as a link: os.Remove never follows it, so a
+		// planted symlink is cleaned up without touching its target. This
+		// also keeps escape-links deletable after resolveExisting below
+		// started rejecting them.
+		return os.Remove(full)
+	}
+	canon, err := filepath.EvalSymlinks(full)
+	if err != nil || !containedIn(root, canon) {
+		return fmt.Errorf("path escapes the project folder")
 	}
 	return os.RemoveAll(full)
 }
@@ -332,26 +433,56 @@ func SaveProjectUpload(projectID int64, parentPath, relName string, r io.Reader)
 			return fmt.Errorf("invalid file name")
 		}
 	}
-	parent, err := resolveProjectPath(projectID, parentPath)
+	// The parent is symlink-resolved before anything is created under it,
+	// and every intermediate folder is walked one level at a time with
+	// Lstat: MkdirAll would happily mkdir *through* a planted symlink and
+	// O_CREATE would follow a dangling one, both as root.
+	parent, err := resolveParentDir(projectID, parentPath)
 	if err != nil {
 		return err
 	}
-	info, err := os.Stat(parent)
-	if err != nil || !info.IsDir() {
-		return fmt.Errorf("target folder not found")
-	}
-	dir := filepath.Join(parent, filepath.FromSlash(path.Join(segments[:len(segments)-1]...)))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+	dir := parent
+	for _, seg := range segments[:len(segments)-1] {
+		next := filepath.Join(dir, seg)
+		fi, err := os.Lstat(next)
+		if err == nil {
+			if fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() {
+				return fmt.Errorf("invalid file name")
+			}
+		} else if os.IsNotExist(err) {
+			if err := os.Mkdir(next, 0o755); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+		dir = next
 	}
 	name := uniqueEntryName(dir, segments[len(segments)-1])
-	dst, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	final := filepath.Join(dir, name)
+	dst, err := os.OpenFile(final, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err
 	}
-	defer dst.Close()
-	_, err = io.Copy(dst, r)
-	return err
+	_, copyErr := io.Copy(dst, r)
+	closeErr := dst.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	// Close the plant-and-swap race deterministically: if the destination
+	// is (now) a symlink, O_CREATE followed it and the bytes landed in the
+	// link target. Remove what we just created through it and refuse.
+	if li, err := os.Lstat(final); err == nil && li.Mode()&os.ModeSymlink != 0 {
+		if target, err := filepath.EvalSymlinks(final); err == nil {
+			os.Remove(target)
+		}
+		os.Remove(final)
+		return fmt.Errorf("invalid file name")
+	}
+	return nil
 }
 
 // SaveProjectUploadStream consumes an upload multipart stream and writes every
@@ -415,18 +546,47 @@ func SaveProjectUploadStream(projectID int64, mr *multipart.Reader) (int, error)
 	return saved, nil
 }
 
-// OpenProjectFile returns the host path and info of a downloadable file.
-func OpenProjectFile(projectID int64, entryPath string) (string, os.FileInfo, error) {
-	full, err := resolveProjectPath(projectID, entryPath)
+// OpenProjectFile opens a downloadable file and returns the handle with its
+// info. The path is symlink-resolved and re-validated against the project
+// folder first, so a `data/leak -> /etc/shadow` link planted by a deployed
+// container resolves outside the root and is refused instead of served.
+//
+// The caller owns the returned file. It is opened from the already-resolved
+// canonical path (never the raw client string), and a SameFile re-stat plus
+// a re-resolution guard the narrow plant-and-swap race between EvalSymlinks
+// and Open: if the tree moved under us, the open is discarded.
+func OpenProjectFile(projectID int64, entryPath string) (*os.File, os.FileInfo, error) {
+	_, canon, err := resolveExisting(projectID, entryPath)
 	if err != nil {
-		return "", nil, err
+		return nil, nil, err
 	}
-	info, err := os.Stat(full)
+	f, err := os.Open(canon)
 	if err != nil {
-		return "", nil, fmt.Errorf("not found")
+		return nil, nil, fmt.Errorf("not found")
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, nil, fmt.Errorf("not found")
 	}
 	if info.IsDir() {
-		return "", nil, fmt.Errorf("is a folder")
+		f.Close()
+		return nil, nil, fmt.Errorf("is a folder")
 	}
-	return full, info, nil
+	live, err := os.Stat(canon)
+	if err != nil || !os.SameFile(info, live) {
+		f.Close()
+		return nil, nil, fmt.Errorf("not found")
+	}
+	_, root, err := canonRoot(projectID)
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	recanon, err := filepath.EvalSymlinks(canon)
+	if err != nil || recanon != canon || !containedIn(root, recanon) {
+		f.Close()
+		return nil, nil, fmt.Errorf("not found")
+	}
+	return f, info, nil
 }

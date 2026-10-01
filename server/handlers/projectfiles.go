@@ -416,12 +416,15 @@ func ProjectFileDownloadHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "path is required")
 		return
 	}
-	full, info, err := services.OpenProjectFile(projectID, path)
+	f, info, err := services.OpenProjectFile(projectID, path)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "File not found")
 		return
 	}
+	defer f.Close()
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+info.Name()+"\"")
 	w.Header().Set("Content-Type", "application/octet-stream")
-	http.ServeFile(w, r, full)
+	// Serve the already-validated open file, never the client-supplied path:
+	// no second open means no second symlink resolution.
+	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }
