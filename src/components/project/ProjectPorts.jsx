@@ -20,7 +20,7 @@ import * as api from "@/lib/api";
 
 // ProjectPorts manages the container ports a project publishes on the host.
 // Each mapping is container → host; the primary mapping backs the project URL.
-// Changes take effect on the next deployment.
+// Changes take effect on Apply & recreate or the next deployment.
 export default function ProjectPorts({ project }) {
   const projectId = project?.id;
   const qc = useQueryClient();
@@ -109,7 +109,7 @@ export default function ProjectPorts({ project }) {
           <Network className="h-3.5 w-3.5 text-muted-foreground" />
           <span className="text-xs font-medium">Ports</span>
           <span className="hidden text-[11px] text-muted-foreground sm:inline">
-            published on the host · applied on the next deploy
+            published on the host · applied on Apply or the next deploy
           </span>
         </div>
         <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={openAdd}>

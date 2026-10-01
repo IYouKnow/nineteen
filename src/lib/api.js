@@ -124,6 +124,7 @@ export const projects = {
   events: (id) => doFetch(`/api/projects/${id}/events`),
   requiredEnv: (id, ref) =>
     doFetch(`/api/projects/${id}/required-env${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`),
+  envSync: (id) => doFetch(`/api/projects/${id}/env-sync`),
   members: {
     list: (id) => doFetch(`/api/projects/${id}/members`),
     add: (id, payload) =>
@@ -383,10 +384,14 @@ export const projectFiles = {
       `${API_URL}/api/projects/${projectId}/container-files/download?path=${encodeURIComponent(path)}`,
       { headers: { Authorization: `Bearer ${localStorage.getItem("nineteen_token")}` } }
     );
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || "Download failed");
-    }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.error || res.statusText);
+    // Some endpoints (e.g. recreate) return a related id alongside the error
+    // so the UI can link to it — carried on the error object.
+    if (body.deployment_id) err.deployment_id = body.deployment_id;
+    throw err;
+  }
     return res.blob();
   },
 };

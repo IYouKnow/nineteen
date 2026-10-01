@@ -10,6 +10,7 @@ const TRIGGER_LABEL = {
   git: "git push",
   manual: "manual",
   redeploy: "redeploy",
+  recreate: "recreate",
 };
 
 export default function ProjectDeployments({ project, deployments = [], environment, isProd = true, onDeploy }) {

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import ApplyRecreateButton from "@/components/project/ApplyRecreateButton";
 import {
   Dialog,
   DialogContent,
@@ -81,17 +82,20 @@ export default function EnvVarEditor({ projectId, envVars = [], environment, isP
 
   return (
     <div>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-medium">Environment Variables</h3>
           <p className="text-xs text-muted-foreground">
-            Injected into your runtime at deploy time.
+            Saved immediately. The running container picks them up when you apply.
           </p>
         </div>
-        <Button size="sm" variant="outline" onClick={openAdd} className="gap-2">
-          <Plus className="h-3.5 w-3.5" />
-          Add
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {isProd && <ApplyRecreateButton projectId={projectId} showHint />}
+          <Button size="sm" variant="outline" onClick={openAdd} className="gap-2">
+            <Plus className="h-3.5 w-3.5" />
+            Add
+          </Button>
+        </div>
       </div>
 
       <div className="mt-3">

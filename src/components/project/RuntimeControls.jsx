@@ -134,7 +134,7 @@ export default function RuntimeControls({ project }) {
           />
           <p className="mt-1.5 text-[11px] text-muted-foreground">
             Directory the container starts in (<span className="font-mono">docker run -w</span>). Set an absolute path such as{" "}
-            <span className="font-mono">/workspace</span> so apps like code-server open it. Applied on the next deployment.
+            <span className="font-mono">/workspace</span> so apps like code-server open it. Applied on Apply or the next deployment.
           </p>
         </div>
       </div>

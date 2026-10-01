@@ -793,6 +793,24 @@ func (d *Deployer) ComposeUp(ctx context.Context, dir, composeFile, overrideFile
 	return streamCommand(cmd, log)
 }
 
+// ComposeUpNoBuild restarts the stack defined by composeFile without building:
+// only containers whose config changed (env, mounts, …) are recreated, and
+// the images stay exactly as deployed. This is the no-rebuild "apply"
+// counterpart to ComposeUp.
+func (d *Deployer) ComposeUpNoBuild(ctx context.Context, dir, composeFile, overrideFile, projectName, version string, log func(string)) error {
+	args := []string{"compose", "-f", composeFile}
+	if overrideFile != "" {
+		args = append(args, "-f", overrideFile)
+	}
+	args = append(args, "-p", projectName, "up", "-d")
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Dir = dir
+	if v := strings.TrimSpace(version); v != "" {
+		cmd.Env = append(os.Environ(), "APP_VERSION="+v, "VERSION="+v)
+	}
+	return streamCommand(cmd, log)
+}
+
 // ComposePort describes one published port of a compose stack.
 type ComposePort struct {
 	Service string `json:"service"`
@@ -853,6 +871,13 @@ func PickAppPort(ports []ComposePort) (ComposePort, bool) {
 		}
 	}
 	return ports[0], true
+}
+
+// ComposeStop gracefully stops every container of a compose project without
+// removing anything, so live state can be copied out consistently before a
+// recreate. Best-effort.
+func (d *Deployer) ComposeStop(projectName string) {
+	_ = exec.Command("docker", "compose", "-p", projectName, "stop").Run()
 }
 
 // CleanupCompose force-removes every container belonging to a compose project

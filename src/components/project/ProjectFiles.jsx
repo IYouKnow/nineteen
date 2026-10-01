@@ -18,6 +18,7 @@ import EmptyState from "@/components/dev/EmptyState";
 import ConfirmDialog from "@/components/dev/ConfirmDialog";
 import FileTree from "@/components/project/FileTree";
 import ContainerFiles from "@/components/project/ContainerFiles";
+import StateDirsWarning from "@/components/project/StateDirsWarning";
 import { cn } from "@/lib/utils";
 import * as api from "@/lib/api";
 
@@ -29,7 +30,7 @@ function VolumesTable({ volumes, onAdd, onRemove }) {
           <HardDrive className="h-3.5 w-3.5 text-muted-foreground" />
           <span className="text-xs font-medium">Volumes</span>
           <span className="hidden text-[11px] text-muted-foreground sm:inline">
-            mounted on every deploy
+            mounted on Apply and every deploy
           </span>
         </div>
         <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={onAdd}>
@@ -221,10 +222,12 @@ export default function ProjectFiles({ projectId }) {
       <div>
         <h3 className="text-sm font-medium">Project folder</h3>
         <p className="text-xs text-muted-foreground">
-          Persistent folders on the host, mounted into the container on every deploy. Files here
-          survive redeploys.
+          Persistent folders on the host, mounted into the container on Apply and every deploy.
+          Files here survive recreates and redeploys.
         </p>
       </div>
+
+      <StateDirsWarning projectId={projectId} />
 
       <VolumesTable volumes={volumes} onAdd={openAdd} onRemove={removeVolume} />
 

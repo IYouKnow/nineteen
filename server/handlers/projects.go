@@ -996,6 +996,34 @@ func ProjectActionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Action = strings.TrimSpace(req.Action)
 
+	// Recreate applies the saved env vars, ports, volumes and restart policy
+	// by re-running the already-built image — no clone, no build. It records
+	// a deployments row (trigger "recreate") and returns it, unlike the
+	// lifecycle actions below which return the project.
+	if req.Action == "recreate" {
+		if project.Status == statusBuilding {
+			var active int
+			if err := db.DB.QueryRow(
+				"SELECT COUNT(*) FROM deployments WHERE project_id = ? AND status = ?",
+				project.ID, statusBuilding,
+			).Scan(&active); err != nil {
+				respondError(w, http.StatusInternalServerError, "Failed to check for in-progress deployments")
+				return
+			}
+			if active > 0 {
+				respondError(w, http.StatusConflict, "A deployment is already in progress — cancel it or wait for it to finish")
+				return
+			}
+		}
+		dep, rerr := recreateProject(r.Context(), claims.UserID, project)
+		if rerr != nil {
+			respondJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": rerr.Error(), "deployment_id": dep.ID})
+			return
+		}
+		respondJSON(w, http.StatusCreated, dep)
+		return
+	}
+
 	container := services.ResolveContainer(project.ID, project.Slug, project.BuildStrategy)
 	if container == "" {
 		respondError(w, http.StatusBadRequest, "No container found for this project — deploy first")
@@ -1028,7 +1056,7 @@ func ProjectActionHandler(w http.ResponseWriter, r *http.Request) {
 			setProjectStatus(project.ID, status)
 		}()
 	default:
-		respondError(w, http.StatusBadRequest, "action must be one of: start, stop, restart")
+		respondError(w, http.StatusBadRequest, "action must be one of: start, stop, restart, recreate")
 		return
 	}
 
@@ -1662,6 +1690,18 @@ func imageDeploy(ctx context.Context, log func(string, string), d *services.Depl
 	}
 	log("info", "Image pulled")
 
+	// Auto-mount known state dirs and migrate existing data out of the old
+	// container before it is removed below. No-op when already covered.
+	existingImageContainer := services.ProjectContainerName(project.ID, project.Slug)
+	ensureStateVolumes(project.ID, []stateMigrateTarget{
+		{Container: existingImageContainer, Image: image},
+		{Image: project.Image},
+	}, func() {
+		if d.ContainerState(existingImageContainer) == "running" {
+			_ = d.StopContainer(existingImageContainer)
+		}
+	}, log)
+
 	// Load the project's env vars and write a temp .env to inject at runtime.
 	envVars, envErr := services.LoadEnvVars(project.ID)
 	if envErr != nil {
@@ -1772,6 +1812,19 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 	}
 	log("info", "Image built successfully")
 
+	// Auto-mount known state dirs (CasaOS AppData style) and migrate existing
+	// data out of the old container before it is removed below. No-op when
+	// everything is already covered.
+	existingContainer := services.ProjectContainerName(project.ID, project.Slug)
+	ensureStateVolumes(project.ID, []stateMigrateTarget{
+		{Container: existingContainer, Image: image},
+		{Image: dockerfileImageHint(dir, dockerfile)},
+	}, func() {
+		if d.ContainerState(existingContainer) == "running" {
+			_ = d.StopContainer(existingContainer)
+		}
+	}, log)
+
 	appPort := d.ParseExpose(dir, dockerfile)
 	if appPort == 0 {
 		appPort = d.ImagePort(image)
@@ -1857,6 +1910,27 @@ func composeDeploy(ctx context.Context, log func(string, string), d *services.De
 	if writeBuildOverride(project.ID, dir, composeFile, log) {
 		log("info", "Applying saved build-file override to "+composeFile)
 	}
+
+	// Snapshot the effective compose file so a later no-rebuild recreate can
+	// re-run this exact stack. Best-effort: never fails the deploy.
+	if err := SnapshotComposeForRecreate(project.ID, dir, composeFile, version); err != nil {
+		log("warn", "Could not snapshot compose file for fast recreate: "+err.Error())
+	}
+
+	// Auto-mount known state dirs and migrate existing data out of the old
+	// stack before it is replaced below. No-op when already covered.
+	composeName := services.ProjectComposeName(project.ID, project.Slug)
+	composeTargets := []stateMigrateTarget{}
+	for _, sc := range services.ComposeServiceContainers(composeName) {
+		composeTargets = append(composeTargets, stateMigrateTarget{Container: sc.Container, Image: sc.Image})
+	}
+	for _, img := range composeServiceImages(dir, composeFile) {
+		composeTargets = append(composeTargets, stateMigrateTarget{Image: img})
+	}
+	composeTargets = append(composeTargets, stateMigrateTarget{Image: project.Image})
+	ensureStateVolumes(project.ID, composeTargets, func() {
+		d.ComposeStop(composeName)
+	}, log)
 
 	// Prepare the persistent folder, then inject it (and env vars) into every
 	// service via a generated override.
@@ -1945,6 +2019,8 @@ func finishDeployment(deployID, projectID int64, status string, port int, url st
 	case statusReady:
 		db.DB.Exec("UPDATE projects SET status = 'running', last_deployed_at = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?",
 			time.Now().UTC().Format(time.RFC3339), projectID)
+		// CasaOS-style AppData home for state-dir mounts; best-effort.
+		_, _ = services.EnsureProjectAppDataDir(projectID)
 	case statusError:
 		db.DB.Exec("UPDATE projects SET status = 'error', updated_date = CURRENT_TIMESTAMP WHERE id = ?", projectID)
 	}
