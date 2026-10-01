@@ -1,5 +1,7 @@
 const API_URL = import.meta.env.VITE_API_URL || "";
 
+const REFRESH_KEY = "nineteen_refresh_token";
+
 function authHeaders() {
   const token = localStorage.getItem("nineteen_token");
   return { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
@@ -9,18 +11,55 @@ function authHeaders() {
 // the user back to the login screen instead of silently rendering empty pages.
 function handleUnauthorized() {
   localStorage.removeItem("nineteen_token");
+  localStorage.removeItem(REFRESH_KEY);
   localStorage.removeItem("nineteen_user");
   if (window.location.pathname !== "/login") {
     window.location.replace("/login");
   }
 }
 
-async function doFetch(url, options = {}) {
+// Single-flight refresh: parallel 401s share one /refresh call instead of
+// racing rotation (which would consume the same refresh id twice).
+let refreshPromise = null;
+async function tryRefresh() {
+  if (refreshPromise) return refreshPromise;
+  const refreshToken = localStorage.getItem(REFRESH_KEY);
+  if (!refreshToken) return false;
+  refreshPromise = fetch(`${API_URL}/api/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  })
+    .then(async (res) => {
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (!data.token) return false;
+      localStorage.setItem("nineteen_token", data.token);
+      if (data.refresh_token) localStorage.setItem(REFRESH_KEY, data.refresh_token);
+      if (data.user) localStorage.setItem("nineteen_user", JSON.stringify(data.user));
+      return true;
+    })
+    .catch(() => false)
+    .finally(() => {
+      refreshPromise = null;
+    });
+  const ok = await refreshPromise;
+  if (!ok) handleUnauthorized();
+  return ok;
+}
+
+async function doFetch(url, options = {}, retried = false) {
   const res = await fetch(`${API_URL}${url}`, {
     ...options,
     headers: { ...authHeaders(), ...(options.headers || {}) },
   });
   if (res.status === 401) {
+    // Never try to refresh the refresh call itself.
+    if (!retried && url !== "/api/auth/refresh" && localStorage.getItem(REFRESH_KEY)) {
+      if (await tryRefresh()) {
+        return doFetch(url, options, true);
+      }
+    }
     handleUnauthorized();
     throw new Error("Unauthorized");
   }
@@ -34,12 +73,18 @@ async function doFetch(url, options = {}) {
 }
 
 // Multipart uploads must not set Content-Type (the browser adds the boundary).
-async function doUpload(url, formData) {
+async function doUpload(url, formData, retried = false) {
   const res = await fetch(`${API_URL}${url}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${localStorage.getItem("nineteen_token")}` },
     body: formData,
   });
+  if (res.status === 401 && !retried && localStorage.getItem(REFRESH_KEY)) {
+    if (await tryRefresh()) {
+      return doUpload(url, formData, true);
+    }
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || res.statusText);

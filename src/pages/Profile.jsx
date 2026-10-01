@@ -69,6 +69,10 @@ export default function Profile() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      // Password rotation re-issues the session: persist it so the user
+      // is not bounced to login by their own change.
+      if (data.token) localStorage.setItem("nineteen_token", data.token);
+      if (data.refresh_token) localStorage.setItem("nineteen_refresh_token", data.refresh_token);
       setCurrentPassword("");
       setNewPassword("");
       toast.success("Password updated");

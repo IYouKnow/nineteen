@@ -335,6 +335,23 @@ func runMigrations() {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_deploy_events_project ON deploy_events(project_id, id)`,
+		// Stateful session tracking for refresh rotation and per-token
+		// logout. Access-token revocations live here too, keyed by jti.
+		`CREATE TABLE IF NOT EXISTS refresh_tokens (
+			jti TEXT PRIMARY KEY,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			expires_at DATETIME NOT NULL,
+			revoked BOOLEAN DEFAULT FALSE,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id)`,
+		`CREATE TABLE IF NOT EXISTS revoked_tokens (
+			jti TEXT PRIMARY KEY,
+			user_id INTEGER NOT NULL,
+			expires_at DATETIME NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_revoked_tokens_user ON revoked_tokens(user_id)`,
 	}
 
 	for _, m := range migrations {
@@ -367,6 +384,7 @@ func runMigrations() {
 		{"users", "role", `ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'member'`},
 		{"users", "status", `ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'`},
 		{"users", "deleted_at", `ALTER TABLE users ADD COLUMN deleted_at DATETIME`},
+		{"users", "token_version", `ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0`},
 		{"invite_codes", "role", `ALTER TABLE invite_codes ADD COLUMN role TEXT DEFAULT 'member'`},
 		{"invite_codes", "label", `ALTER TABLE invite_codes ADD COLUMN label TEXT DEFAULT ''`},
 		{"invite_codes", "expires_at", `ALTER TABLE invite_codes ADD COLUMN expires_at DATETIME`},
@@ -432,6 +450,19 @@ func runMigrations() {
 	// move the webhook to the project-level project_webhooks table. A project
 	// with no trigger rows now means "manual deployments only".
 	migrateProjectTriggers()
+
+	// Sessions issued before token_version existed read back as NULL.
+	// Coalesce to 0 so they match the legacy GenerateToken version claim
+	// instead of failing every comparison.
+	if _, err := DB.Exec(`UPDATE users SET token_version = 0 WHERE token_version IS NULL`); err != nil {
+		log.Fatalf("Migration failed: %v", err)
+	}
+	// Drop naturally-expired revocation/refresh rows left by older runs.
+	// Best-effort: a failure here must never block startup. Both layouts
+	// are tried because rows may predate the UTC format switch.
+	for _, t := range []string{"revoked_tokens", "refresh_tokens"} {
+		_, _ = DB.Exec(`DELETE FROM `+t+` WHERE expires_at < datetime('now', '-1 day')`)
+	}
 
 	migrateRoleReferences()
 	seedRoles()

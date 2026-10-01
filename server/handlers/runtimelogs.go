@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"time"
 
-	"nineteen-server/auth"
 	"nineteen-server/db"
 	"nineteen-server/models"
 	"nineteen-server/services"
@@ -169,5 +168,7 @@ func authFromRequest(r *http.Request) (*Claims, error) {
 	if token == "" {
 		return nil, fmt.Errorf("missing credentials")
 	}
-	return auth.ValidateToken(token)
+	// Same live session checks as the header path — a ?token= in an
+	// EventSource URL must not bypass disable/delete revocation.
+	return validateTokenString(token)
 }

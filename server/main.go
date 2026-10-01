@@ -345,6 +345,8 @@ func main() {
 	mux.HandleFunc("/api/auth/register", handlers.RegisterHandler)
 	mux.HandleFunc("/api/auth/login", handlers.LoginHandler)
 	mux.HandleFunc("/api/auth/me", handlers.MeHandler)
+	mux.HandleFunc("/api/auth/refresh", handlers.RefreshHandler)
+	mux.HandleFunc("/api/auth/logout", handlers.LogoutHandler)
 	mux.HandleFunc("/api/auth/change-password", handlers.ChangePasswordHandler)
 	mux.HandleFunc("/api/permissions", handlers.PermissionCatalogHandler)
 	mux.HandleFunc("/api/users/lookup", handlers.UserLookupHandler)

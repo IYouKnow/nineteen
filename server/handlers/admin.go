@@ -176,11 +176,14 @@ func AdminUserHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if _, err := db.DB.Exec(
-			"UPDATE users SET status = 'disabled', deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?", id,
+			"UPDATE users SET status = 'disabled', token_version = COALESCE(token_version, 0) + 1, deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?", id,
 		); err != nil {
 			respondError(w, http.StatusInternalServerError, "Failed to delete user")
 			return
 		}
+		// Hard-revoke: the disabled account's live tokens fail the next
+		// version check, and its refresh rows are gone so rotation stops.
+		_, _ = db.DB.Exec(`DELETE FROM refresh_tokens WHERE user_id = ?`, id)
 		logAudit(r, claims.UserID, claims.Username, "admin.user_delete", "user", strconv.FormatInt(id, 10), "soft-delete "+targetUsername)
 		respondJSON(w, http.StatusOK, map[string]string{"message": "User deleted"})
 

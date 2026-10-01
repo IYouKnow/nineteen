@@ -31,6 +31,8 @@ type LoginRequest struct {
 type AuthResponse struct {
 	User        *models.User `json:"user"`
 	Token       string       `json:"token"`
+	RefreshToken string      `json:"refresh_token,omitempty"`
+	ExpiresIn   int          `json:"expires_in,omitempty"`
 	Permissions []string     `json:"permissions"`
 	IsSuperuser bool         `json:"is_superuser"`
 }
@@ -62,7 +64,150 @@ func extractUser(r *http.Request) (*Claims, error) {
 		return nil, sql.ErrNoRows
 	}
 	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-	return auth.ValidateToken(tokenString)
+	return validateTokenString(tokenString)
+}
+
+// validateTokenString is the single choke point for bearer-token validation.
+// Signature and expiry are checked first, then the live session: account
+// still exists and is active, token version matches (bumped on disable,
+// password or role change), jti is not revoked, and refresh tokens are
+// rejected on access paths. Every authenticated handler and the SSE
+// query-param fallback funnel through here, so a disable/delete takes
+// effect on the very next request instead of at the 15-minute expiry.
+func validateTokenString(tokenString string) (*Claims, error) {
+	claims, err := auth.ValidateToken(tokenString)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkSession(claims); err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
+// checkSession verifies a parsed token against live database state.
+func checkSession(claims *Claims) error {
+	// Refresh tokens must only ever be presented to /api/auth/refresh.
+	// Pre-version tokens carry Type "" and are treated as access tokens so
+	// the upgrade does not mass-logout existing sessions; they still die
+	// at their own expiry and on the next version bump.
+	if claims.Type == auth.TokenTypeRefresh {
+		return sql.ErrNoRows
+	}
+	if claims.UserID == 0 {
+		return sql.ErrNoRows
+	}
+	if claims.ID != "" && isJTIRevoked(claims.ID) {
+		return sql.ErrNoRows
+	}
+	var status sql.NullString
+	var version sql.NullInt64
+	err := db.DB.QueryRow(
+		`SELECT status, token_version FROM users WHERE id = ?`, claims.UserID,
+	).Scan(&status, &version)
+	if err != nil {
+		return err
+	}
+	if !status.Valid || status.String != "active" {
+		return sql.ErrNoRows
+	}
+	want := 0
+	if version.Valid {
+		want = int(version.Int64)
+	}
+	if claims.TokenVersion != want {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// currentTokenVersion reads the live session version for issuance.
+func currentTokenVersion(userID int64) int {
+	var v sql.NullInt64
+	if err := db.DB.QueryRow(
+		`SELECT token_version FROM users WHERE id = ?`, userID,
+	).Scan(&v); err != nil || !v.Valid {
+		return 0
+	}
+	return int(v.Int64)
+}
+
+// bumpTokenVersion invalidates every outstanding access and refresh token
+// for the user and drops their stored refresh rows. Callers must already
+// hold whatever authorization the bump requires.
+func bumpTokenVersion(userID int64) {
+	_, _ = db.DB.Exec(
+		`UPDATE users SET token_version = COALESCE(token_version, 0) + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		userID,
+	)
+	_, _ = db.DB.Exec(`DELETE FROM refresh_tokens WHERE user_id = ?`, userID)
+}
+
+// isJTIRevoked reports whether a token id was explicitly revoked (logout).
+// Errors fail closed on missing tables (pre-migration) by reporting false;
+// the version and status checks above still apply.
+func isJTIRevoked(jti string) bool {
+	var one int
+	err := db.DB.QueryRow(`SELECT 1 FROM revoked_tokens WHERE jti = ?`, jti).Scan(&one)
+	return err == nil && one == 1
+}
+
+// revokeJTI records a single access/refresh id until its natural expiry so
+// logout is per-token rather than per-account. Failures are ignored — the
+// version bump path remains the hard guarantee.
+func revokeJTI(jti string, userID int64, expiresAt time.Time) {
+	if jti == "" {
+		return
+	}
+	if expiresAt.IsZero() || expiresAt.Before(time.Now()) {
+		expiresAt = time.Now().Add(auth.AccessTTL)
+	}
+	_, _ = db.DB.Exec(
+		`INSERT OR IGNORE INTO revoked_tokens (jti, user_id, expires_at) VALUES (?, ?, ?)`,
+		jti, userID, sessionTime(expiresAt),
+	)
+}
+
+// sessionTime formats timestamps the way the rest of the schema does.
+func sessionTime(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05")
+}
+
+// parseSessionTime accepts both the canonical layout and RFC3339, since
+// older rows may predate the UTC format.
+func parseSessionTime(s string) (time.Time, bool) {
+	for _, layout := range []string{"2006-01-02 15:04:05", time.RFC3339} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// issueTokenPair mints a fresh access + refresh pair for an active user and
+// persists the refresh row for rotation checks. The returned refreshExpiry
+// is also stored so logout can revoke precisely.
+func issueTokenPair(userID int64, username, email, role string) (access, refresh string, refreshExpiry time.Time, err error) {
+	version := currentTokenVersion(userID)
+	accessJTI := auth.NewJTI()
+	refreshJTI := auth.NewJTI()
+	access, err = auth.GenerateAccessToken(userID, username, email, role, version, accessJTI)
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	refresh, err = auth.GenerateRefreshToken(userID, version, refreshJTI)
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	refreshExpiry = time.Now().Add(auth.RefreshTTL)
+	_, err = db.DB.Exec(
+		`INSERT INTO refresh_tokens (jti, user_id, expires_at) VALUES (?, ?, ?)`,
+		refreshJTI, userID, sessionTime(refreshExpiry),
+	)
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	return access, refresh, refreshExpiry, nil
 }
 
 type Claims = auth.Claims
@@ -342,8 +487,8 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		userID, info.ID,
 	)
 
-	// Generate JWT
-	token, err := auth.GenerateToken(userID, req.Username, req.Email, assigned.Name)
+	// Issue a short-lived access token plus a stateful refresh token.
+	token, refresh, _, err := issueTokenPair(userID, req.Username, req.Email, assigned.Name)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to generate token")
 		return
@@ -362,10 +507,12 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		"role="+assigned.Name)
 
 	respondJSON(w, http.StatusCreated, AuthResponse{
-		User:        user,
-		Token:       token,
-		Permissions: authz.ExpandedPermissions(userID),
-		IsSuperuser: isSuperuser(userID),
+		User:         user,
+		Token:        token,
+		RefreshToken: refresh,
+		ExpiresIn:    int(auth.AccessTTL.Seconds()),
+		Permissions:  authz.ExpandedPermissions(userID),
+		IsSuperuser:  isSuperuser(userID),
 	})
 }
 
@@ -416,7 +563,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := auth.GenerateToken(user.ID, user.Username, user.Email, user.Role)
+	token, refresh, _, err := issueTokenPair(user.ID, user.Username, user.Email, user.Role)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to generate token")
 		return
@@ -425,10 +572,12 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	logAudit(r, user.ID, user.Username, "user.login", "user", strconv.FormatInt(user.ID, 10), "")
 
 	respondJSON(w, http.StatusOK, AuthResponse{
-		User:        &user,
-		Token:       token,
-		Permissions: authz.ExpandedPermissions(user.ID),
-		IsSuperuser: isSuperuser(user.ID),
+		User:         &user,
+		Token:        token,
+		RefreshToken: refresh,
+		ExpiresIn:    int(auth.AccessTTL.Seconds()),
+		Permissions:  authz.ExpandedPermissions(user.ID),
+		IsSuperuser:  isSuperuser(user.ID),
 	})
 }
 
@@ -582,7 +731,28 @@ func ChangePasswordHandler(w http.ResponseWriter, r *http.Request) {
 
 	db.DB.Exec("UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", newHash, claims.UserID)
 
-	respondJSON(w, http.StatusOK, map[string]string{"message": "Password updated"})
+	// A password change implies possible compromise: kill every other
+	// session, then re-issue the current device so it stays signed in.
+	revokeJTI(claims.ID, claims.UserID, claims.ExpiresAt.Time)
+	bumpTokenVersion(claims.UserID)
+	var fresh models.User
+	_ = db.DB.QueryRow(
+		`SELECT id, username, email, display_name, role, status, created_at, updated_at FROM users WHERE id = ?`,
+		claims.UserID,
+	).Scan(&fresh.ID, &fresh.Username, &fresh.Email, &fresh.DisplayName, &fresh.Role, &fresh.Status, &fresh.CreatedAt, &fresh.UpdatedAt)
+	access, refresh, _, err := issueTokenPair(claims.UserID, fresh.Username, fresh.Email, fresh.Role)
+	if err != nil {
+		respondJSON(w, http.StatusOK, map[string]string{"message": "Password updated — please sign in again"})
+		return
+	}
+	logAudit(r, claims.UserID, claims.Username, "user.password_change", "user", strconv.FormatInt(claims.UserID, 10), "sessions rotated")
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"message":       "Password updated",
+		"token":         access,
+		"refresh_token": refresh,
+		"expires_in":    int(auth.AccessTTL.Seconds()),
+	})
 }
 
 type DeleteAccountRequest struct {
@@ -634,7 +804,149 @@ func DeleteAccountHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Version bump + refresh purge makes the caller's own token (and any
+	// copies) fail the very next checkSession instead of living on.
+	revokeJTI(claims.ID, claims.UserID, claims.ExpiresAt.Time)
+	bumpTokenVersion(claims.UserID)
+
 	logAudit(r, claims.UserID, claims.Username, "user.self_delete", "user", strconv.FormatInt(claims.UserID, 10), "soft-delete")
 
 	respondJSON(w, http.StatusOK, map[string]string{"message": "Account deleted"})
+}
+
+// RefreshHandler exchanges a valid refresh token for a fresh pair
+// (rotation). The presented refresh id is consumed single-use: it is
+// deleted and blackholed so a replayed (stolen) refresh token fails.
+func RefreshHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	var req struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.RefreshToken) == "" {
+		respondError(w, http.StatusBadRequest, "refresh_token is required")
+		return
+	}
+	claims, err := auth.ValidateToken(strings.TrimSpace(req.RefreshToken))
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "Invalid or expired refresh token")
+		return
+	}
+	if claims.Type != auth.TokenTypeRefresh {
+		respondError(w, http.StatusUnauthorized, "Invalid refresh token")
+		return
+	}
+	if claims.UserID == 0 || claims.ID == "" {
+		respondError(w, http.StatusUnauthorized, "Invalid refresh token")
+		return
+	}
+	if isJTIRevoked(claims.ID) {
+		respondError(w, http.StatusUnauthorized, "Refresh token revoked")
+		return
+	}
+	var status sql.NullString
+	var version sql.NullInt64
+	if err := db.DB.QueryRow(
+		`SELECT status, token_version FROM users WHERE id = ?`, claims.UserID,
+	).Scan(&status, &version); err != nil || !status.Valid || status.String != "active" {
+		respondError(w, http.StatusUnauthorized, "Account is no longer active")
+		return
+	}
+	want := 0
+	if version.Valid {
+		want = int(version.Int64)
+	}
+	if claims.TokenVersion != want {
+		respondError(w, http.StatusUnauthorized, "Session revoked — please sign in again")
+		return
+	}
+	var storedExpiry string
+	var revoked bool
+	if err := db.DB.QueryRow(
+		`SELECT expires_at, revoked FROM refresh_tokens WHERE jti = ? AND user_id = ?`,
+		claims.ID, claims.UserID,
+	).Scan(&storedExpiry, &revoked); err != nil {
+		respondError(w, http.StatusUnauthorized, "Refresh token revoked")
+		return
+	}
+	if revoked {
+		respondError(w, http.StatusUnauthorized, "Refresh token revoked")
+		return
+	}
+	if t, ok := parseSessionTime(storedExpiry); ok && time.Now().After(t) {
+		_, _ = db.DB.Exec(`DELETE FROM refresh_tokens WHERE jti = ?`, claims.ID)
+		respondError(w, http.StatusUnauthorized, "Refresh token expired")
+		return
+	}
+	// Consume the presented id (single-use rotation).
+	_, _ = db.DB.Exec(`DELETE FROM refresh_tokens WHERE jti = ?`, claims.ID)
+	revokeJTI(claims.ID, claims.UserID, claims.ExpiresAt.Time)
+	// Opportunistic janitor duty: expired rows never need to be scanned again.
+	_, _ = db.DB.Exec(`DELETE FROM refresh_tokens WHERE expires_at < ?`, sessionTime(time.Now()))
+	_, _ = db.DB.Exec(`DELETE FROM revoked_tokens WHERE expires_at < ?`, sessionTime(time.Now()))
+
+	var user models.User
+	if err := db.DB.QueryRow(
+		`SELECT id, username, email, display_name, role, status, created_at, updated_at FROM users WHERE id = ?`,
+		claims.UserID,
+	).Scan(&user.ID, &user.Username, &user.Email, &user.DisplayName, &user.Role, &user.Status, &user.CreatedAt, &user.UpdatedAt); err != nil {
+		respondError(w, http.StatusUnauthorized, "Account is no longer active")
+		return
+	}
+	access, refresh, _, err := issueTokenPair(user.ID, user.Username, user.Email, user.Role)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to refresh session")
+		return
+	}
+	respondJSON(w, http.StatusOK, AuthResponse{
+		User:         &user,
+		Token:        access,
+		RefreshToken: refresh,
+		ExpiresIn:    int(auth.AccessTTL.Seconds()),
+		Permissions:  authz.ExpandedPermissions(user.ID),
+		IsSuperuser:  isSuperuser(user.ID),
+	})
+}
+
+// LogoutHandler revokes the calling access token and, when supplied, one
+// refresh token. Always idempotent: unknown ids still return 200 so logout
+// can never oracle which tokens exist.
+func LogoutHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	revoked := 0
+	if claims, err := extractUser(r); err == nil {
+		revokeJTI(claims.ID, claims.UserID, claims.ExpiresAt.Time)
+		revoked++
+	} else if hdr := r.Header.Get("Authorization"); hdr != "" {
+		// Even an already-stale access token should have its jti
+		// blackholed if we can still parse the signature.
+		if tokenString := strings.TrimPrefix(hdr, "Bearer "); tokenString != hdr {
+			if claims, err := auth.ValidateToken(strings.TrimSpace(tokenString)); err == nil && claims.ID != "" {
+				revokeJTI(claims.ID, claims.UserID, claims.ExpiresAt.Time)
+				revoked++
+			}
+		}
+	}
+	var req struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if strings.TrimSpace(req.RefreshToken) != "" {
+		if claims, err := auth.ValidateToken(strings.TrimSpace(req.RefreshToken)); err == nil && claims.ID != "" {
+			_, _ = db.DB.Exec(`DELETE FROM refresh_tokens WHERE jti = ?`, claims.ID)
+			exp := claims.ExpiresAt.Time
+			if exp.IsZero() {
+				exp = time.Now().Add(auth.RefreshTTL)
+			}
+			revokeJTI(claims.ID, claims.UserID, exp)
+			revoked++
+		}
+	}
+	_, _ = db.DB.Exec(`DELETE FROM revoked_tokens WHERE expires_at < ?`, sessionTime(time.Now()))
+	respondJSON(w, http.StatusOK, map[string]interface{}{"message": "Signed out", "revoked": revoked})
 }

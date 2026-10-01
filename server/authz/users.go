@@ -58,12 +58,18 @@ func AssignRole(caller, targetUserID, roleID int64) error {
 }
 
 // writeUserRole persists an assignment to both the role_id reference and the
-// legacy name column.
+// legacy name column. The session version is bumped and stored refresh rows
+// are dropped so previously issued tokens stop validating immediately —
+// the embedded role claim in old JWTs must never outlive the assignment.
 func writeUserRole(userID int64, r Role) error {
 	_, err := db.DB.Exec(
-		`UPDATE users SET role_id = ?, role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		`UPDATE users SET role_id = ?, role = ?, token_version = COALESCE(token_version, 0) + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		r.ID, r.Name, userID)
-	return err
+	if err != nil {
+		return err
+	}
+	_, _ = db.DB.Exec(`DELETE FROM refresh_tokens WHERE user_id = ?`, userID)
+	return nil
 }
 
 func userRole(userID int64) (Role, bool) {
@@ -90,9 +96,13 @@ func SetUserStatus(caller, targetUserID int64, status string) error {
 		return ErrLastSuperuser
 	}
 	_, err := db.DB.Exec(
-		`UPDATE users SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		`UPDATE users SET status = ?, token_version = COALESCE(token_version, 0) + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		status, targetUserID)
-	return err
+	if err != nil {
+		return err
+	}
+	_, _ = db.DB.Exec(`DELETE FROM refresh_tokens WHERE user_id = ?`, targetUserID)
+	return nil
 }
 
 // SetInviteRole validates the role an invite will place its holder in and
