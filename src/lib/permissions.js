@@ -18,6 +18,7 @@ export const PERM = Object.freeze({
 
   DATABASES_READ: "databases.read",
   DATABASES_CREATE: "databases.create",
+  DATABASES_UPDATE: "databases.update",
 
   STORAGE_READ: "storage.read",
   STORAGE_CREATE: "storage.create",

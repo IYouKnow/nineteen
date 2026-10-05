@@ -3,7 +3,9 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 
 	"nineteen-server/db"
@@ -103,5 +105,50 @@ func TestBulkCreateWithoutDatabaseID(t *testing.T) {
 	}
 	if len(created) != 1 || created[0].DatabaseID != dbID || created[0].ProjectID != projID {
 		t.Fatalf("unexpected connections: %+v", created)
+	}
+}
+
+// TestDatabaseConnectionURIEncodesPassword guards against a user-supplied
+// password containing reserved characters corrupting the one-time connection
+// URI (which is then copied straight into a client).
+func TestDatabaseConnectionURIEncodesPassword(t *testing.T) {
+	pw := "p@ss:w/rd"
+	got := databaseConnectionURI("app", pw, "app", 54321)
+	if strings.Contains(got, pw) {
+		t.Fatalf("password not percent-encoded: %q", got)
+	}
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse uri: %v", err)
+	}
+	if u.Scheme != "postgres" || u.Host != "127.0.0.1:54321" || u.Path != "/app" {
+		t.Fatalf("unexpected uri parts: %q", got)
+	}
+	if gotPw, _ := u.User.Password(); gotPw != pw {
+		t.Fatalf("round-trip password = %q, want %q", gotPw, pw)
+	}
+}
+
+// TestCreateDatabaseRejectsShortPassword covers user-supplied password
+// validation. It returns before any port reservation or Docker call.
+func TestCreateDatabaseRejectsShortPassword(t *testing.T) {
+	_, token := insertUser(t, "member")
+	w := do(t, DatabasesHandler, http.MethodPost, "/api/databases", token,
+		map[string]interface{}{"name": "shortpwdb", "password": "short"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("short password create: got %d %s", w.Code, w.Body.String())
+	}
+}
+
+// TestResetPasswordRejectsShortPassword covers the reset endpoint's validation,
+// which also returns before touching the container.
+func TestResetPasswordRejectsShortPassword(t *testing.T) {
+	uid, token := insertUser(t, "member")
+	dbID := insertDatabase(t, uid, "pwreset"+strconv.Itoa(nextID()))
+	w := do(t, DatabaseCredentialsHandler, http.MethodPost,
+		"/api/databases/"+strconv.FormatInt(dbID, 10)+"/credentials", token,
+		map[string]string{"password": "short"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("short password reset: got %d %s", w.Code, w.Body.String())
 	}
 }

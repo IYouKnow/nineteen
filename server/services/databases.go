@@ -48,6 +48,34 @@ func (p *DatabaseProvisioner) Create(ctx context.Context, slug, version, databas
 	return nil
 }
 
+// AlterPassword changes the password of the database's role on a running
+// container. The new password is fed to psql over stdin (never argv) so it
+// doesn't leak into the host process list. Requires the container to be
+// running; local socket auth in the official postgres image is trust-based.
+func (p *DatabaseProvisioner) AlterPassword(slug, username, databaseName, newPassword string) error {
+	sql := fmt.Sprintf("ALTER USER %s WITH PASSWORD %s;",
+		quoteIdent(username), quoteLiteral(newPassword))
+	cmd := exec.Command("docker", "exec", "-i", ContainerName(slug),
+		"psql", "-v", "ON_ERROR_STOP=1", "-U", username, "-d", databaseName, "-f", "-")
+	cmd.Stdin = strings.NewReader(sql)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// quoteIdent wraps a SQL identifier in double quotes, doubling any embedded
+// double quotes.
+func quoteIdent(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+}
+
+// quoteLiteral wraps a SQL string literal in single quotes, doubling any
+// embedded single quotes.
+func quoteLiteral(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
 // Start starts an existing (stopped) database container.
 func (p *DatabaseProvisioner) Start(slug string) error {
 	return exec.Command("docker", "start", ContainerName(slug)).Run()

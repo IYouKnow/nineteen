@@ -23,6 +23,7 @@ import {
   Calendar,
   Layers,
   GitBranch,
+  KeyRound,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -41,9 +42,12 @@ import ConfirmDialog from "@/components/dev/ConfirmDialog";
 import EmptyState from "@/components/dev/EmptyState";
 import ConnectProjectsDialog from "@/components/db/ConnectProjectsDialog";
 import DatabaseTables from "@/components/db/DatabaseTables";
+import ResetPasswordDialog from "@/components/db/ResetPasswordDialog";
 import { getDbType, DB_INSTANCE_SIZES, buildConnectionString } from "@/lib/databases";
 import { formatDate } from "@/lib/format";
 import { cn, copyText } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
+import { PERM } from "@/lib/permissions";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -88,12 +92,18 @@ export default function DatabaseDetail() {
   const navigate = useNavigate();
   const location = useLocation();
   const qc = useQueryClient();
+  const { hasPermission } = useAuth();
+  const canReset = hasPermission(PERM.DATABASES_UPDATE);
   const [tab, setTab] = useState("overview");
   const [busy, setBusy] = useState(null);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
   const [showCreds, setShowCreds] = useState(true);
-  const oncePassword = location.state?.password_once;
-  const onceUri = location.state?.connection_uri;
+  const [creds, setCreds] = useState(
+    location.state?.password_once
+      ? { password: location.state.password_once, uri: location.state.connection_uri }
+      : null
+  );
 
   const { data: db, isLoading } = useQuery({
     queryKey: ["database", databaseId],
@@ -169,7 +179,7 @@ export default function DatabaseDetail() {
         <ArrowLeft className="h-4 w-4" /> Back to databases
       </Link>
 
-      {oncePassword && showCreds && (
+      {creds && showCreds && (
         <div className="mb-5 rounded-lg border border-warning/30 bg-warning/5 p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
@@ -180,8 +190,8 @@ export default function DatabaseDetail() {
                 The password won't be shown again. Copy it now.
               </p>
               <div className="mt-3 space-y-2">
-                <CopyField label="Password" value={oncePassword} />
-                {onceUri && <CopyField label="URI" value={onceUri} />}
+                <CopyField label="Password" value={creds.password} />
+                {creds.uri && <CopyField label="URI" value={creds.uri} />}
               </div>
             </div>
             <Button variant="ghost" size="sm" onClick={() => setShowCreds(false)}>
@@ -228,6 +238,14 @@ export default function DatabaseDetail() {
               <DropdownMenuItem onClick={() => run("stop")} className="gap-2">
                 <Square className="h-3.5 w-3.5" /> Stop
               </DropdownMenuItem>
+              {canReset && (
+                <>
+                  <DropdownMenuSeparator className="bg-border" />
+                  <DropdownMenuItem onClick={() => setResetOpen(true)} className="gap-2">
+                    <KeyRound className="h-3.5 w-3.5" /> Reset password
+                  </DropdownMenuItem>
+                </>
+              )}
               <DropdownMenuSeparator className="bg-border" />
               <ConfirmDialog
                 trigger={
@@ -299,9 +317,6 @@ export default function DatabaseDetail() {
                 <CopyField label="User" value={db.username || "—"} />
                 <CopyField label="URI" value={connStr} />
               </div>
-              <p className="mt-2 text-xs text-muted-foreground/70">
-                Credentials are managed securely and injected as environment variables into connected projects.
-              </p>
             </div>
 
             <div>
@@ -409,6 +424,17 @@ export default function DatabaseDetail() {
         open={connectOpen}
         onOpenChange={setConnectOpen}
         connectedIds={connections.map((c) => c.project_id)}
+      />
+
+      <ResetPasswordDialog
+        database={db}
+        open={resetOpen}
+        onOpenChange={setResetOpen}
+        onReset={(newCreds) => {
+          setCreds(newCreds);
+          setShowCreds(true);
+          qc.invalidateQueries({ queryKey: ["database", databaseId] });
+        }}
       />
     </div>
   );

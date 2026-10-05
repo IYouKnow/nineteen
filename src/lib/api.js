@@ -212,6 +212,11 @@ export const databases = {
   remove: (id) => doFetch(`/api/databases/${id}`, { method: "DELETE" }),
   action: (id, action) =>
     doFetch(`/api/databases/${id}/actions`, { method: "POST", body: JSON.stringify({ action }) }),
+  resetPassword: (id, password) =>
+    doFetch(`/api/databases/${id}/credentials`, {
+      method: "POST",
+      body: JSON.stringify(password ? { password } : {}),
+    }),
 };
 
 export const dbConnections = {

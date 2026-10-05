@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -90,6 +91,7 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 		Port         *int   `json:"port"`
 		DatabaseName string `json:"database_name"`
 		Username     string `json:"username"`
+		Password     string `json:"password"`
 		Description  string `json:"description"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -136,7 +138,15 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 		host = "localhost"
 	}
 
-	password := randomHex(16)
+	// The user may supply their own password; otherwise generate one. One-time
+	// credentials are returned below and shown once in the UI.
+	password := req.Password
+	if password == "" {
+		password = randomHex(16)
+	} else if len(password) < 8 {
+		respondError(w, http.StatusBadRequest, "password must be at least 8 characters")
+		return
+	}
 	enc, err := auth.EncryptToken(password)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to encrypt password")
@@ -176,9 +186,92 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 	// One-time credentials: only ever returned on create, never on GET/list.
 	// The frontend shows this in a dismissible banner and never persists it.
 	d.PasswordOnce = password
-	d.ConnectionURI = "postgres://" + req.Username + ":" + password +
-		"@127.0.0.1:" + strconv.Itoa(hostPort) + "/" + req.DatabaseName
+	d.ConnectionURI = databaseConnectionURI(req.Username, password, req.DatabaseName, hostPort)
 	respondJSON(w, http.StatusCreated, d)
+}
+
+// databaseConnectionURI builds a percent-encoded postgres URI so passwords
+// containing reserved characters (@ : / ? #) don't corrupt the string.
+func databaseConnectionURI(username, password, databaseName string, hostPort int) string {
+	u := url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(username, password),
+		Host:   "127.0.0.1:" + strconv.Itoa(hostPort),
+		Path:   "/" + databaseName,
+	}
+	return u.String()
+}
+
+// DatabaseCredentialsHandler resets a database's password. It applies the new
+// password to the live container, stores the ciphertext, and returns the new
+// credentials once (never retrievable again).
+func DatabaseCredentialsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	claims, err := extractUser(r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
+	}
+	id, ok := pathID(r)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "Invalid database ID")
+		return
+	}
+
+	var req struct {
+		Password string `json:"password"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
+	newPassword := req.Password
+	if newPassword == "" {
+		newPassword = randomHex(16)
+	} else if len(newPassword) < 8 {
+		respondError(w, http.StatusBadRequest, "password must be at least 8 characters")
+		return
+	}
+
+	d, err := getDatabase(claims.UserID, id)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Database not found")
+		return
+	}
+
+	if perr := services.NewDatabaseProvisioner().AlterPassword(d.Slug, d.Username, d.DatabaseName, newPassword); perr != nil {
+		respondError(w, http.StatusConflict, "Could not reset password: "+perr.Error())
+		return
+	}
+
+	enc, err := auth.EncryptToken(newPassword)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to encrypt password")
+		return
+	}
+	if _, err := db.DB.Exec(
+		"UPDATE databases SET password_encrypted = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+		enc, id, claims.UserID,
+	); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to store password")
+		return
+	}
+
+	d, err = getDatabase(claims.UserID, id)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to load database")
+		return
+	}
+	hostPort := 0
+	if d.HostPort != nil {
+		hostPort = *d.HostPort
+	}
+	d.PasswordOnce = newPassword
+	d.ConnectionURI = databaseConnectionURI(d.Username, newPassword, d.DatabaseName, hostPort)
+	respondJSON(w, http.StatusOK, d)
 }
 
 func DatabaseHandler(w http.ResponseWriter, r *http.Request) {

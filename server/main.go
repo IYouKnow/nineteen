@@ -228,6 +228,8 @@ func databaseRoutePermission(method string, seg []string) (string, bool) {
 		switch seg[1] {
 		case "actions":
 			return "databases.update", true
+		case "credentials":
+			return "databases.update", true
 		case "connections":
 			if read {
 				return "databases.connections.read", true
@@ -422,6 +424,7 @@ func main() {
 	mux.HandleFunc("/api/databases", handlers.DatabasesHandler)
 	mux.HandleFunc("/api/databases/{id}", handlers.DatabaseHandler)
 	mux.HandleFunc("/api/databases/{id}/actions", handlers.DatabaseActionHandler)
+	mux.HandleFunc("/api/databases/{id}/credentials", handlers.DatabaseCredentialsHandler)
 	mux.HandleFunc("/api/databases/{id}/connections", handlers.DatabaseConnectionsForHandler)
 	mux.HandleFunc("/api/databases/{id}/connections/{connId}", handlers.DatabaseConnectionHandler)
 	mux.HandleFunc("/api/database-connections", handlers.DatabaseConnectionsHandler)

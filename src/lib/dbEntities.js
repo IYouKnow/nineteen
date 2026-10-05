@@ -11,6 +11,7 @@ const databaseEntity = {
   create: (data) => api.databases.create(data),
   update: (id, patch) => api.databases.update(id, patch),
   delete: (id) => api.databases.remove(id),
+  resetPassword: (id, password) => api.databases.resetPassword(id, password),
 };
 
 const connectionEntity = {

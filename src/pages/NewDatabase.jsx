@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { ArrowLeft, ArrowRight, Loader2, Rocket, Check } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, Rocket, Check, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,14 +34,18 @@ export default function NewDatabase() {
     version: "",
     database_name: "app",
     username: "app",
+    password: "",
     description: "",
   });
   const [creating, setCreating] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const meta = type ? getDbType(type) : null;
   const effectiveVersion = config.version || meta?.defaultVersion || "";
   const host = "localhost";
-  const canContinue = step === 0 ? !!type : config.name.trim().length > 0;
+  const passwordError = config.password && config.password.length < 8 ? "At least 8 characters" : null;
+  const canContinue =
+    step === 0 ? !!type : config.name.trim().length > 0 && !passwordError;
 
   const create = async () => {
     if (!type || !config.name.trim()) return;
@@ -58,6 +62,7 @@ export default function NewDatabase() {
         port: t.port,
         database_name: config.database_name || "app",
         username: config.username || "app",
+        ...(config.password ? { password: config.password } : {}),
         color: t.color,
         description: config.description,
       });
@@ -134,9 +139,6 @@ export default function NewDatabase() {
                   );
                 })}
               </div>
-              <p className="mt-3 text-xs text-muted-foreground">
-                Only PostgreSQL is supported for now. Other engines are coming soon.
-              </p>
             </div>
           )}
 
@@ -186,6 +188,33 @@ export default function NewDatabase() {
                       placeholder="app"
                     />
                   </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Password</Label>
+                  <div className="relative">
+                    <Input
+                      type={showPassword ? "text" : "password"}
+                      value={config.password}
+                      onChange={(e) => setConfig({ ...config, password: e.target.value })}
+                      className="bg-card pr-9 font-mono"
+                      placeholder="Leave blank to auto-generate"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                      title={showPassword ? "Hide password" : "Show password"}
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  {passwordError ? (
+                    <p className="text-xs text-destructive">{passwordError}</p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground/70">
+                      Optional — leave blank to auto-generate a secure password.
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <Label>Description</Label>
