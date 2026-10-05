@@ -13,7 +13,6 @@ import {
   Loader2,
   Link2,
   Server,
-  MapPin,
   Tag,
   Calendar,
   Layers,
@@ -37,7 +36,6 @@ import ConfirmDialog from "@/components/dev/ConfirmDialog";
 import EmptyState from "@/components/dev/EmptyState";
 import ConnectStorageDialog from "@/components/storage/ConnectStorageDialog";
 import { getVolumeType, VOLUME_SIZES } from "@/lib/storage";
-import { REGIONS } from "@/lib/devStatus";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -116,7 +114,6 @@ export default function VolumeDetail() {
 
   const vtype = getVolumeType(volume.type);
   const size = VOLUME_SIZES.find((s) => s.value === volume.size) || { label: `${volume.size} GB` };
-  const region = REGIONS.find((r) => r.id === volume.region) || REGIONS[0];
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
@@ -139,8 +136,6 @@ export default function VolumeDetail() {
               <span>{vtype.label}</span>
               <span className="text-muted-foreground/30">·</span>
               <span>{size.label}</span>
-              <span className="text-muted-foreground/30">·</span>
-              <span>{region.flag} {region.label}</span>
             </div>
           </div>
         </div>
@@ -209,7 +204,7 @@ export default function VolumeDetail() {
                         <span className="text-lg font-semibold capitalize tracking-tight">{volume.status}</span>
                       </div>
                       <p className="mt-0.5 text-sm text-muted-foreground">
-                        {vtype.label} · {size.label} · {region.flag} {region.label}
+                        {vtype.label} · {size.label}
                       </p>
                     </div>
                   </div>
@@ -241,7 +236,6 @@ export default function VolumeDetail() {
                 <InfoTile icon={Tag} label="Filesystem" value={vtype.label} />
                 <InfoTile icon={HardDrive} label="Size" value={size.label} />
                 <InfoTile icon={Server} label="Device" value={volume.slug || volume.name} mono />
-                <InfoTile icon={MapPin} label="Region" value={region.label} />
                 <InfoTile icon={Layers} label="Projects" value={connected.length} />
                 <InfoTile icon={GitBranch} label="Mount" value={volume.mount_path || "—"} mono />
                 <InfoTile icon={Calendar} label="Created" value={formatDate(volume.created_date, "MMM d, yyyy")} />

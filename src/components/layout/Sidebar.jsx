@@ -106,7 +106,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
               <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
             </span>
             <span className="text-muted-foreground">Cluster</span>
-            <span className="ml-auto font-mono text-foreground/80">fra1 · healthy</span>
+            <span className="ml-auto font-mono text-foreground/80">healthy</span>
           </div>
         </div>
       </aside>

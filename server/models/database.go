@@ -11,7 +11,6 @@ type Database struct {
 	Type        string `json:"type"`
 	Version     string `json:"version"`
 	Status      string `json:"status"`
-	Region      string `json:"region"`
 	InstanceSize string `json:"instance_size"`
 	Host        string `json:"host"`
 	Port        *int   `json:"port"`

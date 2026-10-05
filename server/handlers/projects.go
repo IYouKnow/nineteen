@@ -73,7 +73,7 @@ type rowScanner interface {
 }
 
 const projectSelect = `SELECT id, user_id, name, slug, status, framework, repository, image, branch,
-	domain, description, auto_deploy, region, instance_type, build_strategy,
+	domain, description, auto_deploy, instance_type, build_strategy,
 	dockerfile_path, compose_path, build_context, port, last_deployed_at, created_date, updated_date,
 	provider, integration_id, deploy_type, deploy_ref, restart_policy, restart_retries, working_dir FROM projects`
 
@@ -123,7 +123,7 @@ func listProjectsHandler(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var p models.Project
 		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Slug, &p.Status, &p.Framework,
-			&p.Repository, &p.Image, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
+			&p.Repository, &p.Image, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy,
 			&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
 			&p.BuildContext,
 			&p.Port,
@@ -163,7 +163,6 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 		Domain        string `json:"domain"`
 		Description   string `json:"description"`
 		AutoDeploy    bool   `json:"auto_deploy"`
-		Region        string `json:"region"`
 		InstanceType  string `json:"instance_type"`
 		BuildStrategy string `json:"build_strategy"`
 		DockerfilePath string `json:"dockerfile_path"`
@@ -196,9 +195,6 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Branch == "" {
 		req.Branch = "main"
-	}
-	if req.Region == "" {
-		req.Region = "fra1"
 	}
 	if req.InstanceType == "" {
 		req.InstanceType = "nano"
@@ -267,11 +263,11 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	result, err := db.DB.Exec(
 		`INSERT INTO projects (user_id, name, slug, status, framework, repository, image, branch, domain,
-			description, auto_deploy, region, instance_type, build_strategy, dockerfile_path, compose_path, build_context, port,
+			description, auto_deploy, instance_type, build_strategy, dockerfile_path, compose_path, build_context, port,
 			provider, integration_id, deploy_type, deploy_ref, restart_policy, restart_retries, working_dir)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		claims.UserID, req.Name, req.Slug, req.Status, req.Framework, req.Repository, req.Image,
-		req.Branch, req.Domain, req.Description, req.AutoDeploy, req.Region, req.InstanceType,
+		req.Branch, req.Domain, req.Description, req.AutoDeploy, req.InstanceType,
 		req.BuildStrategy, req.DockerfilePath, req.ComposePath, req.BuildContext, req.Port,
 		req.Provider, req.IntegrationID, req.DeployType, req.DeployRef,
 		req.RestartPolicy, req.RestartRetries, req.WorkingDir,
@@ -698,7 +694,7 @@ func getProject(userID, id int64) (models.Project, error) {
 	var p models.Project
 	err := db.DB.QueryRow(projectSelect+" WHERE id = ? AND user_id = ?", id, userID).Scan(
 		&p.ID, &p.UserID, &p.Name, &p.Slug, &p.Status, &p.Framework,
-		&p.Repository, &p.Image, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
+		&p.Repository, &p.Image, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy,
 		&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
 		&p.BuildContext,
 		&p.Port,
@@ -717,7 +713,7 @@ func getProjectByID(id int64) (models.Project, error) {
 	var p models.Project
 	err := db.DB.QueryRow(projectSelect+" WHERE id = ?", id).Scan(
 		&p.ID, &p.UserID, &p.Name, &p.Slug, &p.Status, &p.Framework,
-		&p.Repository, &p.Image, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy, &p.Region,
+		&p.Repository, &p.Image, &p.Branch, &p.Domain, &p.Description, &p.AutoDeploy,
 		&p.InstanceType, &p.BuildStrategy, &p.DockerfilePath, &p.ComposePath,
 		&p.BuildContext,
 		&p.Port,
@@ -731,7 +727,7 @@ func getProjectByID(id int64) (models.Project, error) {
 var updatableProjectColumns = map[string]bool{
 	"status": true, "framework": true, "repository": true, "branch": true,
 	"image": true,
-	"domain": true, "description": true, "auto_deploy": true, "region": true,
+	"domain": true, "description": true, "auto_deploy": true,
 	"instance_type": true, "build_strategy": true, "name": true, "slug": true,
 	"dockerfile_path": true, "compose_path": true, "build_context": true,
 	"deploy_type": true, "deploy_ref": true,

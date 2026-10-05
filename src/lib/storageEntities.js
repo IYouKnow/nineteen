@@ -11,15 +11,15 @@ const now = () => new Date().toISOString();
 
 // --- in-memory store (temporary) ---
 let buckets = [
-  { id: 1, user_id: 1, name: "assets", slug: "assets", type: "s3", status: "ready", region: "fra1", size: 10, endpoint: "s3-assets.fra1.nineteen.app", port: 9000, access_key: "AKIA3XAMPLEKEY0001", object_count: 128, used_bytes: 3500000000, description: "Static assets for web projects.", created_date: "2026-08-02T10:14:00Z", updated_date: "2026-09-01T09:00:00Z" },
-  { id: 2, user_id: 1, name: "backups", slug: "backups", type: "minio", status: "ready", region: "fra1", size: 50, endpoint: "s3-backups.fra1.nineteen.app", port: 9000, access_key: "AKIA3XAMPLEKEY0002", object_count: 2048, used_bytes: 12000000000, description: "Daily database snapshots.", created_date: "2026-07-19T08:30:00Z", updated_date: "2026-09-05T14:20:00Z" },
-  { id: 3, user_id: 1, name: "media", slug: "media", type: "minio", status: "provisioning", region: "sfo1", size: 100, endpoint: "s3-media.sfo1.nineteen.app", port: 9000, access_key: "AKIA3XAMPLEKEY0003", object_count: 0, used_bytes: 0, description: "User uploads.", created_date: "2026-09-06T11:05:00Z", updated_date: "2026-09-06T11:05:00Z" },
+  { id: 1, user_id: 1, name: "assets", slug: "assets", type: "s3", status: "ready", size: 10, endpoint: "s3-assets.nineteen.app", port: 9000, access_key: "AKIA3XAMPLEKEY0001", object_count: 128, used_bytes: 3500000000, description: "Static assets for web projects.", created_date: "2026-08-02T10:14:00Z", updated_date: "2026-09-01T09:00:00Z" },
+  { id: 2, user_id: 1, name: "backups", slug: "backups", type: "minio", status: "ready", size: 50, endpoint: "s3-backups.nineteen.app", port: 9000, access_key: "AKIA3XAMPLEKEY0002", object_count: 2048, used_bytes: 12000000000, description: "Daily database snapshots.", created_date: "2026-07-19T08:30:00Z", updated_date: "2026-09-05T14:20:00Z" },
+  { id: 3, user_id: 1, name: "media", slug: "media", type: "minio", status: "provisioning", size: 100, endpoint: "s3-media.nineteen.app", port: 9000, access_key: "AKIA3XAMPLEKEY0003", object_count: 0, used_bytes: 0, description: "User uploads.", created_date: "2026-09-06T11:05:00Z", updated_date: "2026-09-06T11:05:00Z" },
 ];
 
 let volumes = [
-  { id: 1, user_id: 1, name: "postgres-data", slug: "postgres-data", type: "ext4", status: "attached", region: "fra1", size: 50, mount_path: "/data", description: "Primary data volume for the app database.", created_date: "2026-08-02T10:15:00Z", updated_date: "2026-09-01T09:00:00Z" },
-  { id: 2, user_id: 1, name: "uploads", slug: "uploads", type: "btrfs", status: "available", region: "fra1", size: 100, mount_path: "/uploads", description: "Persistent uploads volume.", created_date: "2026-08-10T16:40:00Z", updated_date: "2026-08-10T16:40:00Z" },
-  { id: 3, user_id: 1, name: "cache", slug: "cache", type: "xfs", status: "provisioning", region: "iad1", size: 10, mount_path: "/cache", description: "High-throughput cache volume.", created_date: "2026-09-06T12:10:00Z", updated_date: "2026-09-06T12:10:00Z" },
+  { id: 1, user_id: 1, name: "postgres-data", slug: "postgres-data", type: "ext4", status: "attached", size: 50, mount_path: "/data", description: "Primary data volume for the app database.", created_date: "2026-08-02T10:15:00Z", updated_date: "2026-09-01T09:00:00Z" },
+  { id: 2, user_id: 1, name: "uploads", slug: "uploads", type: "btrfs", status: "available", size: 100, mount_path: "/uploads", description: "Persistent uploads volume.", created_date: "2026-08-10T16:40:00Z", updated_date: "2026-08-10T16:40:00Z" },
+  { id: 3, user_id: 1, name: "cache", slug: "cache", type: "xfs", status: "provisioning", size: 10, mount_path: "/cache", description: "High-throughput cache volume.", created_date: "2026-09-06T12:10:00Z", updated_date: "2026-09-06T12:10:00Z" },
 ];
 
 let connections = [
@@ -46,7 +46,7 @@ function sortLocal(list, sort = "-created_date") {
 }
 
 function createLocal(store, data) {
-  const item = { id: ++nextId, user_id: 1, status: "provisioning", region: "fra1", created_date: now(), updated_date: now(), ...data };
+  const item = { id: ++nextId, user_id: 1, status: "provisioning", created_date: now(), updated_date: now(), ...data };
   store.push(item);
   return item;
 }

@@ -9,7 +9,6 @@ import {
   Zap,
   Calendar,
   GitBranch,
-  MapPin,
 } from "lucide-react";
 import StatusDot from "@/components/dev/StatusDot";
 import FrameworkIcon from "@/components/dev/FrameworkIcon";
@@ -17,7 +16,7 @@ import EmptyState from "@/components/dev/EmptyState";
 import ProjectResources from "@/components/project/ProjectResources";
 import { Button } from "@/components/ui/button";
 import { timeAgo, formatDate, formatDuration, shortSha } from "@/lib/format";
-import { getFramework, INSTANCE_TYPES, REGIONS, projectAddress } from "@/lib/devStatus";
+import { getFramework, INSTANCE_TYPES, projectAddress } from "@/lib/devStatus";
 
 function InfoTile({ icon: Icon, label, value, mono }) {
   return (
@@ -36,7 +35,6 @@ export default function ProjectOverview({ project, deployments = [], envVars = [
   const liveUrl = projectAddress(project);
   const fw = getFramework(project.framework);
   const instance = INSTANCE_TYPES.find((i) => i.id === project.instance_type) || INSTANCE_TYPES[0];
-  const region = REGIONS.find((r) => r.id === project.region) || REGIONS[0];
 
   return (
     <div className="space-y-5">
@@ -55,7 +53,7 @@ export default function ProjectOverview({ project, deployments = [], envVars = [
                   </span>
                 </div>
                 <p className="mt-0.5 text-sm text-muted-foreground">
-                  {fw.label} · {instance.label} ({instance.ram}) · {region.flag} {region.label}
+                  {fw.label} · {instance.label} ({instance.ram})
                 </p>
               </div>
             </div>
@@ -131,7 +129,6 @@ export default function ProjectOverview({ project, deployments = [], envVars = [
         <h3 className="mb-2 text-sm font-medium">Details</h3>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           <InfoTile icon={GitBranch} label="Branch" value={environment?.branch || project.branch || "main"} mono />
-          <InfoTile icon={MapPin} label="Region" value={region.label} />
           <InfoTile
             icon={Zap}
             label="Auto-deploy"

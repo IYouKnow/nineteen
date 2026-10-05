@@ -15,7 +15,6 @@ import {
   Loader2,
   Link2,
   Server,
-  MapPin,
   Tag,
   Calendar,
   Layers,
@@ -40,7 +39,6 @@ import EmptyState from "@/components/dev/EmptyState";
 import ConnectStorageDialog from "@/components/storage/ConnectStorageDialog";
 import BucketObjects from "@/components/storage/BucketObjects";
 import { getBucketProvider, BUCKET_SIZES, buildBucketEndpoint, formatBytes } from "@/lib/storage";
-import { REGIONS } from "@/lib/devStatus";
 import { formatDate } from "@/lib/format";
 import { cn, copyText } from "@/lib/utils";
 
@@ -140,7 +138,6 @@ export default function BucketDetail() {
 
   const provider = getBucketProvider(bucket.type);
   const size = BUCKET_SIZES.find((s) => s.value === bucket.size) || { label: `${bucket.size} GB` };
-  const region = REGIONS.find((r) => r.id === bucket.region) || REGIONS[0];
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
@@ -161,8 +158,6 @@ export default function BucketDetail() {
             </div>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-xs text-muted-foreground">
               <span>{provider.label}</span>
-              <span className="text-muted-foreground/30">·</span>
-              <span>{region.flag} {region.label}</span>
               <span className="text-muted-foreground/30">·</span>
               <span>{size.label}</span>
             </div>
@@ -233,7 +228,7 @@ export default function BucketDetail() {
                         <span className="text-lg font-semibold capitalize tracking-tight">{bucket.status}</span>
                       </div>
                       <p className="mt-0.5 text-sm text-muted-foreground">
-                        {provider.label} · {size.label} · {region.flag} {region.label}
+                        {provider.label} · {size.label}
                       </p>
                     </div>
                   </div>
@@ -258,7 +253,6 @@ export default function BucketDetail() {
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                 <InfoTile icon={Tag} label="Provider" value={provider.label} />
                 <InfoTile icon={Server} label="Capacity" value={size.label} />
-                <InfoTile icon={MapPin} label="Region" value={region.label} />
                 <InfoTile icon={Boxes} label="Objects" value={bucket.object_count ?? 0} />
                 <InfoTile icon={Cpu} label="Used" value={formatBytes(bucket.used_bytes)} />
                 <InfoTile icon={Layers} label="Projects" value={connected.length} />

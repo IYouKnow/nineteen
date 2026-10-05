@@ -126,13 +126,6 @@ export const INSTANCE_TYPES = [
   { id: "large", label: "Large", cpu: "4 vCPU", ram: "8 GB", price: "$64" },
 ];
 
-export const REGIONS = [
-  { id: "fra1", label: "Frankfurt", flag: "🇩🇪" },
-  { id: "sfo1", label: "San Francisco", flag: "🇺🇸" },
-  { id: "sin1", label: "Singapore", flag: "🇸🇬" },
-  { id: "iad1", label: "Washington", flag: "🇺🇸" },
-];
-
 // Base port used when auto-assigning a local dev port for a project.
 export const DEV_PORT_BASE = 3000;
 // Size of the auto-assign pool (DEV_PORT_BASE..DEV_PORT_BASE+RANGE-1).

@@ -14,7 +14,7 @@ import (
 	"nineteen-server/services"
 )
 
-const databaseSelect = `SELECT id, user_id, name, slug, type, version, status, region,
+const databaseSelect = `SELECT id, user_id, name, slug, type, version, status,
 	instance_size, host, port, host_port, database_name, username, password_encrypted,
 	description, created_date, updated_date FROM databases`
 
@@ -78,7 +78,6 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 		Type         string `json:"type"`
 		Version      string `json:"version"`
 		Status       string `json:"status"`
-		Region       string `json:"region"`
 		InstanceSize string `json:"instance_size"`
 		Host         string `json:"host"`
 		Port         *int   `json:"port"`
@@ -110,9 +109,6 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 	if req.Version == "" {
 		req.Version = defaultDatabaseVersion
 	}
-	if req.Region == "" {
-		req.Region = "fra1"
-	}
 	if req.InstanceSize == "" {
 		req.InstanceSize = "small"
 	}
@@ -128,7 +124,7 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	host := req.Host
 	if host == "" {
-		host = "db-" + req.Slug + "." + req.Region + ".nineteen.app"
+		host = "db-" + req.Slug + ".nineteen.app"
 	}
 
 	password := randomHex(16)
@@ -145,10 +141,10 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := db.DB.Exec(
-		`INSERT INTO databases (user_id, name, slug, type, version, status, region, instance_size,
+		`INSERT INTO databases (user_id, name, slug, type, version, status, instance_size,
 			host, port, host_port, database_name, username, password_encrypted, description)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		claims.UserID, req.Name, req.Slug, req.Type, req.Version, "provisioning", req.Region,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		claims.UserID, req.Name, req.Slug, req.Type, req.Version, "provisioning",
 		req.InstanceSize, host, port, hostPort, req.DatabaseName, req.Username, enc, req.Description,
 	)
 	if err != nil {
@@ -481,7 +477,7 @@ const connectionSelect = `SELECT id, user_id, database_id, project_id, database_
 func scanDatabase(row rowScanner, d *models.Database) error {
 	var port, hostPort sql.NullInt64
 	err := row.Scan(&d.ID, &d.UserID, &d.Name, &d.Slug, &d.Type, &d.Version, &d.Status,
-		&d.Region, &d.InstanceSize, &d.Host, &port, &hostPort, &d.DatabaseName,
+		&d.InstanceSize, &d.Host, &port, &hostPort, &d.DatabaseName,
 		&d.Username, &d.PasswordEncrypted, &d.Description, &d.CreatedDate, &d.UpdatedDate)
 	if port.Valid {
 		p := int(port.Int64)
@@ -501,7 +497,7 @@ func getDatabase(userID, id int64) (models.Database, error) {
 	var d models.Database
 	err := db.DB.QueryRow(databaseSelect+" WHERE id = ? AND user_id = ?", id, userID).Scan(
 		&d.ID, &d.UserID, &d.Name, &d.Slug, &d.Type, &d.Version, &d.Status,
-		&d.Region, &d.InstanceSize, &d.Host, &d.Port, &d.HostPort, &d.DatabaseName,
+		&d.InstanceSize, &d.Host, &d.Port, &d.HostPort, &d.DatabaseName,
 		&d.Username, &d.PasswordEncrypted, &d.Description, &d.CreatedDate, &d.UpdatedDate,
 	)
 	if err != nil {
@@ -538,7 +534,7 @@ func updateDatabase(w http.ResponseWriter, r *http.Request, userID, id int64) (m
 	args := []interface{}{}
 	for col, val := range body {
 		switch col {
-		case "name", "description", "host", "database_name", "username", "version", "region", "instance_size", "status":
+		case "name", "description", "host", "database_name", "username", "version", "instance_size", "status":
 			sets = append(sets, col+" = ?")
 			args = append(args, valueToString(val))
 		}

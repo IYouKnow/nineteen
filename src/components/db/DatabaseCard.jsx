@@ -28,7 +28,7 @@ export default function DatabaseCard({ db, projects = [] }) {
         <p className="mt-3 line-clamp-2 text-xs text-muted-foreground">{db.description}</p>
       )}
       <p className="mt-3 truncate font-mono text-xs text-muted-foreground/80">
-        {db.host || `db-${db.name}.fra1.nineteen.app`}:{db.port || type.port}
+        {db.host || `db-${db.name}.nineteen.app`}:{db.port || type.port}
       </p>
       <div className="mt-4 flex items-center gap-2 border-t border-border/60 pt-3">
         <Layers className="h-3.5 w-3.5 text-muted-foreground/50" />

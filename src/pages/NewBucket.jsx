@@ -12,15 +12,11 @@ import Stepper from "@/components/newproject/Stepper";
 import StorageTypeIcon from "@/components/storage/StorageTypeIcon";
 import { BUCKET_PROVIDER_LIST, BUCKET_SIZES, getBucketProvider, buildBucketEndpoint } from "@/lib/storage";
 import { storageEntities } from "@/lib/storageEntities";
-import { REGIONS } from "@/lib/devStatus";
 
 const STEPS = [
   { id: "type", label: "Provider" },
   { id: "config", label: "Configuration" },
 ];
-
-const selectCls =
-  "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 export default function NewBucket() {
   const navigate = useNavigate();
@@ -29,7 +25,6 @@ export default function NewBucket() {
   const [type, setType] = useState(null);
   const [config, setConfig] = useState({
     name: "",
-    region: "fra1",
     size: "10",
     description: "",
   });
@@ -40,7 +35,7 @@ export default function NewBucket() {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
-  const preview = meta ? { name: config.name || "bucket", slug, region: config.region, port: meta.port } : null;
+  const preview = meta ? { name: config.name || "bucket", slug, port: meta.port } : null;
   const canContinue = step === 0 ? !!type : config.name.trim().length > 0;
 
   const create = async () => {
@@ -52,9 +47,8 @@ export default function NewBucket() {
         slug,
         type,
         status: "provisioning",
-        region: config.region,
         size: Number(config.size),
-        endpoint: `s3-${slug}.${config.region}.nineteen.app`,
+        endpoint: `s3-${slug}.nineteen.app`,
         port: meta.port,
         access_key: `AKIA${slug.toUpperCase().slice(0, 8)}EXAMPLE`,
         object_count: 0,
@@ -132,20 +126,6 @@ export default function NewBucket() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Region</Label>
-                  <select
-                    className={selectCls}
-                    value={config.region}
-                    onChange={(e) => setConfig({ ...config, region: e.target.value })}
-                  >
-                    {REGIONS.map((r) => (
-                      <option key={r.id} value={r.id} className="bg-card">
-                        {r.flag} {r.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
                   <Label>Capacity</Label>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     {BUCKET_SIZES.map((s) => (
@@ -194,7 +174,6 @@ export default function NewBucket() {
                   </div>
                   <div className="mt-4 space-y-1.5 font-mono text-xs text-muted-foreground">
                     <p><span className="text-muted-foreground/60">endpoint</span> {buildBucketEndpoint(preview)}</p>
-                    <p><span className="text-muted-foreground/60">region  </span> {config.region}</p>
                     <p><span className="text-muted-foreground/60">size    </span> {config.size} GB</p>
                   </div>
                 </div>

@@ -106,7 +106,7 @@ export function generateBuildLog(framework = "node", status = "ready", repo = "a
   add("info", "Pushing image to registry...");
   add("dim", "  sha256:9f2a…e1c4   42.1 MB", 3);
   add("info", "Allocating runtime instance...");
-  add("dim", "  Starting container on fra1-7a...", 2);
+  add("dim", "  Starting container...", 2);
   add("success", "✓ Health check passed (200 OK)", 2);
   add("success", "Deployment ready", 1);
   return lines;

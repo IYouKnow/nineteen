@@ -108,7 +108,7 @@ export default function Storage() {
           <h1 className="text-2xl font-semibold tracking-tight">Storage</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {buckets.length} bucket{buckets.length === 1 ? "" : "s"} · {volumes.length} volume
-            {volumes.length === 1 ? "" : "s"} · region fra1
+            {volumes.length === 1 ? "" : "s"}
           </p>
         </div>
         {canCreate && (

@@ -50,9 +50,8 @@ function makeEntry(ts, level, text, instance) {
   return { id: `log-${counter}`, ts, level, text, instance };
 }
 
-export function projectInstance(project) {
-  const region = (project && project.region) || "fra1";
-  return `${region}-${randHex(4)}`;
+export function projectInstance() {
+  return `inst-${randHex(4)}`;
 }
 
 function requestCtx() {

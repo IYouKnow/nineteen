@@ -312,7 +312,7 @@ export default function NewProject() {
           ? "gitlab"
           : "git",
         integration_id: source.integrationId ?? null,
-        domain: `${slug}.fra1.nineteen.app`,
+        domain: `${slug}.nineteen.app`,
         auto_deploy: false,
         last_deployed_at: new Date().toISOString(),
         port: resolveProjectPort(config),

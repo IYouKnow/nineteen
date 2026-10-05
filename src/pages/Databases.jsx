@@ -89,7 +89,7 @@ export default function Databases() {
           <h1 className="text-2xl font-semibold tracking-tight">Databases</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {databases.length} database{databases.length === 1 ? "" : "s"} ·{" "}
-            {connections.length} connection{connections.length === 1 ? "" : "s"} · region fra1
+            {connections.length} connection{connections.length === 1 ? "" : "s"}
           </p>
         </div>
         {canCreate && (

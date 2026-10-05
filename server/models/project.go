@@ -19,7 +19,6 @@ type Project struct {
 	Domain        string    `json:"domain"`
 	Description   string    `json:"description"`
 	AutoDeploy    bool      `json:"auto_deploy"`
-	Region        string    `json:"region"`
 	InstanceType  string    `json:"instance_type"`
 	BuildStrategy string    `json:"build_strategy"`
 	DockerfilePath string   `json:"dockerfile_path"`

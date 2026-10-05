@@ -702,7 +702,7 @@ func getDatabaseByID(id int64) (models.Database, error) {
 	var d models.Database
 	err := db.DB.QueryRow(databaseSelect+" WHERE id = ?", id).Scan(
 		&d.ID, &d.UserID, &d.Name, &d.Slug, &d.Type, &d.Version, &d.Status,
-		&d.Region, &d.InstanceSize, &d.Host, &d.Port, &d.HostPort, &d.DatabaseName,
+		&d.InstanceSize, &d.Host, &d.Port, &d.HostPort, &d.DatabaseName,
 		&d.Username, &d.PasswordEncrypted, &d.Description, &d.CreatedDate, &d.UpdatedDate,
 	)
 	if err != nil {

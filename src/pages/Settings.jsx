@@ -41,7 +41,6 @@ const DEFAULT_SETTINGS = {
   build_failure_notifications: "true",
   marketing_emails: "false",
   default_instance_type: "starter",
-  default_region: "fra1",
   auto_deploy: "true",
   public_base_url: "",
 };
@@ -67,16 +66,6 @@ const INSTANCE_TYPES = [
   { value: "basic", label: "Basic", desc: "1 GB RAM, 1 vCPU" },
   { value: "standard", label: "Standard", desc: "2 GB RAM, 2 vCPU" },
   { value: "performance", label: "Performance", desc: "4 GB RAM, 4 vCPU" },
-];
-
-const REGIONS = [
-  { value: "fra1", label: "Frankfurt (fra1)" },
-  { value: "ams1", label: "Amsterdam (ams1)" },
-  { value: "lhr1", label: "London (lhr1)" },
-  { value: "nyc1", label: "New York (nyc1)" },
-  { value: "sfo1", label: "San Francisco (sfo1)" },
-  { value: "sgp1", label: "Singapore (sgp1)" },
-  { value: "tky1", label: "Tokyo (tky1)" },
 ];
 
 const INTEGRATION_PROVIDERS = [
@@ -773,7 +762,6 @@ function IntegrationsTab({ settings = { public_base_url: "" }, saving, onSave })
 
 function DeploymentDefaultsTab({ settings, onSave }) {
   const [instanceType, setInstanceType] = useState(settings.default_instance_type || "starter");
-  const [region, setRegion] = useState(settings.default_region || "fra1");
   const [autoDeploy, setAutoDeploy] = useState(settings.auto_deploy === "true");
 
   return (
@@ -781,34 +769,21 @@ function DeploymentDefaultsTab({ settings, onSave }) {
       <SectionHeader icon={Server} title="Deployment Defaults" description="Default settings for new projects" />
       <Card>
         <CardContent className="pt-6 space-y-5">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label>Default Instance Type</Label>
-              <Select value={instanceType} onValueChange={(v) => { setInstanceType(v); onSave({ default_instance_type: v }); }}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {INSTANCE_TYPES.map((t) => (
-                    <SelectItem key={t.value} value={t.value}>
-                      <div>
-                        <p className="text-sm">{t.label}</p>
-                        <p className="text-[10px] text-muted-foreground">{t.desc}</p>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Default Region</Label>
-              <Select value={region} onValueChange={(v) => { setRegion(v); onSave({ default_region: v }); }}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {REGIONS.map((r) => (
-                    <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-2">
+            <Label>Default Instance Type</Label>
+            <Select value={instanceType} onValueChange={(v) => { setInstanceType(v); onSave({ default_instance_type: v }); }}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {INSTANCE_TYPES.map((t) => (
+                  <SelectItem key={t.value} value={t.value}>
+                    <div>
+                      <p className="text-sm">{t.label}</p>
+                      <p className="text-[10px] text-muted-foreground">{t.desc}</p>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <Separator />
           <div className="flex items-center justify-between">

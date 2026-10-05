@@ -147,7 +147,7 @@ export default function Projects() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {(projects || []).length} project{(projects || []).length === 1 ? "" : "s"} deployed to fra1
+            {(projects || []).length} project{(projects || []).length === 1 ? "" : "s"}
           </p>
         </div>
         {canCreate && (

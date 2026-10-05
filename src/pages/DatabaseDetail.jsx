@@ -19,7 +19,6 @@ import {
   Link2,
   Server,
   Cpu,
-  MapPin,
   Tag,
   Calendar,
   Layers,
@@ -43,7 +42,6 @@ import EmptyState from "@/components/dev/EmptyState";
 import ConnectProjectsDialog from "@/components/db/ConnectProjectsDialog";
 import DatabaseTables from "@/components/db/DatabaseTables";
 import { getDbType, DB_INSTANCE_SIZES, buildConnectionString } from "@/lib/databases";
-import { REGIONS } from "@/lib/devStatus";
 import { formatDate } from "@/lib/format";
 import { cn, copyText } from "@/lib/utils";
 
@@ -156,7 +154,6 @@ export default function DatabaseDetail() {
 
   const type = getDbType(db.type);
   const instance = DB_INSTANCE_SIZES.find((i) => i.id === db.instance_size) || DB_INSTANCE_SIZES[0];
-  const region = REGIONS.find((r) => r.id === db.region) || REGIONS[0];
   const connStr = buildConnectionString(db);
 
   return (
@@ -181,8 +178,6 @@ export default function DatabaseDetail() {
               <span>{type.label}</span>
               <span className="text-muted-foreground/30">·</span>
               <span>v{db.version}</span>
-              <span className="text-muted-foreground/30">·</span>
-              <span>{region.flag} {region.label}</span>
             </div>
           </div>
         </div>
@@ -261,7 +256,7 @@ export default function DatabaseDetail() {
                         <span className="text-lg font-semibold capitalize tracking-tight">{db.status}</span>
                       </div>
                       <p className="mt-0.5 text-sm text-muted-foreground">
-                        {type.label} · {instance.label} ({instance.ram}) · {region.flag} {region.label}
+                        {type.label} · {instance.label} ({instance.ram})
                       </p>
                     </div>
                   </div>
@@ -289,7 +284,6 @@ export default function DatabaseDetail() {
                 <InfoTile icon={Tag} label="Type" value={type.label} />
                 <InfoTile icon={GitBranch} label="Version" value={db.version || "—"} mono />
                 <InfoTile icon={Cpu} label="Instance" value={instance.label} />
-                <InfoTile icon={MapPin} label="Region" value={region.label} />
                 <InfoTile icon={Server} label="Storage" value={instance.storage} />
                 <InfoTile icon={Layers} label="Projects" value={connected.length} />
                 <InfoTile icon={Calendar} label="Created" value={formatDate(db.created_date, "MMM d, yyyy")} />

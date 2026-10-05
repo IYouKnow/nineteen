@@ -12,7 +12,6 @@ import Stepper from "@/components/newproject/Stepper";
 import DbTypeIcon from "@/components/db/DbTypeIcon";
 import { DB_TYPE_LIST, DB_INSTANCE_SIZES, getDbType } from "@/lib/databases";
 import { dbEntities } from "@/lib/dbEntities";
-import { REGIONS } from "@/lib/devStatus";
 
 const STEPS = [
   { id: "type", label: "Type" },
@@ -30,7 +29,6 @@ export default function NewDatabase() {
   const [config, setConfig] = useState({
     name: "",
     version: "",
-    region: "fra1",
     instance_size: "small",
     database_name: "app",
     username: "app",
@@ -44,7 +42,7 @@ export default function NewDatabase() {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
-  const host = `db-${slug}.fra1.nineteen.app`;
+  const host = `db-${slug}.nineteen.app`;
   const canContinue = step === 0 ? !!type : config.name.trim().length > 0;
 
   const create = async () => {
@@ -57,7 +55,6 @@ export default function NewDatabase() {
         type,
         status: "provisioning",
         version: effectiveVersion,
-        region: config.region,
         instance_size: config.instance_size,
         host,
         port: t.port,
@@ -136,35 +133,19 @@ export default function NewDatabase() {
                     className="bg-card font-mono"
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>Version</Label>
-                    <select
-                      className={selectCls}
-                      value={effectiveVersion}
-                      onChange={(e) => setConfig({ ...config, version: e.target.value })}
-                    >
-                      {meta.versions.map((v) => (
-                        <option key={v} value={v} className="bg-card">
-                          {v}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Region</Label>
-                    <select
-                      className={selectCls}
-                      value={config.region}
-                      onChange={(e) => setConfig({ ...config, region: e.target.value })}
-                    >
-                      {REGIONS.map((r) => (
-                        <option key={r.id} value={r.id} className="bg-card">
-                          {r.flag} {r.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                <div className="space-y-1.5">
+                  <Label>Version</Label>
+                  <select
+                    className={selectCls}
+                    value={effectiveVersion}
+                    onChange={(e) => setConfig({ ...config, version: e.target.value })}
+                  >
+                    {meta.versions.map((v) => (
+                      <option key={v} value={v} className="bg-card">
+                        {v}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-1.5">
                   <Label>Instance size</Label>

@@ -12,15 +12,11 @@ import Stepper from "@/components/newproject/Stepper";
 import StorageTypeIcon from "@/components/storage/StorageTypeIcon";
 import { VOLUME_TYPE_LIST, VOLUME_SIZES, getVolumeType } from "@/lib/storage";
 import { storageEntities } from "@/lib/storageEntities";
-import { REGIONS } from "@/lib/devStatus";
 
 const STEPS = [
   { id: "type", label: "Filesystem" },
   { id: "config", label: "Configuration" },
 ];
-
-const selectCls =
-  "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 export default function NewVolume() {
   const navigate = useNavigate();
@@ -29,7 +25,6 @@ export default function NewVolume() {
   const [type, setType] = useState(null);
   const [config, setConfig] = useState({
     name: "",
-    region: "fra1",
     size: "10",
     mount_path: "/data",
     description: "",
@@ -52,7 +47,6 @@ export default function NewVolume() {
         slug,
         type,
         status: "provisioning",
-        region: config.region,
         size: Number(config.size),
         mount_path: config.mount_path || "/data",
         description: config.description,
@@ -124,30 +118,14 @@ export default function NewVolume() {
                     className="bg-card font-mono"
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>Region</Label>
-                    <select
-                      className={selectCls}
-                      value={config.region}
-                      onChange={(e) => setConfig({ ...config, region: e.target.value })}
-                    >
-                      {REGIONS.map((r) => (
-                        <option key={r.id} value={r.id} className="bg-card">
-                          {r.flag} {r.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Mount path</Label>
-                    <Input
-                      value={config.mount_path}
-                      onChange={(e) => setConfig({ ...config, mount_path: e.target.value })}
-                      className="bg-card font-mono"
-                      placeholder="/data"
-                    />
-                  </div>
+                <div className="space-y-1.5">
+                  <Label>Mount path</Label>
+                  <Input
+                    value={config.mount_path}
+                    onChange={(e) => setConfig({ ...config, mount_path: e.target.value })}
+                    className="bg-card font-mono"
+                    placeholder="/data"
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <Label>Size</Label>
@@ -200,7 +178,6 @@ export default function NewVolume() {
                   </div>
                   <div className="mt-4 space-y-1.5 font-mono text-xs text-muted-foreground">
                     <p><span className="text-muted-foreground/60">mount   </span> {config.mount_path || "—"}</p>
-                    <p><span className="text-muted-foreground/60">region  </span> {config.region}</p>
                     <p><span className="text-muted-foreground/60">size    </span> {config.size} GB</p>
                   </div>
                 </div>

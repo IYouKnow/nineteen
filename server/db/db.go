@@ -169,7 +169,6 @@ func runMigrations() {
 			domain TEXT DEFAULT '',
 			description TEXT DEFAULT '',
 			auto_deploy BOOLEAN DEFAULT FALSE,
-			region TEXT DEFAULT 'fra1',
 			instance_type TEXT DEFAULT 'nano',
 			build_strategy TEXT DEFAULT 'detect',
 			last_deployed_at DATETIME,
@@ -250,7 +249,6 @@ func runMigrations() {
 			type TEXT NOT NULL,
 			version TEXT DEFAULT '',
 			status TEXT DEFAULT 'provisioning',
-			region TEXT DEFAULT 'fra1',
 			instance_size TEXT DEFAULT 'small',
 			host TEXT DEFAULT '',
 			port INTEGER,
@@ -431,6 +429,16 @@ func runMigrations() {
 		}
 		if _, err := DB.Exec(`UPDATE projects SET build_context = '.'`); err != nil {
 			log.Fatalf("Migration failed: %v", err)
+		}
+	}
+
+	// Region support was removed. Drop legacy region columns on existing installs.
+	// Best-effort: failures must not block startup (e.g. old SQLite without DROP COLUMN).
+	for _, t := range []string{"projects", "databases"} {
+		if exists, err := columnExists(t, "region"); err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		} else if exists {
+			_, _ = DB.Exec(`ALTER TABLE ` + t + ` DROP COLUMN region`)
 		}
 	}
 
