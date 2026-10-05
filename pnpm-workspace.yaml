@@ -1,0 +1,7 @@
+onlyBuiltDependencies:
+  - esbuild
+
+# Forward-compat for pnpm >= 10.26 / v11+ (replaces onlyBuiltDependencies).
+# Kept in sync with the list above; pnpm 10.24 ignores unknown keys with a warning.
+allowBuilds:
+  esbuild: true

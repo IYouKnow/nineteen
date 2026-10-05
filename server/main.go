@@ -444,7 +444,11 @@ func main() {
 
 	addr := os.Getenv("ADDR")
 	if addr == "" {
-		addr = ":8080"
+		// Loopback-only default so local `go run` / dev binaries don't trigger
+		// an OS firewall prompt on every launch (go run rebuilds to a fresh
+		// temp path each time, so per-binary allow rules never stick).
+		// Docker Compose overrides this with ADDR=":8080" for the container.
+		addr = "127.0.0.1:8080"
 	}
 	server := &http.Server{
 		Addr:    addr,

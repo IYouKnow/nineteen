@@ -3,12 +3,13 @@
 # ---------- Stage 1: build the frontend ----------
 FROM node:20-alpine AS build-web
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
+RUN corepack enable && corepack prepare pnpm@10.24.0 --activate
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 COPY index.html ./
 COPY vite.config.js tsconfig.json postcss.config.js tailwind.config.js components.json ./
 COPY src ./src
-RUN npm run build
+RUN pnpm run build
 
 # ---------- Stage 2: build the Go server ----------
 FROM golang:1.22-alpine AS build-go
