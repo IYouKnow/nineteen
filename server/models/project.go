@@ -16,7 +16,6 @@ type Project struct {
 	Branch        string    `json:"branch"`
 	Provider      string    `json:"provider"`
 	IntegrationID *int64    `json:"integration_id"`
-	Domain        string    `json:"domain"`
 	Description   string    `json:"description"`
 	AutoDeploy    bool      `json:"auto_deploy"`
 	InstanceType  string    `json:"instance_type"`

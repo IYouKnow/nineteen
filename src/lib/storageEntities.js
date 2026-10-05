@@ -11,9 +11,9 @@ const now = () => new Date().toISOString();
 
 // --- in-memory store (temporary) ---
 let buckets = [
-  { id: 1, user_id: 1, name: "assets", slug: "assets", type: "s3", status: "ready", size: 10, endpoint: "s3-assets.nineteen.app", port: 9000, access_key: "AKIA3XAMPLEKEY0001", object_count: 128, used_bytes: 3500000000, description: "Static assets for web projects.", created_date: "2026-08-02T10:14:00Z", updated_date: "2026-09-01T09:00:00Z" },
-  { id: 2, user_id: 1, name: "backups", slug: "backups", type: "minio", status: "ready", size: 50, endpoint: "s3-backups.nineteen.app", port: 9000, access_key: "AKIA3XAMPLEKEY0002", object_count: 2048, used_bytes: 12000000000, description: "Daily database snapshots.", created_date: "2026-07-19T08:30:00Z", updated_date: "2026-09-05T14:20:00Z" },
-  { id: 3, user_id: 1, name: "media", slug: "media", type: "minio", status: "provisioning", size: 100, endpoint: "s3-media.nineteen.app", port: 9000, access_key: "AKIA3XAMPLEKEY0003", object_count: 0, used_bytes: 0, description: "User uploads.", created_date: "2026-09-06T11:05:00Z", updated_date: "2026-09-06T11:05:00Z" },
+  { id: 1, user_id: 1, name: "assets", slug: "assets", type: "s3", status: "ready", size: 10, endpoint: "localhost", port: 9000, access_key: "AKIA3XAMPLEKEY0001", object_count: 128, used_bytes: 3500000000, description: "Static assets for web projects.", created_date: "2026-08-02T10:14:00Z", updated_date: "2026-09-01T09:00:00Z" },
+  { id: 2, user_id: 1, name: "backups", slug: "backups", type: "minio", status: "ready", size: 50, endpoint: "localhost", port: 9000, access_key: "AKIA3XAMPLEKEY0002", object_count: 2048, used_bytes: 12000000000, description: "Daily database snapshots.", created_date: "2026-07-19T08:30:00Z", updated_date: "2026-09-05T14:20:00Z" },
+  { id: 3, user_id: 1, name: "media", slug: "media", type: "minio", status: "provisioning", size: 100, endpoint: "localhost", port: 9000, access_key: "AKIA3XAMPLEKEY0003", object_count: 0, used_bytes: 0, description: "User uploads.", created_date: "2026-09-06T11:05:00Z", updated_date: "2026-09-06T11:05:00Z" },
 ];
 
 let volumes = [

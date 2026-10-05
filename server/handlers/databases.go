@@ -133,7 +133,7 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 	port := 5432
 	host := req.Host
 	if host == "" {
-		host = "db-" + req.Slug + ".nineteen.app"
+		host = "localhost"
 	}
 
 	password := randomHex(16)

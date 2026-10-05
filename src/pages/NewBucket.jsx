@@ -48,7 +48,7 @@ export default function NewBucket() {
         type,
         status: "provisioning",
         size: Number(config.size),
-        endpoint: `s3-${slug}.nineteen.app`,
+        endpoint: "localhost",
         port: meta.port,
         access_key: `AKIA${slug.toUpperCase().slice(0, 8)}EXAMPLE`,
         object_count: 0,

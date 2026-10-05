@@ -40,11 +40,7 @@ export default function NewDatabase() {
 
   const meta = type ? getDbType(type) : null;
   const effectiveVersion = config.version || meta?.defaultVersion || "";
-  const slug = (config.name || "database")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-  const host = `db-${slug}.nineteen.app`;
+  const host = "localhost";
   const canContinue = step === 0 ? !!type : config.name.trim().length > 0;
 
   const create = async () => {

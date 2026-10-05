@@ -166,7 +166,6 @@ func runMigrations() {
 			framework TEXT DEFAULT 'node',
 			repository TEXT DEFAULT '',
 			branch TEXT DEFAULT 'main',
-			domain TEXT DEFAULT '',
 			description TEXT DEFAULT '',
 			auto_deploy BOOLEAN DEFAULT FALSE,
 			instance_type TEXT DEFAULT 'nano',
@@ -440,6 +439,21 @@ func runMigrations() {
 		} else if exists {
 			_, _ = DB.Exec(`ALTER TABLE ` + t + ` DROP COLUMN region`)
 		}
+	}
+
+	// Projects no longer carry a synthetic hostname. Drop the column on existing
+	// installs. Best-effort: failures must not block startup (e.g. old SQLite
+	// without DROP COLUMN).
+	if exists, err := columnExists("projects", "domain"); err != nil {
+		log.Fatalf("Migration failed: %v", err)
+	} else if exists {
+		_, _ = DB.Exec(`ALTER TABLE projects DROP COLUMN domain`)
+	}
+
+	// Legacy databases stored a synthetic db-<slug>.nineteen.app host that never
+	// resolved. Connections go to the local host, so rewrite those rows once.
+	if _, err := DB.Exec(`UPDATE databases SET host = 'localhost' WHERE host LIKE 'db-%.nineteen.app'`); err != nil {
+		log.Printf("Failed to normalize legacy database hosts: %v", err)
 	}
 
 	// Multiple accounts per provider are supported (e.g. several self-hosted

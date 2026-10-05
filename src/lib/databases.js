@@ -28,7 +28,7 @@ export function getDbType(id) {
 export function buildConnectionString(db) {
   if (!db) return "";
   const t = getDbType(db.type);
-  const host = db.host || `db-${(db.name || "db").toLowerCase()}.nineteen.app`;
+  const host = db.host || "localhost";
   const port = db.port || t.port;
   const name = db.database_name || (db.type === "redis" ? "0" : "app");
   if (db.type === "redis") return `redis://${host}:${port}/${name}`;

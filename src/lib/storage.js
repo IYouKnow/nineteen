@@ -47,7 +47,7 @@ export function getVolumeType(id) {
 export function buildBucketEndpoint(bucket) {
   if (!bucket) return "";
   const p = getBucketProvider(bucket.type);
-  const host = bucket.endpoint || `s3-${(bucket.slug || bucket.name || "bucket").toLowerCase()}.nineteen.app`;
+  const host = bucket.endpoint || "localhost";
   const port = bucket.port || p.port;
   return `${p.scheme}://${host}:${port}/${bucket.name || "bucket"}`;
 }

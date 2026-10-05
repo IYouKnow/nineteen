@@ -178,7 +178,7 @@ export default function DeploymentDetail() {
               </h3>
               <div className="mt-1 divide-y divide-border/60">
                 <Meta icon={Cpu} label="Instance" value={`${project.instance_type}`} mono />
-                <Meta icon={Globe} label="Domain" value={projectAddress(project)} mono />
+                <Meta icon={Globe} label="Address" value={projectAddress(project)} mono />
               </div>
               <Button asChild variant="outline" size="sm" className="mt-3 w-full gap-2">
                 <Link to={`/projects/${projectId}`}>

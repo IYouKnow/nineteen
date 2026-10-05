@@ -16,7 +16,7 @@ export default function DatabaseRow({ db, projects = [] }) {
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-foreground">{db.name}</p>
         <p className="truncate font-mono text-xs text-muted-foreground">
-          {db.host || `db-${db.name}.nineteen.app`}:{db.port || type.port}
+          {db.host || "localhost"}:{db.port || type.port}
         </p>
       </div>
       <span className="hidden font-mono text-xs text-muted-foreground sm:inline">
