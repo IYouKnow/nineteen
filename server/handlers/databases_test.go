@@ -113,7 +113,7 @@ func TestBulkCreateWithoutDatabaseID(t *testing.T) {
 // URI (which is then copied straight into a client).
 func TestDatabaseConnectionURIEncodesPassword(t *testing.T) {
 	pw := "p@ss:w/rd"
-	got := databaseConnectionURI("app", pw, "app", 54321)
+	got := databaseConnectionURI("postgresql", "app", pw, "app", 54321)
 	if strings.Contains(got, pw) {
 		t.Fatalf("password not percent-encoded: %q", got)
 	}
@@ -126,6 +126,47 @@ func TestDatabaseConnectionURIEncodesPassword(t *testing.T) {
 	}
 	if gotPw, _ := u.User.Password(); gotPw != pw {
 		t.Fatalf("round-trip password = %q, want %q", gotPw, pw)
+	}
+}
+
+// TestDatabaseConnectionURISchemePerEngine covers the scheme mapping for the
+// engines enabled alongside Postgres.
+func TestDatabaseConnectionURISchemePerEngine(t *testing.T) {
+	for _, tc := range []struct{ dbType, scheme string }{
+		{"postgresql", "postgres"},
+		{"mysql", "mysql"},
+		{"mariadb", "mariadb"},
+	} {
+		got := databaseConnectionURI(tc.dbType, "app", "secret", "app", 54321)
+		u, err := url.Parse(got)
+		if err != nil {
+			t.Fatalf("parse %q: %v", got, err)
+		}
+		if u.Scheme != tc.scheme {
+			t.Fatalf("%s scheme = %q, want %q", tc.dbType, u.Scheme, tc.scheme)
+		}
+	}
+}
+
+// TestCreateDatabaseRejectsUnsupportedEngine covers the engine gate. It returns
+// before any port reservation or Docker call.
+func TestCreateDatabaseRejectsUnsupportedEngine(t *testing.T) {
+	_, token := insertUser(t, "member")
+	w := do(t, DatabasesHandler, http.MethodPost, "/api/databases", token,
+		map[string]interface{}{"name": "redisdb", "type": "redis"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unsupported engine: got %d %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCreateDatabaseRejectsBadVersionPerEngine covers per-engine version
+// validation.
+func TestCreateDatabaseRejectsBadVersionPerEngine(t *testing.T) {
+	_, token := insertUser(t, "member")
+	w := do(t, DatabasesHandler, http.MethodPost, "/api/databases", token,
+		map[string]interface{}{"name": "mysqldb", "type": "mysql", "version": "9.9"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bad mysql version: got %d %s", w.Code, w.Body.String())
 	}
 }
 

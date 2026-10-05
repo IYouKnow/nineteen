@@ -19,16 +19,20 @@ const databaseSelect = `SELECT id, user_id, name, slug, type, version, status,
 	instance_size, host, port, host_port, database_name, username, password_encrypted,
 	description, created_date, updated_date FROM databases`
 
-// supportedDatabaseTypes are the engines this build can provision. Only
-// PostgreSQL is supported for now; other types are shown in the UI as
-// disabled "Soon" and rejected here.
-var supportedDatabaseTypes = map[string]bool{"postgresql": true}
+// supportedDatabaseVersions pins the allowed image tags per engine. A type is
+// provisionable only if it is also listed in services.dbEngines.
+var supportedDatabaseVersions = map[string]map[string]bool{
+	"postgresql": {"16.2": true, "15.5": true, "14.10": true},
+	"mysql":      {"8.4": true, "8.0": true},
+	"mariadb":    {"11.2": true, "10.11": true},
+}
 
-// supportedDatabaseVersions pins the allowed PostgreSQL tags.
-var supportedDatabaseVersions = map[string]bool{"16.2": true, "15.5": true, "14.10": true}
-
-// defaultDatabaseVersion is used when a create request omits a version.
-const defaultDatabaseVersion = "16.2"
+// defaultDatabaseVersions is used when a create request omits a version.
+var defaultDatabaseVersions = map[string]string{
+	"postgresql": "16.2",
+	"mysql":      "8.0",
+	"mariadb":    "11.2",
+}
 
 // defaultInstanceSize is the single size provisioned while the picker is removed.
 const defaultInstanceSize = "small"
@@ -108,7 +112,7 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 	if req.Type == "" {
 		req.Type = "postgresql"
 	}
-	if !supportedDatabaseTypes[req.Type] {
+	if !services.IsEngineSupported(req.Type) {
 		respondError(w, http.StatusBadRequest, "unsupported database type: "+req.Type)
 		return
 	}
@@ -116,10 +120,10 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 		req.Slug = slugify(req.Name)
 	}
 	if req.Version == "" {
-		req.Version = defaultDatabaseVersion
+		req.Version = defaultDatabaseVersions[req.Type]
 	}
-	if !supportedDatabaseVersions[req.Version] {
-		respondError(w, http.StatusBadRequest, "unsupported postgres version: "+req.Version)
+	if !supportedDatabaseVersions[req.Type][req.Version] {
+		respondError(w, http.StatusBadRequest, "unsupported "+req.Type+" version: "+req.Version)
 		return
 	}
 	// Single fixed size while the picker is removed from the UI. Ignore
@@ -131,8 +135,8 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 	if req.Username == "" {
 		req.Username = "app"
 	}
-	// Container port is fixed for postgres; ignore client-supplied ports.
-	port := 5432
+	// Container port is fixed per engine; ignore client-supplied ports.
+	port := services.EnginePort(req.Type)
 	host := req.Host
 	if host == "" {
 		host = "localhost"
@@ -172,8 +176,21 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := result.LastInsertId()
 
+	// A separate root password for engines that need a superuser at init. It is
+	// never returned; resets read it back from the container's environment.
+	rootPassword := randomHex(16)
+
 	status := "running"
-	if perr := services.NewDatabaseProvisioner().Create(context.Background(), req.Slug, req.Version, req.DatabaseName, req.Username, password, hostPort); perr != nil {
+	if perr := services.NewDatabaseProvisioner().Create(context.Background(), services.CreateOptions{
+		Type:         req.Type,
+		Slug:         req.Slug,
+		Version:      req.Version,
+		DatabaseName: req.DatabaseName,
+		Username:     req.Username,
+		Password:     password,
+		RootPassword: rootPassword,
+		HostPort:     hostPort,
+	}); perr != nil {
 		status = "error"
 	}
 	db.DB.Exec("UPDATE databases SET status = ?, updated_date = CURRENT_TIMESTAMP WHERE id = ?", status, id)
@@ -186,20 +203,37 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 	// One-time credentials: only ever returned on create, never on GET/list.
 	// The frontend shows this in a dismissible banner and never persists it.
 	d.PasswordOnce = password
-	d.ConnectionURI = databaseConnectionURI(req.Username, password, req.DatabaseName, hostPort)
+	d.ConnectionURI = databaseConnectionURI(req.Type, req.Username, password, req.DatabaseName, hostPort)
 	respondJSON(w, http.StatusCreated, d)
 }
 
-// databaseConnectionURI builds a percent-encoded postgres URI so passwords
-// containing reserved characters (@ : / ? #) don't corrupt the string.
-func databaseConnectionURI(username, password, databaseName string, hostPort int) string {
+// databaseConnectionURI builds a percent-encoded URI so passwords containing
+// reserved characters (@ : / ? #) don't corrupt the string. The scheme is
+// derived from the engine type.
+func databaseConnectionURI(dbType, username, password, databaseName string, hostPort int) string {
 	u := url.URL{
-		Scheme: "postgres",
+		Scheme: dbScheme(dbType),
 		User:   url.UserPassword(username, password),
 		Host:   "127.0.0.1:" + strconv.Itoa(hostPort),
 		Path:   "/" + databaseName,
 	}
 	return u.String()
+}
+
+// dbScheme maps a database type to its URI scheme.
+func dbScheme(dbType string) string {
+	switch dbType {
+	case "mysql":
+		return "mysql"
+	case "mariadb":
+		return "mariadb"
+	case "mongodb":
+		return "mongodb"
+	case "redis":
+		return "redis"
+	default:
+		return "postgres"
+	}
 }
 
 // DatabaseCredentialsHandler resets a database's password. It applies the new
@@ -242,7 +276,7 @@ func DatabaseCredentialsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if perr := services.NewDatabaseProvisioner().AlterPassword(d.Slug, d.Username, d.DatabaseName, newPassword); perr != nil {
+	if perr := services.NewDatabaseProvisioner().AlterPassword(d.Type, d.Slug, d.Username, d.DatabaseName, newPassword); perr != nil {
 		respondError(w, http.StatusConflict, "Could not reset password: "+perr.Error())
 		return
 	}
@@ -270,7 +304,7 @@ func DatabaseCredentialsHandler(w http.ResponseWriter, r *http.Request) {
 		hostPort = *d.HostPort
 	}
 	d.PasswordOnce = newPassword
-	d.ConnectionURI = databaseConnectionURI(d.Username, newPassword, d.DatabaseName, hostPort)
+	d.ConnectionURI = databaseConnectionURI(d.Type, d.Username, newPassword, d.DatabaseName, hostPort)
 	respondJSON(w, http.StatusOK, d)
 }
 

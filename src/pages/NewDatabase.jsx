@@ -13,7 +13,7 @@ import DbTypeIcon from "@/components/db/DbTypeIcon";
 import { DB_TYPE_LIST, getDbType } from "@/lib/databases";
 import { dbEntities } from "@/lib/dbEntities";
 
-const SUPPORTED_DB_TYPES = ["postgresql"];
+const SUPPORTED_DB_TYPES = ["postgresql", "mysql", "mariadb"];
 const DEFAULT_INSTANCE_SIZE = "small";
 
 const STEPS = [
