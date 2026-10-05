@@ -51,25 +51,44 @@ function IntegrationPanel({ providerId, selectedRepo, update, integrations, inte
   const connected = providerIntegrations.length > 0;
 
   useEffect(() => {
-    setSelectedAccount(null);
-  }, [providerId]);
-
-  useEffect(() => {
-    if (connected && !selectedAccount) setSelectedAccount(providerIntegrations[0].id);
+    if (!connected) {
+      if (selectedAccount !== null) setSelectedAccount(null);
+      return;
+    }
+    const stillValid =
+      selectedAccount != null &&
+      providerIntegrations.some((a) => String(a.id) === String(selectedAccount));
+    if (!stillValid) setSelectedAccount(providerIntegrations[0].id);
   }, [connected, selectedAccount, providerIntegrations]);
 
-  const { data: repos = [], isLoading: reposLoading } = useQuery({
+  const {
+    data: repos = [],
+    isLoading: reposLoading,
+    isError: reposError,
+    error: reposQueryError,
+    refetch: refetchRepos,
+  } = useQuery({
     queryKey: ["integration-repos", selectedAccount],
     queryFn: async () => {
       const res = await fetch(
-        `${API_URL}/api/settings/integrations/repos?id=${selectedAccount}&per_page=50`,
+        `${API_URL}/api/settings/integrations/repos?id=${selectedAccount}&per_page=100`,
         { headers: getAuthHeaders() }
       );
-      if (!res.ok) throw new Error("Failed to load repositories");
+      if (!res.ok) {
+        let detail = "";
+        try {
+          const data = await res.json();
+          detail = data?.error ? `: ${data.error}` : "";
+        } catch {
+          // non-JSON error body — keep generic message
+        }
+        throw new Error(`Failed to load repositories${detail}`);
+      }
       return res.json();
     },
     enabled: !!selectedAccount,
     staleTime: 60000,
+    retry: 1,
   });
 
   const filteredRepos = useMemo(() => {
@@ -166,8 +185,45 @@ function IntegrationPanel({ providerId, selectedRepo, update, integrations, inte
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading repositories…
           </div>
+        ) : reposError ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
+            <p className="text-xs font-medium text-destructive">Could not load repositories.</p>
+            <p className="max-w-sm text-xs text-muted-foreground">
+              {reposQueryError?.message ||
+                "The integration token may have expired or lost access. Try again or reconnect."}
+            </p>
+            <div className="mt-1 flex items-center gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => refetchRepos()}>
+                Retry
+              </Button>
+              <Button type="button" variant="ghost" size="sm" onClick={onConnect}>
+                Reconnect {meta.label}
+              </Button>
+            </div>
+          </div>
         ) : filteredRepos.length === 0 ? (
-          <p className="py-8 text-center text-xs text-muted-foreground">No repositories found.</p>
+          query ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
+              <p className="text-xs text-muted-foreground">
+                No matches for &ldquo;{query}&rdquo; in the first {repos.length} repositories.
+              </p>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setQuery("")}>
+                Clear search
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
+              <p className="text-xs text-muted-foreground">No repositories found.</p>
+              <p className="max-w-sm text-[11px] text-muted-foreground/70">
+                Showing the first {repos.length} repos for @{providerIntegrations.find((a) => a.id === selectedAccount)?.username}. If
+                you expect more, the token may lack access (classic: <span className="font-mono">repo</span> scope;
+                fine-grained: <span className="font-mono">Contents: Read</span>) or it expired — try reconnecting.
+              </p>
+              <Button type="button" variant="outline" size="sm" onClick={() => refetchRepos()}>
+                Retry
+              </Button>
+            </div>
+          )
         ) : (
           filteredRepos.map((repo) => {
             const active = selectedRepo === repo.full_name;
@@ -363,6 +419,7 @@ export default function SelectStep({ source, setSource }) {
 
       {(source.type === "github" || source.type === "gitea") && (
         <IntegrationPanel
+          key={source.type}
           providerId={source.type}
           selectedRepo={source.repo?.full_name}
           update={update}

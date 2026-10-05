@@ -754,6 +754,9 @@ func IntegrationReposHandler(w http.ResponseWriter, r *http.Request) {
 			perPage = n
 		}
 	}
+	if perPage > 100 {
+		perPage = 100
+	}
 
 	var provider, encryptedToken, configJSON string
 	err = db.DB.QueryRow(
@@ -771,12 +774,17 @@ func IntegrationReposHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if token == "" {
+		respondError(w, http.StatusBadGateway, "Integration token is empty — reconnect the integration to store a new token")
+		return
+	}
+
 	list := []RepoResponse{}
 	switch provider {
 	case "github":
 		repos, err := services.NewGitHubClient(token).ListRepositories(page, perPage)
 		if err != nil {
-			respondError(w, http.StatusBadGateway, "Failed to fetch repositories: "+err.Error())
+			respondError(w, http.StatusBadGateway, "Failed to fetch repositories: "+err.Error()+". The token may have expired, been revoked, or lack repository access (classic: repo scope; fine-grained: Contents read). Try reconnecting the integration.")
 			return
 		}
 		for _, rp := range repos {
@@ -797,7 +805,7 @@ func IntegrationReposHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		repos, err := services.NewGiteaClient(base, token).ListRepositories(page, perPage)
 		if err != nil {
-			respondError(w, http.StatusBadGateway, "Failed to fetch repositories: "+err.Error())
+			respondError(w, http.StatusBadGateway, "Failed to fetch repositories: "+err.Error()+". The token may have expired or lost access — try reconnecting the integration.")
 			return
 		}
 		for _, rp := range repos {
