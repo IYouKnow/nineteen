@@ -24,6 +24,11 @@ type Database struct {
 	Password string `json:"-"`
 	// PasswordEncrypted holds the ciphertext at rest; never marshaled to JSON.
 	PasswordEncrypted string `json:"-"`
+	// PasswordOnce is returned only on create (POST) so the UI can show/copy
+	// credentials a single time. Never persisted, never returned on GET/list.
+	PasswordOnce string `json:"password_once,omitempty"`
+	// ConnectionURI is the one-time fully-formed URI returned on create.
+	ConnectionURI string `json:"connection_uri,omitempty"`
 }
 
 // DatabaseConnection links a database to a project.

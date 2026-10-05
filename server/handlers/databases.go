@@ -19,11 +19,18 @@ const databaseSelect = `SELECT id, user_id, name, slug, type, version, status,
 	description, created_date, updated_date FROM databases`
 
 // supportedDatabaseTypes are the engines this build can provision. Only
-// PostgreSQL is implemented in the first pass.
+// PostgreSQL is supported for now; other types are shown in the UI as
+// disabled "Soon" and rejected here.
 var supportedDatabaseTypes = map[string]bool{"postgresql": true}
+
+// supportedDatabaseVersions pins the allowed PostgreSQL tags.
+var supportedDatabaseVersions = map[string]bool{"16.2": true, "15.5": true, "14.10": true}
 
 // defaultDatabaseVersion is used when a create request omits a version.
 const defaultDatabaseVersion = "16.2"
+
+// defaultInstanceSize is the single size provisioned while the picker is removed.
+const defaultInstanceSize = "small"
 
 func DatabasesHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -109,19 +116,21 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 	if req.Version == "" {
 		req.Version = defaultDatabaseVersion
 	}
-	if req.InstanceSize == "" {
-		req.InstanceSize = "small"
+	if !supportedDatabaseVersions[req.Version] {
+		respondError(w, http.StatusBadRequest, "unsupported postgres version: "+req.Version)
+		return
 	}
+	// Single fixed size while the picker is removed from the UI. Ignore
+	// any client-supplied value so legacy callers can't create drift.
+	req.InstanceSize = defaultInstanceSize
 	if req.DatabaseName == "" {
 		req.DatabaseName = "app"
 	}
 	if req.Username == "" {
 		req.Username = "app"
 	}
+	// Container port is fixed for postgres; ignore client-supplied ports.
 	port := 5432
-	if req.Port != nil && *req.Port > 0 {
-		port = *req.Port
-	}
 	host := req.Host
 	if host == "" {
 		host = "db-" + req.Slug + ".nineteen.app"
@@ -164,6 +173,11 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "Failed to load database")
 		return
 	}
+	// One-time credentials: only ever returned on create, never on GET/list.
+	// The frontend shows this in a dismissible banner and never persists it.
+	d.PasswordOnce = password
+	d.ConnectionURI = "postgres://" + req.Username + ":" + password +
+		"@127.0.0.1:" + strconv.Itoa(hostPort) + "/" + req.DatabaseName
 	respondJSON(w, http.StatusCreated, d)
 }
 
@@ -534,7 +548,7 @@ func updateDatabase(w http.ResponseWriter, r *http.Request, userID, id int64) (m
 	args := []interface{}{}
 	for col, val := range body {
 		switch col {
-		case "name", "description", "host", "database_name", "username", "version", "instance_size", "status":
+		case "name", "description", "database_name", "username":
 			sets = append(sets, col+" = ?")
 			args = append(args, valueToString(val))
 		}

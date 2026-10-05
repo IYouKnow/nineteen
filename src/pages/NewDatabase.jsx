@@ -10,8 +10,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import Stepper from "@/components/newproject/Stepper";
 import DbTypeIcon from "@/components/db/DbTypeIcon";
-import { DB_TYPE_LIST, DB_INSTANCE_SIZES, getDbType } from "@/lib/databases";
+import { DB_TYPE_LIST, getDbType } from "@/lib/databases";
 import { dbEntities } from "@/lib/dbEntities";
+
+const SUPPORTED_DB_TYPES = ["postgresql"];
+const DEFAULT_INSTANCE_SIZE = "small";
 
 const STEPS = [
   { id: "type", label: "Type" },
@@ -29,7 +32,6 @@ export default function NewDatabase() {
   const [config, setConfig] = useState({
     name: "",
     version: "",
-    instance_size: "small",
     database_name: "app",
     username: "app",
     description: "",
@@ -55,7 +57,7 @@ export default function NewDatabase() {
         type,
         status: "provisioning",
         version: effectiveVersion,
-        instance_size: config.instance_size,
+        instance_size: DEFAULT_INSTANCE_SIZE,
         host,
         port: t.port,
         database_name: config.database_name || "app",
@@ -64,7 +66,12 @@ export default function NewDatabase() {
         description: config.description,
       });
       qc.invalidateQueries({ queryKey: ["databases"] });
-      navigate(`/databases/${created.id}`);
+      navigate(`/databases/${created.id}`, {
+        state: {
+          password_once: created.password_once,
+          connection_uri: created.connection_uri,
+        },
+      });
     } catch (e) {
       console.error(e);
       setCreating(false);
@@ -72,7 +79,7 @@ export default function NewDatabase() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
+    <div className="mx-auto max-w-7xl px-6 py-8">
       <button
         onClick={() => navigate("/databases")}
         className="mb-5 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
@@ -92,31 +99,48 @@ export default function NewDatabase() {
 
         <div className="px-6 py-6">
           {step === 0 && (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {DB_TYPE_LIST.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setType(t.id)}
-                  className={cn(
-                    "flex items-start gap-3 rounded-lg border p-4 text-left transition-all",
-                    type === t.id
-                      ? "border-primary/50 bg-primary/5"
-                      : "border-border hover:border-foreground/20 hover:bg-muted/30"
-                  )}
-                >
-                  <DbTypeIcon type={t.id} size="lg" />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-semibold text-foreground">{t.label}</p>
-                      {type === t.id && <Check className="h-3.5 w-3.5 text-primary" />}
-                    </div>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{t.description}</p>
-                    <p className="mt-1.5 font-mono text-[11px] text-muted-foreground/70">
-                      v {t.defaultVersion} · port {t.port}
-                    </p>
-                  </div>
-                </button>
-              ))}
+            <div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {DB_TYPE_LIST.map((t) => {
+                  const supported = SUPPORTED_DB_TYPES.includes(t.id);
+                  return (
+                    <button
+                      key={t.id}
+                      disabled={!supported}
+                      onClick={() => supported && setType(t.id)}
+                      className={cn(
+                        "relative flex items-start gap-3 rounded-lg border p-4 text-left transition-all",
+                        !supported && "cursor-not-allowed opacity-50",
+                        type === t.id
+                          ? "border-primary/50 bg-primary/5"
+                          : supported
+                            ? "border-border hover:border-foreground/20 hover:bg-muted/30"
+                            : "border-border"
+                      )}
+                    >
+                      {!supported && (
+                        <span className="absolute right-3 top-3 rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                          Soon
+                        </span>
+                      )}
+                      <DbTypeIcon type={t.id} size="lg" />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-foreground">{t.label}</p>
+                          {type === t.id && <Check className="h-3.5 w-3.5 text-primary" />}
+                        </div>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{t.description}</p>
+                        <p className="mt-1.5 font-mono text-[11px] text-muted-foreground/70">
+                          v {t.defaultVersion} · port {t.port}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Only PostgreSQL is supported for now. Other engines are coming soon.
+              </p>
             </div>
           )}
 
@@ -146,29 +170,6 @@ export default function NewDatabase() {
                       </option>
                     ))}
                   </select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Instance size</Label>
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    {DB_INSTANCE_SIZES.map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={() => setConfig({ ...config, instance_size: s.id })}
-                        className={cn(
-                          "rounded-md border px-3 py-2 text-left transition-colors",
-                          config.instance_size === s.id
-                            ? "border-primary/50 bg-primary/5"
-                            : "border-border hover:border-foreground/20"
-                        )}
-                      >
-                        <p className="text-sm font-medium text-foreground">{s.label}</p>
-                        <p className="font-mono text-[11px] text-muted-foreground">
-                          {s.cpu} · {s.ram}
-                        </p>
-                      </button>
-                    ))}
-                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">

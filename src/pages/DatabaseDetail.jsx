@@ -2,7 +2,7 @@ import * as api from "@/lib/api";
 import { dbEntities } from "@/lib/dbEntities";
 
 import { useState } from "react";
-import { Link, useParams, useNavigate } from "react-router-dom";
+import { Link, useParams, useNavigate, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -86,10 +86,14 @@ function CopyField({ label, value }) {
 export default function DatabaseDetail() {
   const { databaseId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const qc = useQueryClient();
   const [tab, setTab] = useState("overview");
   const [busy, setBusy] = useState(null);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [showCreds, setShowCreds] = useState(true);
+  const oncePassword = location.state?.password_once;
+  const onceUri = location.state?.connection_uri;
 
   const { data: db, isLoading } = useQuery({
     queryKey: ["database", databaseId],
@@ -164,6 +168,28 @@ export default function DatabaseDetail() {
       >
         <ArrowLeft className="h-4 w-4" /> Back to databases
       </Link>
+
+      {oncePassword && showCreds && (
+        <div className="mb-5 rounded-lg border border-warning/30 bg-warning/5 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-foreground">
+                Save these credentials — shown only once
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                The password won't be shown again. Copy it now.
+              </p>
+              <div className="mt-3 space-y-2">
+                <CopyField label="Password" value={oncePassword} />
+                {onceUri && <CopyField label="URI" value={onceUri} />}
+              </div>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => setShowCreds(false)}>
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
