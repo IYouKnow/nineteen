@@ -17,9 +17,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { IntegrationCard } from "@/components/ui/integration-card";
 import { ConnectIntegrationDialog } from "@/components/ui/connect-integration-dialog";
 import { IntegrationSettingsDialog } from "@/components/ui/integration-settings-dialog";
-import { UpdateSection } from "@/components/update/UpdateSection";
 import {
-  Globe, Palette, Bell, Key, Link2, Server,
+  Globe, Palette, Bell, Key, Link2,
   Plus, Trash2, CheckCircle2, Sun, Moon, Monitor, Webhook, ShieldCheck,
 } from "lucide-react";
 
@@ -40,8 +39,6 @@ const DEFAULT_SETTINGS = {
   deployment_notifications: "true",
   build_failure_notifications: "true",
   marketing_emails: "false",
-  default_instance_type: "starter",
-  auto_deploy: "true",
   public_base_url: "",
 };
 
@@ -59,13 +56,6 @@ const LANGUAGES = [
   { value: "pt", label: "Português" },
   { value: "ja", label: "日本語" },
   { value: "zh", label: "中文" },
-];
-
-const INSTANCE_TYPES = [
-  { value: "starter", label: "Starter", desc: "512 MB RAM, 0.5 vCPU" },
-  { value: "basic", label: "Basic", desc: "1 GB RAM, 1 vCPU" },
-  { value: "standard", label: "Standard", desc: "2 GB RAM, 2 vCPU" },
-  { value: "performance", label: "Performance", desc: "4 GB RAM, 4 vCPU" },
 ];
 
 const INTEGRATION_PROVIDERS = [
@@ -726,46 +716,7 @@ function IntegrationsTab({ settings = { public_base_url: "" }, saving, onSave })
   );
 }
 
-function DeploymentDefaultsTab({ settings, onSave }) {
-  const [instanceType, setInstanceType] = useState(settings.default_instance_type || "starter");
-  const [autoDeploy, setAutoDeploy] = useState(settings.auto_deploy === "true");
-
-  return (
-    <div className="space-y-6">
-      <SectionHeader icon={Server} title="Deployment Defaults" description="Default settings for new projects" />
-      <Card>
-        <CardContent className="pt-6 space-y-5">
-          <div className="space-y-2">
-            <Label>Default Instance Type</Label>
-            <Select value={instanceType} onValueChange={(v) => { setInstanceType(v); onSave({ default_instance_type: v }); }}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {INSTANCE_TYPES.map((t) => (
-                  <SelectItem key={t.value} value={t.value}>
-                    <div>
-                      <p className="text-sm">{t.label}</p>
-                      <p className="text-[10px] text-muted-foreground">{t.desc}</p>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <Separator />
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-foreground">Auto-Deploy</p>
-              <p className="text-xs text-muted-foreground">Automatically deploy when changes are pushed to the default branch</p>
-            </div>
-            <Switch checked={autoDeploy} onCheckedChange={(v) => { setAutoDeploy(v); onSave({ auto_deploy: String(v) }); }} />
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-const SETTINGS_TABS = ["general", "appearance", "integrations", "deployment", "updates"];
+const SETTINGS_TABS = ["general", "appearance", "integrations"];
 
 function getActiveTab(pathname) {
   const last = pathname.split("/").filter(Boolean).pop();
@@ -808,8 +759,6 @@ export default function Settings() {
             <TabsTrigger value="notifications" disabled>Notifications</TabsTrigger>
             <TabsTrigger value="api-keys" disabled>API Keys</TabsTrigger>
             <TabsTrigger value="integrations">Integrations</TabsTrigger>
-            <TabsTrigger value="deployment">Deployment</TabsTrigger>
-            <TabsTrigger value="updates">Updates</TabsTrigger>
           </TabsList>
         </Tabs>
 
@@ -819,8 +768,6 @@ export default function Settings() {
             <Route path="general" element={<GeneralTab settings={settings} saving={saving} onSave={updateSettings} />} />
             <Route path="appearance" element={<AppearanceTab settings={settings} onSave={updateSettings} />} />
             <Route path="integrations" element={<IntegrationsTab settings={settings} saving={saving} onSave={updateSettings} />} />
-            <Route path="deployment" element={<DeploymentDefaultsTab settings={settings} onSave={updateSettings} />} />
-            <Route path="updates" element={<UpdateSection />} />
           </Routes>
         </div>
       </div>

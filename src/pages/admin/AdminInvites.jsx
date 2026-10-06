@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { admin } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
@@ -18,8 +18,42 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
-import { Plus, Ticket, Trash2, Copy, CheckCircle2, Link2 } from "lucide-react";
+import { Plus, Ticket, Trash2, Copy, Check, CheckCircle2, Link2 } from "lucide-react";
 import { PERM } from "@/lib/permissions";
+
+function CopyButton({ onCopy, icon: Icon = Copy, label, title, iconOnly = false, className }) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef(null);
+
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  function handleCopy() {
+    onCopy();
+    setCopied(true);
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setCopied(false), 2000);
+  }
+
+  const IconCmp = copied ? Check : Icon;
+
+  if (iconOnly) {
+    return (
+      <button
+        onClick={handleCopy}
+        className={className}
+        title={copied ? "Copied" : title}
+      >
+        <IconCmp className="h-3 w-3" />
+      </button>
+    );
+  }
+
+  return (
+    <Button variant="outline" size="sm" className={className} onClick={handleCopy}>
+      <IconCmp className="h-3.5 w-3.5" /> {copied ? "Copied" : label}
+    </Button>
+  );
+}
 
 function inviteState(inv) {
   if (inv.revoked) return { label: "revoked", variant: "destructive" };
@@ -108,12 +142,8 @@ export default function AdminInvites() {
               </p>
               <div className="mt-2 flex items-center gap-2">
                 <code className="rounded bg-muted px-2 py-1 font-mono text-xs">{created}</code>
-                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => copyCode(created)}>
-                  <Copy className="h-3.5 w-3.5" /> Copy
-                </Button>
-                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => copyInviteLink(created)}>
-                  <Link2 className="h-3.5 w-3.5" /> Copy link
-                </Button>
+                <CopyButton className="gap-1.5" onCopy={() => copyCode(created)} label="Copy" />
+                <CopyButton className="gap-1.5" onCopy={() => copyInviteLink(created)} icon={Link2} label="Copy link" />
               </div>
             </div>
             <Button variant="ghost" size="sm" onClick={() => setCreated(null)}>Dismiss</Button>
@@ -167,20 +197,19 @@ export default function AdminInvites() {
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{inv.code}</code>
-                          <button
-                            onClick={() => copyCode(inv.code)}
+                          <CopyButton
+                            iconOnly
+                            onCopy={() => copyCode(inv.code)}
                             className="text-muted-foreground hover:text-foreground cursor-pointer"
                             title="Copy code"
-                          >
-                            <Copy className="h-3 w-3" />
-                          </button>
-                          <button
-                            onClick={() => copyInviteLink(inv.code)}
+                          />
+                          <CopyButton
+                            iconOnly
+                            onCopy={() => copyInviteLink(inv.code)}
+                            icon={Link2}
                             className="text-muted-foreground hover:text-foreground cursor-pointer"
                             title="Copy invite link"
-                          >
-                            <Link2 className="h-3 w-3" />
-                          </button>
+                          />
                         </div>
                         {inv.label && <div className="mt-0.5 text-xs text-muted-foreground">{inv.label}</div>}
                       </TableCell>

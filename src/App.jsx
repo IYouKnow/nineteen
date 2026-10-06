@@ -30,7 +30,8 @@ import AdminUsers from "@/pages/admin/AdminUsers";
 import AdminInvites from "@/pages/admin/AdminInvites";
 import AdminRoles from "@/pages/admin/AdminRoles";
 import AdminResources from "@/pages/admin/AdminResources";
-import AdminSystem from "@/pages/admin/AdminSystem";
+import AdminOverview from "@/pages/admin/AdminOverview";
+import AdminUpdates from "@/pages/admin/AdminUpdates";
 import AdminAudit from "@/pages/admin/AdminAudit";
 import { Navigate } from "react-router-dom";
 import { PERM } from "@/lib/permissions";
@@ -49,7 +50,7 @@ function AdminRoute({ children }) {
   return children;
 }
 
-function WriteRoute({ permission, children }) {
+function PermissionRoute({ permission, children }) {
   const { hasPermission } = useAuth();
   if (!hasPermission(permission)) return <Navigate to="/" replace />;
   return children;
@@ -67,26 +68,27 @@ function AppRoutes() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/store" element={<AppStore />} />
-        <Route path="/projects/new" element={<WriteRoute permission={PERM.PROJECTS_CREATE}><NewProject /></WriteRoute>} />
+        <Route path="/projects/new" element={<PermissionRoute permission={PERM.PROJECTS_CREATE}><NewProject /></PermissionRoute>} />
         <Route path="/projects/:projectId" element={<ProjectDetail />} />
         <Route path="/projects/:projectId/deployments/:deploymentId" element={<DeploymentDetail />} />
         <Route path="/databases" element={<Databases />} />
-        <Route path="/databases/new" element={<WriteRoute permission={PERM.DATABASES_CREATE}><NewDatabase /></WriteRoute>} />
+        <Route path="/databases/new" element={<PermissionRoute permission={PERM.DATABASES_CREATE}><NewDatabase /></PermissionRoute>} />
         <Route path="/databases/:databaseId" element={<DatabaseDetail />} />
-        <Route path="/storage" element={<Storage />} />
-        <Route path="/storage/buckets/new" element={<WriteRoute permission={PERM.STORAGE_CREATE}><NewBucket /></WriteRoute>} />
-        <Route path="/storage/volumes/new" element={<WriteRoute permission={PERM.STORAGE_CREATE}><NewVolume /></WriteRoute>} />
-        <Route path="/storage/buckets/:bucketId" element={<BucketDetail />} />
-        <Route path="/storage/volumes/:volumeId" element={<VolumeDetail />} />
+        <Route path="/storage" element={<PermissionRoute permission={PERM.STORAGE_READ}><Storage /></PermissionRoute>} />
+        <Route path="/storage/buckets/new" element={<PermissionRoute permission={PERM.STORAGE_CREATE}><NewBucket /></PermissionRoute>} />
+        <Route path="/storage/volumes/new" element={<PermissionRoute permission={PERM.STORAGE_CREATE}><NewVolume /></PermissionRoute>} />
+        <Route path="/storage/buckets/:bucketId" element={<PermissionRoute permission={PERM.STORAGE_READ}><BucketDetail /></PermissionRoute>} />
+        <Route path="/storage/volumes/:volumeId" element={<PermissionRoute permission={PERM.STORAGE_READ}><VolumeDetail /></PermissionRoute>} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/settings/*" element={<Settings />} />
         <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
-          <Route index element={<Navigate to="/admin/users" replace />} />
+          <Route index element={<Navigate to="/admin/overview" replace />} />
+          <Route path="overview" element={<AdminOverview />} />
           <Route path="users" element={<AdminUsers />} />
           <Route path="invites" element={<AdminInvites />} />
           <Route path="roles" element={<AdminRoles />} />
           <Route path="resources" element={<AdminResources />} />
-          <Route path="system" element={<AdminSystem />} />
+          <Route path="updates" element={<AdminUpdates />} />
           <Route path="audit" element={<AdminAudit />} />
         </Route>
       </Route>

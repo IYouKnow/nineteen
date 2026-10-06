@@ -317,7 +317,7 @@ export default function Dashboard() {
                       : "all systems go"
                 }
                 accent={errored > 0 ? "text-destructive" : "text-success"}
-                to={canSeeSystem ? "/admin/system" : undefined}
+                to={canSeeSystem ? "/admin/overview" : undefined}
               />
             </>
           )}

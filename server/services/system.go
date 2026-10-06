@@ -7,36 +7,49 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 var processStart = time.Now()
 
+// Temperature is a single host thermal sensor reading, in degrees Celsius.
+type Temperature struct {
+	Label    string  `json:"label"`
+	Celsius  float64 `json:"celsius"`
+	Critical float64 `json:"critical,omitempty"`
+}
+
 // SystemInfo is a best-effort snapshot of the instance and its host. Docker
 // values are empty/false when the daemon is unreachable; host memory and load
 // are only populated on Linux (where /proc exists).
 type SystemInfo struct {
-	Version           string  `json:"version"`
-	GoVersion         string  `json:"go_version"`
-	OS                string  `json:"os"`
-	Arch              string  `json:"arch"`
-	Hostname          string  `json:"hostname"`
-	UptimeSeconds     int64   `json:"uptime_seconds"`
-	DockerAvailable   bool    `json:"docker_available"`
-	DockerVersion     string  `json:"docker_version"`
-	DockerOS          string  `json:"docker_os"`
-	CPUs              int     `json:"cpus"`
-	MemTotal          uint64  `json:"mem_total"`
-	MemUsed           uint64  `json:"mem_used"`
-	LoadAvg           float64 `json:"load_avg"`
-	ContainersTotal   int     `json:"containers_total"`
-	ContainersRunning int     `json:"containers_running"`
-	ContainersStopped int     `json:"containers_stopped"`
-	Images            int     `json:"images"`
-	DiskImages        string  `json:"disk_images"`
-	DiskContainers    string  `json:"disk_containers"`
-	DiskVolumes       string  `json:"disk_volumes"`
-	DiskBuildCache    string  `json:"disk_build_cache"`
+	Version           string        `json:"version"`
+	GoVersion         string        `json:"go_version"`
+	OS                string        `json:"os"`
+	Arch              string        `json:"arch"`
+	Hostname          string        `json:"hostname"`
+	UptimeSeconds     int64         `json:"uptime_seconds"`
+	DockerAvailable   bool          `json:"docker_available"`
+	DockerVersion     string        `json:"docker_version"`
+	DockerOS          string        `json:"docker_os"`
+	CPUs              int           `json:"cpus"`
+	CPUPercent        *float64      `json:"cpu_percent"`
+	MemTotal          uint64        `json:"mem_total"`
+	MemUsed           uint64        `json:"mem_used"`
+	LoadAvg           float64       `json:"load_avg"`
+	ContainersTotal   int           `json:"containers_total"`
+	ContainersRunning int           `json:"containers_running"`
+	ContainersStopped int           `json:"containers_stopped"`
+	Images            int           `json:"images"`
+	DiskImages        string        `json:"disk_images"`
+	DiskContainers    string        `json:"disk_containers"`
+	DiskVolumes       string        `json:"disk_volumes"`
+	DiskBuildCache    string        `json:"disk_build_cache"`
+	DiskPath          string        `json:"disk_path"`
+	DiskTotal         uint64        `json:"disk_total"`
+	DiskUsed          uint64        `json:"disk_used"`
+	Temperatures      []Temperature `json:"temperatures"`
 }
 
 // GetSystemInfo gathers runtime, Docker and host metrics. version is the
@@ -48,6 +61,7 @@ func GetSystemInfo(version string) SystemInfo {
 		OS:            runtime.GOOS,
 		Arch:          runtime.GOARCH,
 		UptimeSeconds: int64(time.Since(processStart).Seconds()),
+		Temperatures:  []Temperature{},
 	}
 	if h, err := os.Hostname(); err == nil {
 		info.Hostname = h
@@ -55,6 +69,10 @@ func GetSystemInfo(version string) SystemInfo {
 	readDockerInfo(&info)
 	readDockerDisk(&info)
 	readProcMetrics(&info)
+	if pct, ok := readCPUPercent(); ok {
+		info.CPUPercent = &pct
+	}
+	readPlatformMetrics(&info)
 	return info
 }
 
@@ -151,4 +169,61 @@ func readProcMetrics(info *SystemInfo) {
 			}
 		}
 	}
+}
+
+var (
+	cpuMu   sync.Mutex
+	lastCPU cpuSample
+)
+
+type cpuSample struct {
+	total uint64
+	idle  uint64
+	when  time.Time
+}
+
+// readCPUPercent derives CPU utilisation from the delta between two reads of
+// /proc/stat. The first call after start — and any call more than a minute
+// after the previous one — only establishes a baseline, so ok is false and the
+// caller reports "unknown" instead of an average over a meaningless window.
+func readCPUPercent() (float64, bool) {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return 0, false
+	}
+	lines := strings.SplitN(string(data), "\n", 2)
+	fields := strings.Fields(lines[0])
+	if len(fields) < 5 || fields[0] != "cpu" {
+		return 0, false
+	}
+	var total, idle uint64
+	for i, f := range fields[1:] {
+		v, err := strconv.ParseUint(f, 10, 64)
+		if err != nil {
+			continue
+		}
+		total += v
+		if i == 3 || i == 4 { // idle + iowait
+			idle += v
+		}
+	}
+
+	cpuMu.Lock()
+	prev := lastCPU
+	lastCPU = cpuSample{total: total, idle: idle, when: time.Now()}
+	cpuMu.Unlock()
+
+	if prev.when.IsZero() || total <= prev.total || time.Since(prev.when) > time.Minute {
+		return 0, false
+	}
+	dt := total - prev.total
+	di := idle - prev.idle
+	pct := (1 - float64(di)/float64(dt)) * 100
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	return pct, true
 }

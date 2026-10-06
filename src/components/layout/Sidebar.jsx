@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { Boxes, LayoutDashboard, FolderGit2, Database, HardDrive, Plus, X, Server, Settings, ShieldCheck, Store } from "lucide-react";
+import { Boxes, LayoutDashboard, FolderGit2, Database, HardDrive, Plus, X, Server, Settings, ShieldCheck, Store, Users, Ticket, ScrollText, Download, Gauge } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -10,7 +10,17 @@ const NAV = [
   { to: "/projects", label: "Projects", icon: FolderGit2, end: false },
   { to: "/store", label: "App Store", icon: Store, end: false },
   { to: "/databases", label: "Databases", icon: Database, end: false },
-  { to: "/storage", label: "Storage", icon: HardDrive, end: false },
+  { to: "/storage", label: "Storage", icon: HardDrive, end: false, permission: PERM.STORAGE_READ },
+];
+
+const ADMIN_NAV = [
+  { to: "/admin/overview", label: "Overview", icon: Gauge, permission: PERM.ADMIN_SYSTEM_READ },
+  { to: "/admin/users", label: "Users", icon: Users, permission: PERM.ADMIN_USERS_READ },
+  { to: "/admin/invites", label: "Invites", icon: Ticket, permission: PERM.ADMIN_INVITES_READ },
+  { to: "/admin/roles", label: "Roles", icon: ShieldCheck, permission: PERM.ADMIN_ROLES_READ },
+  { to: "/admin/resources", label: "Resources", icon: Boxes, permission: PERM.ADMIN_RESOURCES_READ },
+  { to: "/admin/updates", label: "Updates", icon: Download, permission: PERM.UPDATES_READ },
+  { to: "/admin/audit", label: "Audit Log", icon: ScrollText, permission: PERM.ADMIN_AUDIT_READ },
 ];
 
 function NavItem({ to, label, icon: Icon, end }) {
@@ -37,6 +47,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
   const navigate = useNavigate();
   const { canAccessAdmin, hasPermission } = useAuth();
   const canCreateProject = hasPermission(PERM.PROJECTS_CREATE);
+  const adminItems = canAccessAdmin ? ADMIN_NAV.filter((item) => hasPermission(item.permission)) : [];
   return (
     <>
       {mobileOpen && (
@@ -70,14 +81,13 @@ export default function Sidebar({ mobileOpen, onClose }) {
           <p className="px-2.5 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/50">
             Workspace
           </p>
-          {NAV.map((item) => (
+          {NAV.filter((item) => !item.permission || hasPermission(item.permission)).map((item) => (
             <NavItem key={item.to} {...item} />
           ))}
           <p className="px-2.5 pb-1 pt-5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/50">
             System
           </p>
           <NavItem to="/settings" label="Settings" icon={Settings} end={false} />
-          {canAccessAdmin && <NavItem to="/admin" label="Admin" icon={ShieldCheck} end={false} />}
           <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm text-sidebar-foreground">
             <Server className="h-4 w-4 shrink-0" />
             <span>Activity</span>
@@ -85,6 +95,16 @@ export default function Sidebar({ mobileOpen, onClose }) {
               soon
             </span>
           </div>
+          {adminItems.length > 0 && (
+            <>
+              <p className="px-2.5 pb-1 pt-5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/50">
+                Admin
+              </p>
+              {adminItems.map((item) => (
+                <NavItem key={item.to} {...item} />
+              ))}
+            </>
+          )}
         </nav>
 
         {canCreateProject && (
@@ -98,17 +118,6 @@ export default function Sidebar({ mobileOpen, onClose }) {
             </Button>
           </div>
         )}
-
-        <div className="space-y-3 border-t border-sidebar-border p-3">
-          <div className="flex items-center gap-2.5 rounded-md border border-sidebar-border bg-muted/20 px-2.5 py-2 text-xs">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-build-pulse rounded-full bg-success opacity-60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-            </span>
-            <span className="text-muted-foreground">Cluster</span>
-            <span className="ml-auto font-mono text-foreground/80">healthy</span>
-          </div>
-        </div>
       </aside>
     </>
   );
