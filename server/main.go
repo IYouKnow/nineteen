@@ -105,7 +105,11 @@ func adminRoutePermission(method string, seg []string) (string, bool) {
 	case "system":
 		return "admin.system.read", true
 	case "environment":
-		return "admin.system.read", true
+		if read {
+			return "admin.system.read", true
+		}
+		// Applying a change recreates Nineteen's own container.
+		return "updates.run", true
 	case "resources":
 		if read {
 			return "admin.resources.read", true

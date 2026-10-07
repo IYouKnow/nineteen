@@ -45,11 +45,24 @@ type ResolveResult struct {
 	DurationMS int64    `json:"duration_ms"`
 }
 
+// EditableBlock describes the values the UI is allowed to change, together with
+// the values they currently hold so the editor can prefill them without the
+// client re-deriving defaults.
+type EditableBlock struct {
+	EnvKeys []string          `json:"env_keys"`
+	Values  map[string]string `json:"values"`
+	DNS     []string          `json:"dns"`
+	// Active reports whether a saved override is in effect (a value was applied
+	// from the UI rather than coming straight from the compose environment).
+	Active bool `json:"active"`
+}
+
 // EnvironmentInfo is the read-only instance configuration report.
 type EnvironmentInfo struct {
 	Variables []EnvVar      `json:"variables"`
 	DNS       DNSState      `json:"dns"`
 	Resolve   ResolveResult `json:"resolve"`
+	Editable  EditableBlock `json:"editable"`
 }
 
 // envSpec is one configuration value to surface. secret marks a value that must
@@ -85,10 +98,31 @@ const secretMask = "••••••••"
 // ever leaking secret values. host is the name probed for the live DNS test;
 // empty defaults to github.com, the host the self-update clone depends on.
 func GetEnvironmentInfo(host string) EnvironmentInfo {
+	env := environmentMap()
+	dns := readDNSState()
+	cfg, active := LoadInstanceConfig(DataDirFromEnv())
+
+	values := make(map[string]string, len(EditableEnvKeys))
+	for _, k := range EditableEnvKeys {
+		values[k] = env[k]
+	}
+	// Prefill the resolver editor with the applied override when one exists,
+	// otherwise with the resolvers actually in effect.
+	editableDNS := dns.Upstreams
+	if active && len(cfg.DNS) > 0 {
+		editableDNS = cfg.DNS
+	}
+
 	return EnvironmentInfo{
-		Variables: buildEnvVars(environmentMap()),
-		DNS:       readDNSState(),
+		Variables: buildEnvVars(env),
+		DNS:       dns,
 		Resolve:   resolveHost(host),
+		Editable: EditableBlock{
+			EnvKeys: EditableEnvKeys,
+			Values:  values,
+			DNS:     editableDNS,
+			Active:  active,
+		},
 	}
 }
 

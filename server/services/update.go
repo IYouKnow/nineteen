@@ -58,14 +58,7 @@ type UpdateService struct {
 // NewUpdateService builds the service from the runtime environment.
 func NewUpdateService(version string) *UpdateService {
 	repo := os.Getenv("NINETEEN_REPO")
-	dataDir := os.Getenv("NINETEEN_DATA_DIR")
-	if dataDir == "" {
-		if dbPath := os.Getenv("DB_PATH"); dbPath != "" {
-			dataDir = filepath.Dir(dbPath)
-		} else {
-			dataDir = "./data"
-		}
-	}
+	dataDir := DataDirFromEnv()
 	container := os.Getenv("NINETEEN_CONTAINER")
 	if container == "" {
 		container = "nineteen"
@@ -305,7 +298,7 @@ func (u *UpdateService) runUpdate(targetVersion string) {
 	}
 	u.Log("Image built successfully")
 
-	runArgs, err := u.buildRunArgs(insp)
+	runArgs, err := u.buildRunArgs(insp, nil)
 	if err != nil {
 		u.fail("Failed to build container run arguments: " + err.Error())
 		return
@@ -351,7 +344,7 @@ func (u *UpdateService) rollbackTo(prevImage string) {
 		u.fail("Could not inspect current container: " + err.Error())
 		return
 	}
-	runArgs, err := u.buildRunArgs(insp)
+	runArgs, err := u.buildRunArgs(insp, nil)
 	if err != nil {
 		u.fail("Failed to build container run arguments: " + err.Error())
 		return
@@ -365,6 +358,76 @@ func (u *UpdateService) rollbackTo(prevImage string) {
 		return
 	}
 	u.Log("Rollback helper launched")
+}
+
+// ApplyConfig persists a user-applied configuration and recreates the container
+// so it takes effect. Validation runs first so an invalid value can never reach
+// a recreated container. The swap happens in a background goroutine using the
+// same detached helper as self-update, so it survives this container being
+// replaced; the new container is health-checked and the previous image is
+// restored if it fails to come up.
+func (u *UpdateService) ApplyConfig(cfg InstanceConfig) error {
+	cfg = cfg.normalized()
+	if err := ValidateInstanceConfig(cfg); err != nil {
+		return err
+	}
+	u.mu.Lock()
+	if u.busy {
+		u.mu.Unlock()
+		return fmt.Errorf("an update or reconfigure is already in progress")
+	}
+	u.busy = true
+	u.mu.Unlock()
+
+	go u.runReconfigure(cfg)
+	return nil
+}
+
+func (u *UpdateService) runReconfigure(cfg InstanceConfig) {
+	defer func() {
+		u.mu.Lock()
+		u.busy = false
+		u.mu.Unlock()
+	}()
+
+	if err := SaveInstanceConfig(u.DataDir, cfg); err != nil {
+		u.fail("Failed to save configuration: " + err.Error())
+		return
+	}
+	u.Log("Instance configuration saved — recreating container to apply it")
+
+	d := NewDeployer()
+	if err := d.DockerAvailable(); err != nil {
+		u.fail("Docker daemon unavailable: " + err.Error())
+		return
+	}
+	insp, err := u.inspectContainer(u.ContainerName)
+	if err != nil {
+		u.fail("Could not inspect current container: " + err.Error())
+		return
+	}
+	runArgs, err := u.buildRunArgs(insp, &cfg)
+	if err != nil {
+		u.fail("Failed to build container run arguments: " + err.Error())
+		return
+	}
+
+	current := runningImageRef(insp)
+	u.SetState(UpdateState{
+		State:          "swapping",
+		CurrentVersion: u.Version,
+		Repo:           u.Repo,
+		Message:        "Rebuilding container…",
+	})
+	u.Log("Launching helper to reconfigure the container")
+	// The current image is both the helper (it carries the docker CLI and the
+	// server binary) and the reconfigure target; it is also the fallback if the
+	// new container fails to become healthy.
+	if err := u.launchHelper("reconfigure", runArgs, current, current, current, ""); err != nil {
+		u.fail("Failed to launch reconfigure helper: " + err.Error())
+		return
+	}
+	u.Log("Reconfigure helper launched — this instance will restart shortly")
 }
 
 // ---- container introspection ----
@@ -457,7 +520,12 @@ func (u *UpdateService) tagPreviousImage(insp *inspectResult) error {
 // image) from the running container so the replacement matches its current
 // ports, mounts, env, restart policy, network and labels. No image is appended;
 // the helper adds the target image.
-func (u *UpdateService) buildRunArgs(insp *inspectResult) ([]string, error) {
+//
+// ov, when non-nil, is a user-applied configuration whose managed env values and
+// resolver list replace the inspected ones. Self-update and rollback pass nil:
+// the running container already carries any applied overrides, so replaying its
+// inspected config preserves them.
+func (u *UpdateService) buildRunArgs(insp *inspectResult, ov *InstanceConfig) ([]string, error) {
 	var args []string
 
 	if rp := insp.HostConfig.RestartPolicy.Name; rp != "" && rp != "no" {
@@ -503,7 +571,14 @@ func (u *UpdateService) buildRunArgs(insp *inspectResult) ([]string, error) {
 			args = append(args, "--add-host", h)
 		}
 	}
-	for _, d := range insp.HostConfig.Dns {
+	dnsList := insp.HostConfig.Dns
+	if ov != nil && len(ov.DNS) > 0 {
+		// An explicit resolver list replaces the container's current one rather
+		// than adding to it (--dns is additive, so appending would keep the old
+		// servers too).
+		dnsList = ov.DNS
+	}
+	for _, d := range dnsList {
 		if strings.TrimSpace(d) != "" {
 			args = append(args, "--dns", d)
 		}
@@ -520,7 +595,19 @@ func (u *UpdateService) buildRunArgs(insp *inspectResult) ([]string, error) {
 	}
 
 	for _, e := range insp.Config.Env {
+		key := e
+		if i := strings.IndexByte(e, '='); i >= 0 {
+			key = e[:i]
+		}
+		if _, ok := overrideEnvValue(ov, key); ok {
+			continue // superseded by an explicit override appended below
+		}
 		args = append(args, "-e", e)
+	}
+	for _, k := range EditableEnvKeys {
+		if v, ok := overrideEnvValue(ov, k); ok {
+			args = append(args, "-e", k+"="+v)
+		}
 	}
 
 	for k, v := range insp.Config.Labels {
@@ -859,9 +946,12 @@ func RunUpdateHelper() {
 
 	if waitHealthy(container, timeout, log) {
 		log("Container is healthy")
-		if mode == "rollback" {
+		switch mode {
+		case "rollback":
 			writeHelperState(stateFile, "rolled_back", "Rollback complete — previous version is healthy")
-		} else {
+		case "reconfigure":
+			writeHelperState(stateFile, "success", "Configuration applied — container is healthy")
+		default:
 			writeHelperState(stateFile, "success", "Update complete — new version is healthy")
 		}
 		return

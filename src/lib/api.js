@@ -451,6 +451,9 @@ export const admin = {
   // live resolution probe against it; omitted, the server probes github.com.
   environment: (host) =>
     doFetch(`/api/admin/environment${host ? `?host=${encodeURIComponent(host)}` : ""}`),
+  // Persist + apply configuration. Recreates Nineteen's own container server-side.
+  saveEnvironment: (cfg) =>
+    doFetch("/api/admin/environment", { method: "PUT", body: JSON.stringify(cfg) }),
   resources: () => doFetch("/api/admin/resources"),
   projectAction: (id, action) =>
     doFetch(`/api/admin/projects/${id}`, { method: "POST", body: JSON.stringify({ action }) }),

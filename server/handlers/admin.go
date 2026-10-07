@@ -466,15 +466,41 @@ func AdminSystemHandler(w http.ResponseWriter, r *http.Request) {
 // host") is diagnosable from the UI instead of an SSH session. The optional
 // ?host= query picks the name for the live DNS probe.
 func AdminEnvironmentHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-	if _, ok := requirePermission(w, r, "admin.system.read"); !ok {
-		return
-	}
+	switch r.Method {
+	case http.MethodGet:
+		if _, ok := requirePermission(w, r, "admin.system.read"); !ok {
+			return
+		}
+		respondJSON(w, http.StatusOK, services.GetEnvironmentInfo(r.URL.Query().Get("host")))
 
-	respondJSON(w, http.StatusOK, services.GetEnvironmentInfo(r.URL.Query().Get("host")))
+	case http.MethodPut:
+		// Changing the instance's own configuration recreates its container, so
+		// it carries the same weight as running an update.
+		if _, ok := requirePermission(w, r, "updates.run"); !ok {
+			return
+		}
+		if UpdateSvc == nil {
+			respondError(w, http.StatusInternalServerError, "Update service not initialized")
+			return
+		}
+		var cfg services.InstanceConfig
+		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+			respondError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+		if err := services.ValidateInstanceConfig(cfg); err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := UpdateSvc.ApplyConfig(cfg); err != nil {
+			respondError(w, http.StatusConflict, err.Error())
+			return
+		}
+		respondJSON(w, http.StatusAccepted, UpdateSvc.GetState())
+
+	default:
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
 }
 
 // ---- cross-user resources ----
