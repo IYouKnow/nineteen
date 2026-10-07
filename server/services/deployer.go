@@ -283,8 +283,8 @@ func (d *Deployer) CloneRepo(ctx context.Context, cloneURL, ref string, log func
 		args = append(args, "--branch", ref)
 	}
 	args = append(args, cloneURL, dir)
-	if err := runGit(ctx, args, log); err != nil {
-		return dir, err
+	if out, err := runGitCaptured(ctx, args, log); err != nil {
+		return dir, cloneError(cloneURL, out, err)
 	}
 
 	if isSHA {
@@ -326,6 +326,36 @@ func runGit(ctx context.Context, args []string, log func(string)) error {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	return streamCommand(cmd, log)
+}
+
+// runGitCaptured is runGit that also returns the command's output. A failed
+// `git clone` exits 128 with no useful text in the returned error, so the text
+// has to be captured separately to be diagnosed.
+func runGitCaptured(ctx context.Context, args []string, log func(string)) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	var buf strings.Builder
+	err := streamCommand(cmd, func(line string) {
+		buf.WriteString(line)
+		buf.WriteByte('\n')
+		if log != nil {
+			log(line)
+		}
+	})
+	return buf.String(), err
+}
+
+// cloneError turns a git clone failure into an actionable message: a
+// name-resolution failure gets the container-DNS hint, and any other failure
+// carries git's own last line instead of a bare "exit status 128".
+func cloneError(cloneURL, output string, err error) error {
+	if IsDNSFailure(output) || IsDNSFailure(err.Error()) {
+		return fmt.Errorf("%s", resolveHint(cloneHost(cloneURL)))
+	}
+	if line := lastNonEmptyLine(output); line != "" {
+		return fmt.Errorf("%s: %s", err.Error(), line)
+	}
+	return err
 }
 
 // GitHead returns the commit SHA the clone is at, or "" if it can't be read.
@@ -839,7 +869,7 @@ func parseBytes(s string) int64 {
 }
 
 var sizeUnits = map[string]int64{
-	"B": 1,
+	"B":  1,
 	"KB": 1000, "MB": 1000 * 1000, "GB": 1000 * 1000 * 1000, "TB": 1000 * 1000 * 1000 * 1000,
 	"KIB": 1 << 10, "MIB": 1 << 20, "GIB": 1 << 30, "TIB": 1 << 40,
 }

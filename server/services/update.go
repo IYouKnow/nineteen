@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -798,6 +799,15 @@ func parseSemver(s string) ([]int, bool) {
 // ---- clone / build ----
 
 func (u *UpdateService) cloneRepo(tag string) (string, error) {
+	// Fail fast with a clear message when the source host cannot be resolved,
+	// rather than letting git exit with an opaque error (the failure mode that
+	// breaks self-update clones with "Could not resolve host").
+	if u.Repo != "" {
+		if err := PreflightCloneHost(context.Background(), fmt.Sprintf("https://github.com/%s.git", u.Repo)); err != nil {
+			return "", err
+		}
+	}
+
 	candidates := []string{}
 	if tag != "" {
 		candidates = append(candidates, tag)
@@ -834,7 +844,11 @@ func (u *UpdateService) cloneRef(ref string) (string, error) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		os.RemoveAll(dir)
-		return "", fmt.Errorf("%s: %s", err.Error(), strings.TrimSpace(string(out)))
+		text := strings.TrimSpace(string(out))
+		if IsDNSFailure(text) || IsDNSFailure(err.Error()) {
+			return "", fmt.Errorf("%s", resolveHint(cloneHost(url)))
+		}
+		return "", fmt.Errorf("%s: %s", err.Error(), text)
 	}
 	return dir, nil
 }

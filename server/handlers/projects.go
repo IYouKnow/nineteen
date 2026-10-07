@@ -153,25 +153,25 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name          string `json:"name"`
-		Slug          string `json:"slug"`
-		Status        string `json:"status"`
-		Framework     string `json:"framework"`
-		Repository    string `json:"repository"`
-		Image         string `json:"image"`
-		Branch        string `json:"branch"`
-		Description   string `json:"description"`
-		AutoDeploy    bool   `json:"auto_deploy"`
-		InstanceType  string `json:"instance_type"`
-		BuildStrategy string `json:"build_strategy"`
+		Name           string `json:"name"`
+		Slug           string `json:"slug"`
+		Status         string `json:"status"`
+		Framework      string `json:"framework"`
+		Repository     string `json:"repository"`
+		Image          string `json:"image"`
+		Branch         string `json:"branch"`
+		Description    string `json:"description"`
+		AutoDeploy     bool   `json:"auto_deploy"`
+		InstanceType   string `json:"instance_type"`
+		BuildStrategy  string `json:"build_strategy"`
 		DockerfilePath string `json:"dockerfile_path"`
-		ComposePath   string `json:"compose_path"`
-		BuildContext  string `json:"build_context"`
-		DeployType    string `json:"deploy_type"`
-		DeployRef     string `json:"deploy_ref"`
-		Port          *int   `json:"port"`
-		Provider      string `json:"provider"`
-		IntegrationID *int64 `json:"integration_id"`
+		ComposePath    string `json:"compose_path"`
+		BuildContext   string `json:"build_context"`
+		DeployType     string `json:"deploy_type"`
+		DeployRef      string `json:"deploy_ref"`
+		Port           *int   `json:"port"`
+		Provider       string `json:"provider"`
+		IntegrationID  *int64 `json:"integration_id"`
 		RestartPolicy  string `json:"restart_policy"`
 		RestartRetries *int   `json:"restart_retries"`
 		WorkingDir     string `json:"working_dir"`
@@ -725,7 +725,7 @@ func getProjectByID(id int64) (models.Project, error) {
 
 var updatableProjectColumns = map[string]bool{
 	"status": true, "framework": true, "repository": true, "branch": true,
-	"image": true,
+	"image":       true,
 	"description": true, "auto_deploy": true,
 	"instance_type": true, "build_strategy": true, "name": true, "slug": true,
 	"dockerfile_path": true, "compose_path": true, "build_context": true,
@@ -1493,6 +1493,14 @@ func buildAndDeploy(deployID int64, project models.Project, ref string) {
 	} else {
 		log("info", fmt.Sprintf("Deploying %s (%s)", project.Repository, project.Slug))
 	}
+	// Resolve the source host before cloning so an unresolvable host is
+	// reported clearly instead of surfacing as an opaque git failure.
+	if err := services.PreflightCloneHost(ctx, cloneURL); err != nil {
+		log("error", "Cannot reach the repository: "+err.Error())
+		finishDeployment(deployID, project.ID, statusError, 0, "")
+		return
+	}
+
 	dir, err := d.CloneRepo(ctx, cloneURL, ref, func(line string) { log("info", line) })
 	defer os.RemoveAll(dir)
 	if err != nil {
@@ -2291,4 +2299,3 @@ func intOrNil(v interface{}) interface{} {
 		return nil
 	}
 }
-
