@@ -50,6 +50,14 @@ The installer generates `.env` for you, but you can edit it. Copy
 | `INVITE_CODE`     | yes      | Code needed to register the first admin                |
 | `NINETEEN_REPO`   | yes      | Public GitHub repo (owner/name) hosting Nineteen       |
 | `APP_PORT`        | no       | Host port to publish (default `8080`)                  |
+| `NINETEEN_DNS`    | no       | Primary DNS server for the container (default `1.1.1.1`)|
+| `NINETEEN_DNS_FALLBACK` | no | Fallback DNS server for the container (default `8.8.8.8`)|
+
+The container resolves external hostnames through the resolvers above. Docker
+otherwise inherits the host's `/etc/resolv.conf` at creation time; on a host
+with no non-loopback nameserver that leaves the container unable to resolve
+GitHub/Gitea and clones fail with "Could not resolve host". Set these to your
+own resolvers when you depend on internal/split-horizon DNS.
 
 ## Self-update
 

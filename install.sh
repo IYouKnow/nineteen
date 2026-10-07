@@ -36,6 +36,32 @@ prompt() {
   echo "${v:-$d}"
 }
 
+# host_has_upstream returns success when /etc/resolv.conf lists at least one
+# non-loopback nameserver, i.e. the host can resolve external names.
+host_has_upstream() {
+  [ -r /etc/resolv.conf ] || return 1
+  awk '
+    /^[[:space:]]*nameserver[[:space:]]+/ {
+      ip = $2
+      if (ip !~ /^127\./ && ip != "::1" && ip !~ /^::ffff:127\./) { found = 1 }
+    }
+    END { exit found ? 0 : 1 }
+  ' /etc/resolv.conf
+}
+
+# host_first_upstream prints the host's first non-loopback nameserver, or
+# nothing. Used as the default primary resolver so a fresh install reuses the
+# resolver the host already trusts (e.g. the LAN router) before public DNS.
+host_first_upstream() {
+  [ -r /etc/resolv.conf ] || return 0
+  awk '
+    /^[[:space:]]*nameserver[[:space:]]+/ {
+      ip = $2
+      if (ip !~ /^127\./ && ip != "::1" && ip !~ /^::ffff:127\./) { print ip; exit }
+    }
+  ' /etc/resolv.conf
+}
+
 log "Nineteen installer"
 log "Repo: $REPO"
 
@@ -91,6 +117,16 @@ else
 fi
 cd "$APP_DIR"
 
+# --- DNS preflight ---
+# Docker snapshots the host's /etc/resolv.conf into the container at creation
+# time. If the host lists only loopback nameservers (e.g. systemd-resolved's
+# 127.0.0.53), the container's embedded resolver has no upstream and every
+# external hostname fails to resolve. The explicit resolvers set in .env below
+# cover the container regardless; this is a heads-up about the host itself.
+if ! host_has_upstream; then
+  warn "/etc/resolv.conf lists no non-loopback nameserver — the host likely cannot resolve external names. The container will use the DNS servers configured below."
+fi
+
 # --- .env ---
 if [ -f .env ]; then
   log ".env already exists — keeping it"
@@ -100,11 +136,24 @@ else
   invite="$(prompt "Invite code (used once to register the first admin)" "nineteen")"
   nrepo="$(prompt "NINETEEN_REPO (public source repo, owner/name)" "$DEFAULT_REPO")"
   port="$(prompt "Host port to publish" "$DEFAULT_PORT")"
+  # Default the primary resolver to the host's own, so a LAN router (or any
+  # internal DNS) keeps working; fall back to public resolvers when the host
+  # has no non-loopback nameserver.
+  detected_dns="$(host_first_upstream || true)"
+  if [ -n "$detected_dns" ]; then
+    dns1="$(prompt "Primary DNS server for the container (needed to reach GitHub/Gitea)" "$detected_dns")"
+    dns2="$(prompt "Fallback DNS server for the container" "1.1.1.1")"
+  else
+    dns1="$(prompt "Primary DNS server for the container (needed to reach GitHub/Gitea)" "1.1.1.1")"
+    dns2="$(prompt "Fallback DNS server for the container" "8.8.8.8")"
+  fi
   cat > .env <<EOF
 JWT_SECRET=$secret
 INVITE_CODE=$invite
 NINETEEN_REPO=$nrepo
 APP_PORT=$port
+NINETEEN_DNS=$dns1
+NINETEEN_DNS_FALLBACK=$dns2
 EOF
   PORT="$port"
 fi

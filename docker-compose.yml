@@ -7,6 +7,16 @@ services:
     restart: unless-stopped
     ports:
       - "${APP_PORT:-8080}:8080"
+    # Explicit resolvers for outbound name resolution. Docker snapshots the
+    # host's /etc/resolv.conf into the container at creation time (for the
+    # embedded resolver's upstreams); if the host has no non-loopback nameserver
+    # -- e.g. a minimal host, or systemd-resolved exposing only 127.0.0.53 --
+    # every external hostname SERVFAILs and clones of GitHub/Gitea die with
+    # "Could not resolve host". Defaults are public resolvers; override in .env
+    # when you depend on internal/split-horizon DNS.
+    dns:
+      - "${NINETEEN_DNS:-1.1.1.1}"
+      - "${NINETEEN_DNS_FALLBACK:-8.8.8.8}"
     environment:
       ADDR: ":8080"
       DB_PATH: "/app/data/nineteen.db"
