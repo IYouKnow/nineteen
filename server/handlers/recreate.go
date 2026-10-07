@@ -247,6 +247,10 @@ func containerRecreate(ctx context.Context, log func(string, string), d *service
 		finishDeployment(deployID, project.ID, statusError, 0, "")
 		return fmt.Errorf("container failed: %s", err.Error())
 	}
+	if fail := d.WaitForStableStart(ctx, []string{containerName}, 0); fail != nil {
+		failStart(deployID, project, fail, log)
+		return fmt.Errorf("container failed to start: %s", fail.Describe())
+	}
 
 	duration := int64(time.Since(start).Seconds())
 	url := fmt.Sprintf("http://localhost:%d", primaryHost)
@@ -328,6 +332,10 @@ func composeRecreate(ctx context.Context, log func(string, string), d *services.
 		return fmt.Errorf("docker compose failed: %s", err.Error())
 	}
 	log("info", "Compose stack updated (images unchanged)")
+	if fail := d.WaitForStableStart(ctx, services.ComposeAppContainers(name), 0); fail != nil {
+		failStart(deployID, project, fail, log)
+		return fmt.Errorf("compose stack failed to start: %s", fail.Describe())
+	}
 
 	ports := d.ComposePorts(name)
 	if len(ports) == 0 {

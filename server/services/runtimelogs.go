@@ -84,6 +84,18 @@ func EnsureTailed(projectID, deploymentID int64, container string) {
 	runtimeMgr.ensureTailed(projectID, deploymentID, container)
 }
 
+// RecordRuntimeLog persists a single runtime-log line for a project and pushes
+// it to any open SSE subscribers. It is used to capture output at the moment a
+// container fails — before any lazy tailer would have attached to it (a
+// crash-looping container may never appear as a stable tail target).
+func RecordRuntimeLog(projectID, deploymentID int64, container, level, message string) {
+	msg := strings.TrimSpace(message)
+	if msg == "" {
+		return
+	}
+	runtimeMgr.recordNow(projectID, deploymentID, container, level, msg)
+}
+
 // SubscribeStream registers an SSE subscriber for a project and returns the
 // channel plus an unsubscribe function.
 func SubscribeStream(projectID int64) (<-chan RuntimeLogEvent, func()) {
@@ -195,6 +207,11 @@ func splitDockerLog(line string) (time.Time, string) {
 		}
 	}
 	return time.Now(), strings.TrimRight(line, "\r")
+}
+
+// recordNow stamps a line with the current time, then inserts and broadcasts it.
+func (m *RuntimeManager) recordNow(projectID, deploymentID int64, container, level, msg string) {
+	insertAndBroadcast(m, projectID, deploymentID, container, level, time.Now(), msg)
 }
 
 func insertAndBroadcast(m *RuntimeManager, projectID, deploymentID int64, container, level string, ts time.Time, msg string) {

@@ -24,6 +24,7 @@ const FILTERS = [
   { id: "running", label: "Running" },
   { id: "building", label: "Building" },
   { id: "error", label: "Error" },
+  { id: "crash-looping", label: "Crash loop" },
   { id: "idle", label: "Idle" },
 ];
 

@@ -29,6 +29,185 @@ type Deployer struct{}
 
 func NewDeployer() *Deployer { return &Deployer{} }
 
+// StatusCrashLooping is the project status for a container that starts but
+// cannot stay up: Docker's restart policy keeps resurrecting it and it exits
+// again. It is deliberately distinct from "stopped" so the UI does not present
+// a crash loop as a clean shutdown, and from "error" so it stays distinguishable
+// from a failed build.
+const StatusCrashLooping = "crash-looping"
+
+// DefaultStartupProbe is how long a freshly started container is watched before
+// its deploy is treated as successful. `docker run -d` / `compose up -d` report
+// success even for an app that exits immediately, so a short settle window is
+// needed to notice a crash loop.
+const DefaultStartupProbe = 6 * time.Second
+
+// containerRuntimeState is the slice of `docker inspect .State` that decides
+// whether a container started cleanly.
+type containerRuntimeState struct {
+	Status       string `json:"Status"`
+	Running      bool   `json:"Running"`
+	ExitCode     int    `json:"ExitCode"`
+	RestartCount int    `json:"RestartCount"`
+	Dead         bool   `json:"Dead"`
+}
+
+// crashed reports whether the runtime state represents a container that failed
+// to start: it is stuck restarting or dead, it has already been restarted (a
+// fresh container starts at 0), or it exited with a non-zero code. A container
+// that exited 0 is a legitimate one-shot and is not a crash.
+func (s containerRuntimeState) crashed() bool {
+	switch s.Status {
+	case "restarting", "dead":
+		return true
+	case "exited":
+		return s.ExitCode != 0
+	}
+	return s.Dead || s.RestartCount > 0
+}
+
+// inspectRuntimeState reads a container's current runtime state. ok is false
+// when the container does not exist or Docker cannot describe it.
+func inspectRuntimeState(name string) (containerRuntimeState, bool) {
+	out, err := exec.Command("docker", "inspect", "--format", "{{json .State}}", name).Output()
+	if err != nil {
+		return containerRuntimeState{}, false
+	}
+	var st containerRuntimeState
+	if json.Unmarshal(out, &st) != nil {
+		return containerRuntimeState{}, false
+	}
+	return st, true
+}
+
+// ContainerFailure describes a container that did not stay up after starting,
+// carrying its last output so the caller can persist the reason.
+type ContainerFailure struct {
+	Container    string
+	Status       string
+	ExitCode     int
+	RestartCount int
+	Logs         []string
+}
+
+// Describe is a one-line human summary of the failure, suitable for a log line.
+func (f ContainerFailure) Describe() string {
+	switch f.Status {
+	case "restarting":
+		return fmt.Sprintf("Container %s is crash-looping — it keeps restarting (restart count %d, last exit code %d). It never stayed up; see its output below.", f.Container, f.RestartCount, f.ExitCode)
+	case "dead":
+		return fmt.Sprintf("Container %s is dead — it did not start successfully. See its output below.", f.Container)
+	case "exited":
+		return fmt.Sprintf("Container %s exited with code %d shortly after starting. See its output below.", f.Container, f.ExitCode)
+	default:
+		return fmt.Sprintf("Container %s failed to stay running (status %q). See its output below.", f.Container, f.Status)
+	}
+}
+
+// WaitForStableStart watches one or more freshly started containers for up to
+// wait (DefaultStartupProbe when <= 0) and returns the first one that crashed,
+// along with its last log lines. It returns nil when every container stayed up
+// for the whole window, or when ctx is cancelled mid-wait (the deploy is being
+// aborted, not failing).
+func (d *Deployer) WaitForStableStart(ctx context.Context, containers []string, wait time.Duration) *ContainerFailure {
+	targets := containers[:0:0]
+	for _, c := range containers {
+		if strings.TrimSpace(c) != "" {
+			targets = append(targets, c)
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	if wait <= 0 {
+		wait = DefaultStartupProbe
+	}
+	deadline := time.Now().Add(wait)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		for _, name := range targets {
+			if st, ok := inspectRuntimeState(name); ok && st.crashed() {
+				return d.containerFailure(name, st)
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+// containerFailure snapshots a crashed container's state and its last output.
+func (d *Deployer) containerFailure(container string, st containerRuntimeState) *ContainerFailure {
+	return &ContainerFailure{
+		Container:    container,
+		Status:       st.Status,
+		ExitCode:     st.ExitCode,
+		RestartCount: st.RestartCount,
+		Logs:         d.ContainerLogs(container, 50),
+	}
+}
+
+// ContainerLogs returns up to tail lines of a container's output (stdout and
+// stderr merged). It works for a stopped or restarting container, so it is used
+// to capture why a container failed at deploy time — before any lazy tailer
+// would have attached to it.
+func (d *Deployer) ContainerLogs(name string, tail int) []string {
+	if tail <= 0 {
+		tail = 50
+	}
+	out, err := exec.Command("docker", "logs", "--tail", strconv.Itoa(tail), name).CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return nil
+	}
+	lines := []string{}
+	for _, line := range strings.Split(strings.ReplaceAll(string(out), "\r\n", "\n"), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+// ComposeAppContainers returns the names of a compose project's application
+// containers — every service except known database/admin images. Non-running
+// containers are included (a crash-looping one may not be listed by `docker ps`
+// alone), so the startup probe can catch a service that never stayed up.
+func ComposeAppContainers(projectName string) []string {
+	out, err := exec.Command("docker", "ps", "-a", "--filter",
+		"label=com.docker.compose.project="+projectName, "--format", "{{.Names}}").Output()
+	if err != nil {
+		return nil
+	}
+	names := []string{}
+	for _, name := range strings.Fields(string(out)) {
+		info := inspectContainer(name)
+		if info == nil || isDatabaseImage(info.Image) {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
+// isDatabaseImage reports whether an image reference looks like a backing
+// database or admin service rather than the app a user wants to reach.
+func isDatabaseImage(image string) bool {
+	img := strings.ToLower(image)
+	for _, hint := range dbImageHints {
+		if strings.Contains(img, hint) {
+			return true
+		}
+	}
+	return false
+}
+
 // DockerAvailable verifies the Docker daemon is reachable.
 func (d *Deployer) DockerAvailable() error {
 	out, err := exec.Command("docker", "info", "--format", "{{.ServerVersion}}").CombinedOutput()
@@ -469,24 +648,32 @@ func (d *Deployer) ContainerState(name string) string {
 }
 
 // ReconcileStatus returns a project's status corrected against the live
-// container state, and whether that correction should be persisted. Actions in
-// flight ("building", "restarting") and never-deployed states are returned
-// untouched. When the daemon is unreachable or a container cannot be confirmed
-// we report the conservative "stopped" without persisting, so the DB isn't
-// corrupted by a transient Docker outage.
+// container state, and whether that correction should be persisted. A container
+// Docker keeps restarting is reported as "crash-looping" rather than "stopped",
+// so a crash loop is never presented as a clean shutdown. Actions in flight
+// ("building", "restarting") and never-deployed states are returned untouched.
+// When the daemon is unreachable or a container cannot be confirmed we report
+// the conservative "stopped" without persisting, so the DB isn't corrupted by a
+// transient Docker outage.
 func (d *Deployer) ReconcileStatus(projectID int64, slug, buildStrategy, current string) (string, bool) {
 	switch current {
-	case "running":
+	case "running", StatusCrashLooping:
 		name := ResolveContainer(projectID, slug, buildStrategy)
 		if name == "" {
 			return "stopped", false
 		}
-		switch d.ContainerState(name) {
-		case "running":
-			return "running", false
-		case "":
+		st, ok := inspectRuntimeState(name)
+		if !ok {
 			// container gone or daemon down — cannot confirm
 			return "stopped", false
+		}
+		switch {
+		case st.Status == "restarting":
+			// Preserve the crash-loop state without an extra write when it is
+			// already what the DB holds.
+			return StatusCrashLooping, current != StatusCrashLooping
+		case st.Running:
+			return "running", current != "running"
 		default: // exited, dead, paused, created…
 			return "stopped", true
 		}
@@ -495,7 +682,14 @@ func (d *Deployer) ReconcileStatus(projectID int64, slug, buildStrategy, current
 		if name == "" {
 			return "stopped", false
 		}
-		if d.ContainerState(name) == "running" {
+		st, ok := inspectRuntimeState(name)
+		if !ok {
+			return "stopped", false
+		}
+		switch {
+		case st.Status == "restarting":
+			return StatusCrashLooping, true
+		case st.Running:
 			return "running", true
 		}
 		return "stopped", false
@@ -870,15 +1064,7 @@ func PickAppPort(ports []ComposePort) (ComposePort, bool) {
 		return ComposePort{}, false
 	}
 	for _, p := range ports {
-		img := strings.ToLower(p.Image)
-		isDB := false
-		for _, hint := range dbImageHints {
-			if strings.Contains(img, hint) {
-				isDB = true
-				break
-			}
-		}
-		if !isDB {
+		if !isDatabaseImage(p.Image) {
 			return p, true
 		}
 	}

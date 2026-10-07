@@ -87,7 +87,7 @@ export default function ProjectDetail() {
     queryKey: ["project", projectId],
     queryFn: () => api.projects.get(projectId),
     refetchInterval: (query) =>
-      ["building", "restarting"].includes(query.state.data?.status) ? 1500 : false,
+      ["building", "restarting", "crash-looping"].includes(query.state.data?.status) ? 1500 : false,
   });
 
   const { data: deployments = [] } = useQuery({
@@ -98,6 +98,9 @@ export default function ProjectDetail() {
   const latestDeployment = deployments[0];
   const liveUrl = project ? projectAddress(project) : (latestDeployment?.url || "");
   const isRunning = project?.status === "running";
+  // A crash-looping container exists and is (re)starting, so the lifecycle
+  // controls should offer Stop/Restart rather than a Start that would fail.
+  const containerUp = isRunning || project?.status === "crash-looping";
 
   // Effective per-project access (undefined for legacy responses = owner).
   const access = project?.access;
@@ -254,7 +257,9 @@ export default function ProjectDetail() {
 
   const remove = async () => {
     const toastId = toast.loading(
-      project.status === "running" ? "Stopping and deleting project…" : "Deleting project…"
+      ["running", "crash-looping"].includes(project.status)
+        ? "Stopping and deleting project…"
+        : "Deleting project…"
     );
     try {
       await api.projects.delete(project.id);
@@ -352,7 +357,7 @@ export default function ProjectDetail() {
           )}
           {canDeploy && (
             <>
-              {isRunning ? (
+              {containerUp ? (
                 <Button
                   variant="outline"
                   size="sm"
@@ -379,7 +384,7 @@ export default function ProjectDetail() {
                 variant="outline"
                 size="sm"
                 onClick={() => run("restart")}
-                disabled={!isRunning || !!busy}
+                disabled={!containerUp || !!busy}
                 className="gap-1.5"
               >
                 {busy === "restart" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
@@ -421,8 +426,8 @@ export default function ProjectDetail() {
                     title={`Delete "${project.name}"?`}
                     description="This permanently removes the project and all associated data."
                     warning={
-                      project.status === "running"
-                        ? "This project is currently running. Its container will be stopped and removed."
+                      ["running", "crash-looping"].includes(project.status)
+                        ? "This project has a live container. It will be stopped and removed."
                         : undefined
                     }
                     confirmLabel="Delete project"

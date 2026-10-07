@@ -43,6 +43,7 @@ export const PROJECT_STATUS = {
   running: { label: "Running", tone: "success" },
   building: { label: "Building", tone: "info", pulse: true },
   restarting: { label: "Restarting", tone: "info", pulse: true },
+  "crash-looping": { label: "Crash loop", tone: "destructive" },
   error: { label: "Error", tone: "destructive" },
   idle: { label: "Idle", tone: "muted" },
   stopped: { label: "Stopped", tone: "muted" },

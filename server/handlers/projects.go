@@ -1761,6 +1761,15 @@ func imageDeploy(ctx context.Context, log func(string, string), d *services.Depl
 		finishDeployment(deployID, project.ID, statusError, 0, "")
 		return
 	}
+	if ctx.Err() != nil {
+		log("warn", "Deployment cancelled")
+		finishDeploymentCancelled(deployID, project)
+		return
+	}
+	if fail := d.WaitForStableStart(ctx, []string{containerName}, 0); fail != nil {
+		failStart(deployID, project, fail, log)
+		return
+	}
 
 	duration := int64(time.Since(start).Seconds())
 	url := fmt.Sprintf("http://localhost:%d", primaryHost)
@@ -1876,6 +1885,15 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 		finishDeployment(deployID, project.ID, statusError, 0, "")
 		return
 	}
+	if ctx.Err() != nil {
+		log("warn", "Deployment cancelled")
+		finishDeploymentCancelled(deployID, project)
+		return
+	}
+	if fail := d.WaitForStableStart(ctx, []string{containerName}, 0); fail != nil {
+		failStart(deployID, project, fail, log)
+		return
+	}
 
 	duration := int64(time.Since(start).Seconds())
 	url := fmt.Sprintf("http://localhost:%d", primaryHost)
@@ -1966,6 +1984,15 @@ func composeDeploy(ctx context.Context, log func(string, string), d *services.De
 		return
 	}
 	log("info", "Compose stack started")
+	if ctx.Err() != nil {
+		log("warn", "Deployment cancelled")
+		finishDeploymentCancelled(deployID, project)
+		return
+	}
+	if fail := d.WaitForStableStart(ctx, services.ComposeAppContainers(name), 0); fail != nil {
+		failStart(deployID, project, fail, log)
+		return
+	}
 
 	ports := d.ComposePorts(name)
 	if len(ports) == 0 {
@@ -2005,6 +2032,24 @@ func noBuildFileMessage(composeCount int, composeFiles []string) string {
 		msg += "Add a Dockerfile (or a " + composeSearchHint + "), then deploy again."
 	}
 	return msg
+}
+
+// failStart reports a container that crash-looped right after starting. It
+// appends the container's last output to both the deploy log and the project's
+// runtime log — so the reason (e.g. a missing required env var) is visible
+// without opening a live tail — then marks the deployment errored and the
+// project "crash-looping" instead of a misleading "running".
+func failStart(deployID int64, project models.Project, fail *services.ContainerFailure, log func(string, string)) {
+	if fail == nil {
+		return
+	}
+	log("error", fail.Describe())
+	for _, line := range fail.Logs {
+		log("error", line)
+		services.RecordRuntimeLog(project.ID, deployID, fail.Container, "error", line)
+	}
+	db.DB.Exec("UPDATE deployments SET status = ?, port = 0, url = '', updated_date = CURRENT_TIMESTAMP WHERE id = ?", statusError, deployID)
+	setProjectStatus(project.ID, services.StatusCrashLooping)
 }
 
 func finishDeployment(deployID, projectID int64, status string, port int, url string) {
