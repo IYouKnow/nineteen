@@ -31,6 +31,7 @@ import AdminInvites from "@/pages/admin/AdminInvites";
 import AdminRoles from "@/pages/admin/AdminRoles";
 import AdminResources from "@/pages/admin/AdminResources";
 import AdminOverview from "@/pages/admin/AdminOverview";
+import AdminEnvironment from "@/pages/admin/AdminEnvironment";
 import AdminUpdates from "@/pages/admin/AdminUpdates";
 import AdminAudit from "@/pages/admin/AdminAudit";
 import { Navigate } from "react-router-dom";
@@ -88,6 +89,7 @@ function AppRoutes() {
           <Route path="invites" element={<AdminInvites />} />
           <Route path="roles" element={<AdminRoles />} />
           <Route path="resources" element={<AdminResources />} />
+          <Route path="environment" element={<AdminEnvironment />} />
           <Route path="updates" element={<AdminUpdates />} />
           <Route path="audit" element={<AdminAudit />} />
         </Route>

@@ -447,6 +447,10 @@ export const admin = {
     return doFetch(`/api/admin/audit?${params.toString()}`);
   },
   system: () => doFetch("/api/admin/system"),
+  // Read-only view of the instance's own env + DNS. Passing a host re-runs the
+  // live resolution probe against it; omitted, the server probes github.com.
+  environment: (host) =>
+    doFetch(`/api/admin/environment${host ? `?host=${encodeURIComponent(host)}` : ""}`),
   resources: () => doFetch("/api/admin/resources"),
   projectAction: (id, action) =>
     doFetch(`/api/admin/projects/${id}`, { method: "POST", body: JSON.stringify({ action }) }),

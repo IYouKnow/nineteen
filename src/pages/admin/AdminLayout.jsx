@@ -1,5 +1,5 @@
 import { NavLink, Outlet, Navigate, useLocation } from "react-router-dom";
-import { Users, Ticket, Boxes, ScrollText, ShieldCheck, Download, Gauge } from "lucide-react";
+import { Users, Ticket, Boxes, ScrollText, ShieldCheck, Download, Gauge, Network } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { PERM } from "@/lib/permissions";
@@ -10,6 +10,7 @@ const TABS = [
   { to: "/admin/invites", label: "Invites", icon: Ticket, permission: PERM.ADMIN_INVITES_READ },
   { to: "/admin/roles", label: "Roles", icon: ShieldCheck, permission: PERM.ADMIN_ROLES_READ },
   { to: "/admin/resources", label: "Resources", icon: Boxes, permission: PERM.ADMIN_RESOURCES_READ },
+  { to: "/admin/environment", label: "Environment", icon: Network, permission: PERM.ADMIN_SYSTEM_READ },
   { to: "/admin/updates", label: "Updates", icon: Download, permission: PERM.UPDATES_READ },
   { to: "/admin/audit", label: "Audit Log", icon: ScrollText, permission: PERM.ADMIN_AUDIT_READ },
 ];

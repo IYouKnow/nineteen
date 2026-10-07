@@ -459,6 +459,24 @@ func AdminSystemHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// AdminEnvironmentHandler reports the instance's own configuration — the
+// environment variables it was started with and how it currently resolves
+// names — read-only, with secrets masked. It exists so a resolution problem
+// (the class of failure that breaks self-update clones with "Could not resolve
+// host") is diagnosable from the UI instead of an SSH session. The optional
+// ?host= query picks the name for the live DNS probe.
+func AdminEnvironmentHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if _, ok := requirePermission(w, r, "admin.system.read"); !ok {
+		return
+	}
+
+	respondJSON(w, http.StatusOK, services.GetEnvironmentInfo(r.URL.Query().Get("host")))
+}
+
 // ---- cross-user resources ----
 
 type adminProjectRow struct {

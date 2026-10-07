@@ -104,6 +104,8 @@ func adminRoutePermission(method string, seg []string) (string, bool) {
 		return "admin.audit.read", true
 	case "system":
 		return "admin.system.read", true
+	case "environment":
+		return "admin.system.read", true
 	case "resources":
 		if read {
 			return "admin.resources.read", true
@@ -368,6 +370,7 @@ func main() {
 	mux.HandleFunc("/api/admin/roles/{id}/members", handlers.RoleMembersHandler)
 	mux.HandleFunc("/api/admin/audit", handlers.AdminAuditHandler)
 	mux.HandleFunc("/api/admin/system", handlers.AdminSystemHandler)
+	mux.HandleFunc("/api/admin/environment", handlers.AdminEnvironmentHandler)
 	mux.HandleFunc("/api/admin/resources", handlers.AdminResourcesHandler)
 	mux.HandleFunc("/api/admin/projects/{id}", handlers.AdminProjectHandler)
 	mux.HandleFunc("/api/admin/databases/{id}", handlers.AdminDatabaseHandler)
