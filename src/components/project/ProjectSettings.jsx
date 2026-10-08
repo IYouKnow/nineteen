@@ -105,6 +105,7 @@ export default function ProjectSettings({ project, envVars = [], environment, is
       <div className="border-t border-border/60 pt-6">
         <EnvVarEditor
           projectId={project.id}
+          project={project}
           envVars={envVars}
           environment={environment}
           isProd={isProd}

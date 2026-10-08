@@ -16,5 +16,9 @@ export default function useEnvSync(projectId, { enabled = true } = {}) {
   const running = !!sync?.running;
   const outOfSync = !!sync && !sync.in_sync;
   const uncovered = (sync?.state_dirs || []).filter((d) => !d.covered);
-  return { sync, running, outOfSync, uncovered };
+  // Keys actually present in the running container (names only, never values),
+  // so a name that was never saved — a typo, or an image-provided var — is
+  // visible next to the project's own vars.
+  const effectiveKeys = sync?.effective_keys || [];
+  return { sync, running, outOfSync, uncovered, effectiveKeys };
 }

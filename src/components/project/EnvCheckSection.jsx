@@ -9,7 +9,12 @@ import { cn } from "@/lib/utils";
 export default function EnvCheckSection({ required = [], values = {}, onChange, savedKeys = new Set() }) {
   if (!required || required.length === 0) return null;
 
-  const missing = required.filter((r) => !savedKeys.has(r.key) && !String(values[r.key] || "").trim());
+  // Only vars the repo marks required (no usable default) drive the summary and
+  // the missing count; optional ones are still listed below but never block.
+  const requiredList = required.filter((r) => r.required);
+  const missing = requiredList.filter(
+    (r) => !savedKeys.has(r.key) && !String(values[r.key] || "").trim()
+  );
   const allSet = missing.length === 0;
 
   return (
@@ -19,7 +24,7 @@ export default function EnvCheckSection({ required = [], values = {}, onChange, 
         <p className="text-xs font-medium">
           Environment variables
           <span className="ml-1.5 font-mono text-muted-foreground">
-            {required.length - missing.length}/{required.length} set
+            {requiredList.length - missing.length}/{requiredList.length} required set
           </span>
         </p>
         {allSet ? (

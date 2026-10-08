@@ -1566,6 +1566,9 @@ func buildAndDeploy(deployID int64, project models.Project, ref string) {
 		composeDeploy(ctx, log, d, deployID, project, dir, composeFiles, envPath, version, start)
 		return
 	}
+	if len(composeFiles) > 0 {
+		logComposeEnvIgnored(log, dir, composeFiles)
+	}
 	dockerfileDeploy(ctx, log, d, deployID, project, dir, dockerfiles, composeFiles, envPath, version, start)
 }
 
@@ -1592,6 +1595,22 @@ func logMissingRequiredEnv(log func(string, string), dir, dockerfileRel string, 
 		keys = append(keys, m.Key)
 	}
 	log("warn", fmt.Sprintf("Missing environment variables: %s — set them in Settings → Environment Variables and redeploy if the app misbehaves", strings.Join(keys, ", ")))
+}
+
+// logComposeEnvIgnored warns when a repo ships a compose file declaring env vars
+// but the project deploys from a Dockerfile: the compose environment never
+// reaches the container on that path, so the user must set those vars in the
+// project instead. Best-effort — it never fails the deploy.
+func logComposeEnvIgnored(log func(string, string), dir string, composeFiles []string) {
+	declared := services.ComposeEnvFromDir(dir, composeFiles)
+	if len(declared) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(declared))
+	for _, e := range declared {
+		keys = append(keys, e.Key)
+	}
+	log("warn", fmt.Sprintf("Docker Compose declares environment variables that are ignored when deploying from a Dockerfile: %s — set them in Settings → Environment Variables if the app needs them", strings.Join(keys, ", ")))
 }
 
 // assignHostPort returns a host port to publish a mapping on: the configured

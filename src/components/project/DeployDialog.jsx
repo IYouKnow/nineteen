@@ -166,7 +166,7 @@ export default function DeployDialog({ project, open, onOpenChange }) {
     return s;
   }, [savedVars, envValues]);
 
-  const missingCount = required.filter((r) => !savedKeys.has(r.key)).length;
+  const missingCount = required.filter((r) => r.required && !savedKeys.has(r.key)).length;
   const envBlocked = missingCount > 0 && !deployAnyway;
 
   const deployMutation = useMutation({

@@ -150,16 +150,20 @@ func ParseDockerfileEnv(content []byte) []RequiredEnvVar {
 
 var composeInterpRe = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)([^}]*)?\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
 var composeBareKeyRe = regexp.MustCompile(`^-\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:#.*)?$`)
+var composeListValuedRe = regexp.MustCompile(`^-\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$`)
 var composeEnvHeaderRe = regexp.MustCompile(`^environment\s*:\s*(?:#.*)?$`)
 var composeMapKeyRe = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(?:#.*)?$`)
+var composeMapValuedRe = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$`)
 
 // ParseComposeEnv extracts variable references from compose file content:
 // `${VAR}` / `$VAR` interpolations anywhere in the file are required unless
-// they carry a `${VAR:-default}`-style default. Bare `- KEY` list entries and
+// they carry a `${VAR:-default}`-style default with a usable value (an empty
+// default like `${VAR:-}` is still required). Bare `- KEY` list entries and
 // empty `KEY:` mapping entries are only honored inside `environment:` blocks,
 // so unrelated lists (depends_on, ports, …) never produce false positives. A
-// value baked into compose (`- KEY=value`, `KEY: value`) is not something the
-// user must supply, so it is skipped.
+// value baked into compose (`- KEY=value`, `KEY: value`) is surfaced as an
+// optional entry carrying that default, so a compose declaration the Dockerfile
+// deploy path ignores is still visible instead of silently dropped.
 func ParseComposeEnv(content []byte, source string) []RequiredEnvVar {
 	if source == "" {
 		source = "compose"
@@ -173,7 +177,7 @@ func ParseComposeEnv(content []byte, source string) []RequiredEnvVar {
 		if i, ok := seen[key]; ok {
 			// A bare `- KEY` / `KEY:` entry means the value must come from the
 			// host environment, so it promotes an interpolated default to required.
-			if required && out[i].Default == "" {
+			if required {
 				out[i].Required = true
 			}
 			if out[i].Default == "" && def != "" {
@@ -200,7 +204,9 @@ func ParseComposeEnv(content []byte, source string) []RequiredEnvVar {
 			for _, prefix := range []string{":-", "-", ":=", "="} {
 				if strings.HasPrefix(mod, prefix) {
 					def = strings.Trim(strings.TrimPrefix(mod, prefix), `"'`)
-					required = false
+					// An empty default (`${VAR:-}`, `${VAR:=}`) supplies nothing
+					// usable, so the value must still come from saved/host vars.
+					required = def == ""
 					break
 				}
 			}
@@ -209,6 +215,19 @@ func ParseComposeEnv(content []byte, source string) []RequiredEnvVar {
 	}
 	// Second pass: environment-block entries (indent-aware).
 	inEnv, envIndent := false, -1
+	// A baked value (`- KEY=value`, `KEY: value`) is recorded as an optional
+	// entry so a compose declaration stays visible; an interpolation is left to
+	// the pass above, which already records the referenced key(s).
+	addBaked := func(key, raw string) {
+		val := strings.TrimSpace(raw)
+		if strings.Contains(val, "$") {
+			return
+		}
+		if i := strings.Index(val, " #"); i >= 0 {
+			val = strings.TrimSpace(val[:i])
+		}
+		add(key, strings.Trim(val, `"'`), false)
+	}
 	for _, raw := range strings.Split(string(content), "\n") {
 		trimmed := strings.TrimSpace(raw)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
@@ -228,8 +247,16 @@ func ParseComposeEnv(content []byte, source string) []RequiredEnvVar {
 			add(m[1], "", true)
 			continue
 		}
+		if m := composeListValuedRe.FindStringSubmatch(trimmed); m != nil {
+			addBaked(m[1], m[2])
+			continue
+		}
 		if m := composeMapKeyRe.FindStringSubmatch(trimmed); m != nil {
 			add(m[1], "", true)
+			continue
+		}
+		if m := composeMapValuedRe.FindStringSubmatch(trimmed); m != nil {
+			addBaked(m[1], m[2])
 		}
 	}
 	return out
@@ -247,7 +274,7 @@ func MergeRequiredEnv(lists ...[]RequiredEnvVar) []RequiredEnvVar {
 				continue
 			}
 			if cur, ok := merged[e.Key]; ok {
-				if e.Required && cur.Default == "" {
+				if e.Required {
 					cur.Required = true
 				}
 				if cur.Default == "" && e.Default != "" {
@@ -274,12 +301,14 @@ func MergeRequiredEnv(lists ...[]RequiredEnvVar) []RequiredEnvVar {
 	return out
 }
 
-// MissingRequiredEnv returns the subset of required whose keys have no
-// non-empty value in have (saved project vars keyed by name).
+// MissingRequiredEnv returns the entries marked required whose keys have no
+// non-empty value in have (saved project vars keyed by name). Optional entries
+// (those carrying a usable default) are never reported, so a repo default like
+// `${PORT:-3000}` does not masquerade as a missing value.
 func MissingRequiredEnv(required []RequiredEnvVar, have map[string]string) []RequiredEnvVar {
 	missing := []RequiredEnvVar{}
 	for _, r := range required {
-		if strings.TrimSpace(have[r.Key]) == "" {
+		if r.Required && strings.TrimSpace(have[r.Key]) == "" {
 			missing = append(missing, r)
 		}
 	}
@@ -373,4 +402,29 @@ func DetectRequiredEnvFromDir(dir, dockerfilePath string, composeFiles []string)
 		}
 	}
 	return DetectRequiredEnvFromContents(envBlob, envSource, dockerBlob, composeBlobs...)
+}
+
+// ComposeEnvFromDir parses only the compose files in a cloned checkout (up to
+// two), returning every env var they declare — interpolated refs, bare host
+// entries and baked `KEY=value` / `KEY: value` values alike. It is used to tell
+// the user which compose-declared variables a Dockerfile deploy would ignore.
+// Missing or unreadable files are skipped.
+func ComposeEnvFromDir(dir string, composeFiles []string) []RequiredEnvVar {
+	lists := [][]RequiredEnvVar{}
+	for i, c := range composeFiles {
+		if i >= 2 {
+			break
+		}
+		rel := strings.TrimSpace(filepath.ToSlash(c))
+		if rel == "" {
+			continue
+		}
+		p := filepath.Join(dir, filepath.FromSlash(strings.TrimPrefix(rel, "/")))
+		data, err := os.ReadFile(p)
+		if err != nil || len(data) == 0 || len(data) > 1<<20 {
+			continue
+		}
+		lists = append(lists, ParseComposeEnv(data, "compose"))
+	}
+	return MergeRequiredEnv(lists...)
 }

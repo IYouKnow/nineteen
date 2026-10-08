@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import ApplyRecreateButton from "@/components/project/ApplyRecreateButton";
+import ContainerEnvPanel from "@/components/project/ContainerEnvPanel";
 import {
   Dialog,
   DialogContent,
@@ -19,7 +20,7 @@ import {
 import EmptyState from "@/components/dev/EmptyState";
 import ConfirmDialog from "@/components/dev/ConfirmDialog";
 
-export default function EnvVarEditor({ projectId, envVars = [], environment, isProd = true, onAdd, onUpdate, onDelete }) {
+export default function EnvVarEditor({ projectId, project, envVars = [], environment, isProd = true, onAdd, onUpdate, onDelete }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -153,6 +154,8 @@ export default function EnvVarEditor({ projectId, envVars = [], environment, isP
           </div>
         )}
       </div>
+
+      <ContainerEnvPanel projectId={projectId} project={project} />
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="border-border bg-popover">

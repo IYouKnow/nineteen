@@ -591,11 +591,20 @@ type stateDirStatus struct {
 	Covered       bool   `json:"covered"`
 }
 
+// effectiveEnvKey is one key present in the running container's environment,
+// with whether a saved project var backs it. Values are never included, so the
+// report is safe to show to readers.
+type effectiveEnvKey struct {
+	Key   string `json:"key"`
+	Saved bool   `json:"saved"`
+}
+
 type envSyncResponse struct {
-	Running      bool             `json:"running"`
-	InSync       bool             `json:"in_sync"`
-	MissingKeys  []string         `json:"missing_keys"`
-	StateDirs    []stateDirStatus `json:"state_dirs"`
+	Running       bool              `json:"running"`
+	InSync        bool              `json:"in_sync"`
+	MissingKeys   []string          `json:"missing_keys"`
+	EffectiveKeys []effectiveEnvKey `json:"effective_keys"`
+	StateDirs     []stateDirStatus  `json:"state_dirs"`
 }
 
 // ProjectEnvSyncHandler reports whether the running container matches the
@@ -636,16 +645,32 @@ func ProjectEnvSyncHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	missing := []string{}
+	savedKeys := map[string]bool{}
 	if vars, verr := services.LoadEnvVars(project.ID); verr == nil {
 		for _, v := range vars {
 			if strings.TrimSpace(v.Value) == "" {
 				continue
 			}
+			savedKeys[v.Key] = true
 			if cur, ok := containerEnv[v.Key]; !ok || cur != v.Value {
 				missing = append(missing, v.Key)
 			}
 		}
 	}
+
+	// The container's own key set (names only): saved project vars surface
+	// first, then any other env the image or host injected, so a name that
+	// was never saved (e.g. a typo'd DB_ENCRYPTION_KEY_FILE) is visible.
+	effective := make([]effectiveEnvKey, 0, len(containerEnv))
+	for k := range containerEnv {
+		effective = append(effective, effectiveEnvKey{Key: k, Saved: savedKeys[k]})
+	}
+	sort.Slice(effective, func(i, j int) bool {
+		if effective[i].Saved != effective[j].Saved {
+			return effective[i].Saved
+		}
+		return effective[i].Key < effective[j].Key
+	})
 
 	// Candidate images for state-dir suggestions: the running container, the
 	// project's image reference, and (compose) every service image. Curated
@@ -685,11 +710,15 @@ func ProjectEnvSyncHandler(w http.ResponseWriter, r *http.Request) {
 	if missing == nil {
 		missing = []string{}
 	}
+	if effective == nil {
+		effective = []effectiveEnvKey{}
+	}
 
 	respondJSON(w, http.StatusOK, envSyncResponse{
-		Running:     running,
-		InSync:      running && len(missing) == 0,
-		MissingKeys: missing,
-		StateDirs:   stateDirs,
+		Running:       running,
+		InSync:        running && len(missing) == 0,
+		MissingKeys:   missing,
+		EffectiveKeys: effective,
+		StateDirs:     stateDirs,
 	})
 }
