@@ -66,6 +66,52 @@ func requestDeployCancel(deployID int64) bool {
 	return false
 }
 
+// errDeployInProgress is returned by startDeployment when the project already
+// has a deployment in flight. It is a benign, expected outcome — most notably
+// when a provider delivers more than one event for a single trigger (GitHub
+// sends both "push" and "create" for one new tag) — so callers skip it rather
+// than treating it as a server error.
+var errDeployInProgress = errors.New("a deployment is already in progress")
+
+// deployStartMu serializes the check-and-start of a project's deployment, so two
+// triggers arriving at once cannot both pass the in-flight check and then race
+// over the project's container name and published port.
+var (
+	deployStartMu  sync.Mutex
+	deployStarting = map[int64]bool{}
+)
+
+// lockDeployStart marks a project's deploy start as in progress. It returns
+// false when another goroutine is already inside one.
+func lockDeployStart(projectID int64) bool {
+	deployStartMu.Lock()
+	defer deployStartMu.Unlock()
+	if deployStarting[projectID] {
+		return false
+	}
+	deployStarting[projectID] = true
+	return true
+}
+
+func unlockDeployStart(projectID int64) {
+	deployStartMu.Lock()
+	delete(deployStarting, projectID)
+	deployStartMu.Unlock()
+}
+
+// deploymentInFlight reports whether a project already has a deployment that has
+// not finished (status "building").
+func deploymentInFlight(projectID int64) (bool, error) {
+	var active int
+	if err := db.DB.QueryRow(
+		"SELECT COUNT(*) FROM deployments WHERE project_id = ? AND status = ?",
+		projectID, statusBuilding,
+	).Scan(&active); err != nil {
+		return false, err
+	}
+	return active > 0, nil
+}
+
 // ---- project helpers ----
 
 type rowScanner interface {
@@ -1084,25 +1130,6 @@ func createDeploymentHandler(w http.ResponseWriter, r *http.Request, userID, pro
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	// Block a new deploy while one is already in flight: two concurrent builds
-	// for the same project would race over its container and published port.
-	// A project can also carry the "building" status with no deployment behind
-	// it (e.g. a stale row), so only block when a build is actually running.
-	if project.Status == statusBuilding {
-		var active int
-		if err := db.DB.QueryRow(
-			"SELECT COUNT(*) FROM deployments WHERE project_id = ? AND status = ?",
-			project.ID, statusBuilding,
-		).Scan(&active); err != nil {
-			respondError(w, http.StatusInternalServerError, "Failed to check for in-progress deployments")
-			return
-		}
-		if active > 0 {
-			respondError(w, http.StatusConflict, "A deployment is already in progress — cancel it or wait for it to finish")
-			return
-		}
-	}
-
 	// source selects how the deployed ref was chosen. Empty means the project's
 	// configured target (its pinned release or default branch).
 	source := strings.TrimSpace(req.Source)
@@ -1135,6 +1162,10 @@ func createDeploymentHandler(w http.ResponseWriter, r *http.Request, userID, pro
 		ApplyTarget:   false,
 	})
 	if err != nil {
+		if errors.Is(err, errDeployInProgress) {
+			respondError(w, http.StatusConflict, "A deployment is already in progress — cancel it or wait for it to finish")
+			return
+		}
 		respondError(w, http.StatusInternalServerError, "Failed to create deployment")
 		return
 	}
@@ -1185,6 +1216,20 @@ type deployRequest struct {
 // When empty, the project's pinned version (release projects) or the
 // repository's default branch is used — that is the manual-deploy path.
 func startDeployment(userID int64, project models.Project, req deployRequest) (models.Deployment, error) {
+	// Serialize the in-flight check with the insert below, so two triggers that
+	// arrive together (e.g. GitHub delivering both "push" and "create" for one
+	// new tag) cannot both start a build and race over the project's container
+	// name and published port.
+	if !lockDeployStart(project.ID) {
+		return models.Deployment{}, errDeployInProgress
+	}
+	defer unlockDeployStart(project.ID)
+	if inFlight, err := deploymentInFlight(project.ID); err != nil {
+		return models.Deployment{}, err
+	} else if inFlight {
+		return models.Deployment{}, errDeployInProgress
+	}
+
 	ref := strings.TrimSpace(req.Ref)
 
 	// Git ref actually cloned: an explicit ref wins, then a pinned release.

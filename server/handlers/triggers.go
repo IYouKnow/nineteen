@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -710,6 +711,14 @@ func dispatchWebhookEvent(w http.ResponseWriter, projectID int64, project models
 		ApplyTarget:   true,
 	})
 	if err != nil {
+		if errors.Is(err, errDeployInProgress) {
+			// A trigger for this project is already building — e.g. GitHub sends
+			// both "push" and "create" for one new tag. Skip this duplicate and
+			// answer 200 so the provider does not retry the delivery.
+			logDeployEvent(projectID, event, match.Ref, match.SHA, false, "A deployment is already in progress — skipping duplicate trigger", "webhook", &matchedTrigger.ID, nil)
+			respondJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "matched": false, "reason": "deployment already in progress"})
+			return
+		}
 		logDeployEvent(projectID, event, match.Ref, match.SHA, false, "Failed to start deployment: "+err.Error(), "webhook", nil, nil)
 		respondError(w, http.StatusInternalServerError, "Failed to start deployment")
 		return
