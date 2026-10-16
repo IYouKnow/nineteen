@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1872,11 +1873,24 @@ func dockerfileDeploy(ctx context.Context, log func(string, string), d *services
 		log("info", "Applying saved build-file override to "+dockerfile)
 	}
 
+	buildContext := strings.TrimSpace(project.BuildContext)
+	if buildContext == "" {
+		// No explicit context: derive it from the Dockerfile's COPY/ADD paths so
+		// a monorepo Dockerfile that copies from the repository root is built
+		// with the root as its context rather than its own folder.
+		if detected := d.DetectBuildContext(dir, dockerfile); detected != "" {
+			buildContext = detected
+			if detected != path.Dir(filepath.ToSlash(dockerfile)) {
+				log("info", fmt.Sprintf("Auto-detected build context %q from %s's COPY/ADD paths", detected, dockerfile))
+			}
+		}
+	}
+
 	buildRef := randomHex(8)
 	image := fmt.Sprintf("nineteen-%d-%s:%s", project.ID, project.Slug, buildRef)
 	containerName := services.ProjectContainerName(project.ID, project.Slug)
 	log("info", "Building image "+image)
-	if err := d.Build(ctx, image, dir, dockerfile, project.BuildContext, version, func(line string) { log("info", line) }); err != nil {
+	if err := d.Build(ctx, image, dir, dockerfile, buildContext, version, func(line string) { log("info", line) }); err != nil {
 		if ctx.Err() != nil {
 			log("warn", "Deployment cancelled")
 			finishDeploymentCancelled(deployID, project)

@@ -421,6 +421,25 @@ func (d *Deployer) RepoFileExists(dir, rel string) bool {
 	return err == nil
 }
 
+// DetectBuildContext derives a build context for a Dockerfile in a cloned
+// repository from the paths it COPYs/ADDs, using the same heuristic the project
+// wizard offers. It is the deploy-time fallback for a project with no explicit
+// build context: a monorepo Dockerfile such as packages/server/Dockerfile that
+// copies from the repository root must not be built with its own directory as
+// the context, or those COPYs fail with "not found". Returns "" when the
+// Dockerfile cannot be read, leaving the caller to fall back to the
+// Dockerfile's own directory.
+func (d *Deployer) DetectBuildContext(dir, dockerfile string) string {
+	if strings.TrimSpace(dockerfile) == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(dockerfile)))
+	if err != nil {
+		return ""
+	}
+	return SuggestBuildContext(dockerfile, data, d.RepoFiles(dir))
+}
+
 // ParseExpose reads the first EXPOSE port from the given Dockerfile
 // (repo-relative path). Returns 0 when no EXPOSE is found.
 func (d *Deployer) ParseExpose(dir, dockerfile string) int {
