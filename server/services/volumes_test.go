@@ -21,6 +21,21 @@ func TestSanitizeVolumeHint(t *testing.T) {
 	}
 }
 
+func TestOwnNamedVolumeToImageUserNoop(t *testing.T) {
+	// Empty inputs must short-circuit without invoking docker, so this is safe
+	// to run on a host with no daemon.
+	for _, tc := range []struct{ vol, image, path string }{
+		{"", "codercom/code-server", "/home/coder"},
+		{"myvol", "", "/home/coder"},
+		{"myvol", "codercom/code-server", ""},
+	} {
+		repaired, err := OwnNamedVolumeToImageUser(tc.vol, tc.image, tc.path)
+		if repaired || err != nil {
+			t.Fatalf("OwnNamedVolumeToImageUser(%q,%q,%q) = %v,%v; want false,nil", tc.vol, tc.image, tc.path, repaired, err)
+		}
+	}
+}
+
 func TestWriteComposeOverrideNamedVolumes(t *testing.T) {
 	override, err := WriteComposeOverride(
 		[]string{"app"},

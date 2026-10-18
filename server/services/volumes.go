@@ -65,3 +65,56 @@ func PopulateNamedVolume(volumeName, holderImage, hostSrcDir string) error {
 	}
 	return nil
 }
+
+// statOwner returns the numeric "uid:gid" that owns containerPath inside a
+// throwaway container from image, optionally mounting volumeName at
+// /nineteen-own first. It runs as root so an unreadable (0700 root) directory
+// still reports its owner instead of failing, and returns "" when the image has
+// no stat or the path does not exist.
+func statOwner(image, path, volumeName string) string {
+	args := []string{"run", "--rm", "-u", "0", "--entrypoint", "stat"}
+	if volumeName != "" {
+		args = append(args, "-v", volumeName+":/nineteen-own")
+	}
+	args = append(args, image, "-c", "%u:%g", path)
+	out, err := exec.Command("docker", args...).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// OwnNamedVolumeToImageUser makes a named volume writable by the user the app
+// image runs as, by matching the volume root's ownership to the owner of the
+// same path inside the image. Docker creates volumes root-owned and `docker cp`
+// (how existing state is migrated into a volume) does not preserve ownership, so
+// a volume filled that way stays root-owned even when the app runs as a
+// non-root user (e.g. code-server's `coder`) — which then cannot write its own
+// state.
+//
+// It is a no-op when the volume is already owned correctly, when the owner
+// cannot be read, or when the image carries no stat/chown (distroless). The
+// common already-correct case costs a single cheap stat, so the tree is only
+// walked when a repair is actually needed. reported is true only when
+// ownership was changed.
+func OwnNamedVolumeToImageUser(volumeName, image, containerPath string) (reported bool, err error) {
+	if volumeName == "" || image == "" || containerPath == "" {
+		return false, nil
+	}
+	want := statOwner(image, containerPath, "")
+	if want == "" {
+		return false, nil
+	}
+	if statOwner(image, "/nineteen-own", volumeName) == want {
+		return false, nil
+	}
+	// chown takes numeric uid:gid, so no /etc/passwd lookup is needed.
+	cmd := exec.Command("docker", "run", "--rm", "-u", "0",
+		"--entrypoint", "chown",
+		"-v", volumeName+":/nineteen-own",
+		image, "-R", want, "/nineteen-own")
+	if out, cerr := cmd.CombinedOutput(); cerr != nil {
+		return false, fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return true, nil
+}

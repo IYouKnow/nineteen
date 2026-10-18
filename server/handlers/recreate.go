@@ -409,6 +409,17 @@ func ensureStateVolumes(projectID int64, targets []stateMigrateTarget, stop func
 	if len(suggestions) == 0 {
 		return
 	}
+	// Which image declares each state path: used to repair a volume's ownership
+	// to match the user that image runs as, so a non-root app can write its
+	// state (see ownNamedStateVolume).
+	ownImage := map[string]string{}
+	for _, img := range images {
+		for _, s := range services.AllStateSuggestions([]string{img}) {
+			if _, ok := ownImage[s.ContainerPath]; !ok {
+				ownImage[s.ContainerPath] = img
+			}
+		}
+	}
 	vols, _ := loadProjectVolumes(projectID)
 	type item struct {
 		suggestion services.StateDirSuggestion
@@ -432,7 +443,11 @@ func ensureStateVolumes(projectID int64, targets []stateMigrateTarget, stop func
 		switch {
 		case covering != nil && covering.Kind == "volume":
 			// Named rows are populated at creation time (auto flow below or
-			// the volumes endpoint), so a covered path needs nothing.
+			// the volumes endpoint), so a covered path needs no migration — but
+			// a volume filled before ownership was handled (or migrated with
+			// docker cp) can be root-owned, which a non-root app cannot write.
+			// Match it to the image's own user; cheap when already correct.
+			ownNamedStateVolume(covering.VolumeName, ownImage[s.ContainerPath], s.ContainerPath, log)
 			continue
 		case covering != nil:
 			// Exact bind volume exists — but when its host folder is still
@@ -462,7 +477,7 @@ func ensureStateVolumes(projectID int64, targets []stateMigrateTarget, stop func
 	for _, it := range items {
 		s := it.suggestion
 		if it.needRow {
-			ensureNamedStateVolume(projectID, s, targets, stop, &stopped, log)
+			ensureNamedStateVolume(projectID, s, ownImage[s.ContainerPath], targets, stop, &stopped, log)
 			continue
 		}
 		// Bind refresh: migrate into the existing (empty) host folder.
@@ -491,8 +506,10 @@ func ensureStateVolumes(projectID int64, targets []stateMigrateTarget, stop func
 
 // ensureNamedStateVolume creates a Docker named volume for a suggested state
 // dir, migrates live container content into it when present, and stores the
-// row so the upcoming Run/Up mounts it in the same operation.
-func ensureNamedStateVolume(projectID int64, s services.StateDirSuggestion, targets []stateMigrateTarget, stop func(), stopped *bool, log func(string, string)) {
+// row so the upcoming Run/Up mounts it in the same operation. ownerImage is the
+// image that declares the path; the volume is then owned by that image's user
+// so a non-root app can write it.
+func ensureNamedStateVolume(projectID int64, s services.StateDirSuggestion, ownerImage string, targets []stateMigrateTarget, stop func(), stopped *bool, log func(string, string)) {
 	name := s.HostSubdir
 	if i := strings.LastIndex(name, "/"); i >= 0 {
 		name = name[i+1:]
@@ -531,10 +548,29 @@ func ensureNamedStateVolume(projectID int64, s services.StateDirSuggestion, targ
 		log("warn", fmt.Sprintf("Could not save AppData volume for %s: %s", s.ContainerPath, err.Error()))
 		return
 	}
+	ownNamedStateVolume(volName, ownerImage, s.ContainerPath, log)
 	if migrated {
 		log("info", fmt.Sprintf("Migrated existing data from %s into Docker volume %s — it now survives recreates", s.ContainerPath, volName))
 	} else {
 		log("info", fmt.Sprintf("Added persistent Docker volume %s → %s (%s)", volName, s.ContainerPath, s.Reason))
+	}
+}
+
+// ownNamedStateVolume aligns a named state volume's ownership with the user the
+// declaring image runs as, so an app that runs as a non-root user (e.g.
+// code-server) can write its own state. Best-effort: an image whose user cannot
+// be read, or that carries no stat/chown, leaves the volume untouched.
+func ownNamedStateVolume(volName, image, containerPath string, log func(string, string)) {
+	if volName == "" || image == "" {
+		return
+	}
+	repaired, err := services.OwnNamedVolumeToImageUser(volName, image, containerPath)
+	if err != nil {
+		log("warn", fmt.Sprintf("Could not set ownership of volume %s for %s: %s", volName, containerPath, err.Error()))
+		return
+	}
+	if repaired {
+		log("info", fmt.Sprintf("Set ownership of volume %s to the image's user so %s is writable", volName, containerPath))
 	}
 }
 
