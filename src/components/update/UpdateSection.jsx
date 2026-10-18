@@ -5,9 +5,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { toast } from "sonner";
 import {
   Download, RotateCcw, RefreshCw, CheckCircle2, AlertCircle, Loader2, Terminal,
+  ChevronDown, Sparkles,
 } from "lucide-react";
 
 const TERMINAL_STATES = ["success", "rolled_back", "failed"];
@@ -31,9 +33,92 @@ function StateBadge({ state }) {
   return <Badge variant="outline">Idle</Badge>;
 }
 
+// The release workflow generates each release body from the commit log, so the
+// notes arrive as a small, predictable subset of Markdown: "##" sections,
+// "*" bullets, "**bold**" and links. Rendering that directly keeps the panel
+// readable without pulling in a Markdown dependency.
+function notesLines(body) {
+  return (body || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !/^\*\*full changelog\*\*/i.test(line))
+    .map((line) => line.replace(/^#{1,6}\s*/, "").trim())
+    .filter(Boolean);
+}
+
+function notesText(line) {
+  return line
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\s+by @([\w-]+) in https?:\/\/\S+/g, " (by @$1)")
+    .replace(/\s+in https?:\/\/\S+/g, "")
+    .trim();
+}
+
+function NotesBody({ body }) {
+  const lines = notesLines(body);
+  if (lines.length === 0) {
+    return <p className="text-sm text-muted-foreground">No notes for this release.</p>;
+  }
+  return (
+    <div className="space-y-1.5">
+      {lines.map((line, i) => {
+        const bullet = /^[*-]\s+/.test(line);
+        const text = notesText(bullet ? line.replace(/^[*-]\s+/, "") : line);
+        if (!text) return null;
+        return bullet ? (
+          <div key={i} className="flex gap-2">
+            <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-muted-foreground/60" />
+            <span className="text-sm text-muted-foreground">{text}</span>
+          </div>
+        ) : (
+          <p key={i} className="pt-1 text-sm font-medium text-foreground">{text}</p>
+        );
+      })}
+    </div>
+  );
+}
+
+function ReleaseItem({ release, defaultOpen }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="rounded-md border">
+      <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-foreground">{release.name}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            <code className="font-mono">{release.version}</code>
+            {release.prerelease && " · pre-release"}
+            {release.published_at && ` · ${new Date(release.published_at).toLocaleDateString()}`}
+          </p>
+        </div>
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="border-t px-3 py-3">
+        <NotesBody body={release.body} />
+        {release.url && (
+          <a
+            href={release.url}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-3 inline-block text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            View on GitHub
+          </a>
+        )}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 export function UpdateSection() {
   const [info, setInfo] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [releases, setReleases] = useState([]);
+  const [releasesError, setReleasesError] = useState("");
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -49,6 +134,17 @@ export function UpdateSection() {
   const inProgress = info && (info.state === "building" || info.state === "swapping");
   const terminal = info && TERMINAL_STATES.includes(info.state);
 
+  const loadReleases = useCallback(async () => {
+    try {
+      const data = await update.releases();
+      setReleases(data?.releases || []);
+      setReleasesError(data?.error || "");
+    } catch (err) {
+      setReleases([]);
+      setReleasesError(err.message || "Could not load release notes");
+    }
+  }, []);
+
   const loadStatus = useCallback(async () => {
     setChecking(true);
     try {
@@ -59,7 +155,8 @@ export function UpdateSection() {
     } finally {
       setChecking(false);
     }
-  }, []);
+    await loadReleases();
+  }, [loadReleases]);
 
   useEffect(() => {
     (async () => {
@@ -72,7 +169,8 @@ export function UpdateSection() {
         setLoading(false);
       }
     })();
-  }, []);
+    loadReleases();
+  }, [loadReleases]);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -313,6 +411,23 @@ export function UpdateSection() {
           )}
         </CardContent>
       </Card>
+
+      {(releases.length > 0 || releasesError) && (
+        <Card>
+          <CardContent className="pt-6 space-y-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <Sparkles className="h-4 w-4 text-muted-foreground" />
+              What's new
+            </div>
+            {releasesError && releases.length === 0 && (
+              <p className="text-sm text-muted-foreground">{releasesError}</p>
+            )}
+            {releases.map((release, i) => (
+              <ReleaseItem key={release.version} release={release} defaultOpen={i === 0} />
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {showLogs && (
         <Card>

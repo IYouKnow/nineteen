@@ -437,6 +437,7 @@ func main() {
 	mux.HandleFunc("/api/database-connections", handlers.DatabaseConnectionsHandler)
 	mux.HandleFunc("/api/update", handlers.UpdateHandler)
 	mux.HandleFunc("/api/update/status", handlers.UpdateStatusHandler)
+	mux.HandleFunc("/api/update/releases", handlers.UpdateReleasesHandler)
 	mux.HandleFunc("/api/update/logs", handlers.UpdateLogsHandler)
 	mux.HandleFunc("/api/update/logs/stream", handlers.UpdateLogsStreamHandler)
 	mux.HandleFunc("/api/update/rollback", handlers.UpdateRollbackHandler)

@@ -404,6 +404,7 @@ export const projectFiles = {
 export const update = {
   status: () => doFetch("/api/update"),
   poll: () => doFetch("/api/update/status"),
+  releases: () => doFetch("/api/update/releases"),
   start: (version) =>
     doFetch("/api/update", { method: "POST", body: JSON.stringify(version ? { version } : {}) }),
   rollback: () => doFetch("/api/update/rollback", { method: "POST" }),

@@ -748,6 +748,76 @@ func (u *UpdateService) fetchLatestTag(repo string) (string, error) {
 	return best, nil
 }
 
+// ReleaseNote is one GitHub release as shown on the Updates page. The body is
+// the release notes, which the release workflow generates from the commit log.
+type ReleaseNote struct {
+	Version     string `json:"version"`
+	Name        string `json:"name"`
+	Body        string `json:"body"`
+	URL         string `json:"url"`
+	PublishedAt string `json:"published_at"`
+	Prerelease  bool   `json:"prerelease"`
+}
+
+// FetchReleaseNotes returns the most recent releases from GitHub, newest first,
+// for the "what's new" list on the Updates page. Draft releases are skipped
+// (they are unpublished), and releases without a tag are ignored. A pre-release
+// is kept so it can still be labelled as one, but the updater itself only ever
+// targets the latest stable release.
+func (u *UpdateService) FetchReleaseNotes(limit int) ([]ReleaseNote, error) {
+	if u.Repo == "" {
+		return nil, fmt.Errorf("NINETEEN_REPO not configured")
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get(fmt.Sprintf(
+		"https://api.github.com/repos/%s/releases?per_page=%d", u.Repo, limit))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrNoReleases
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub returned status %d", resp.StatusCode)
+	}
+	var rels []struct {
+		TagName     string `json:"tag_name"`
+		Name        string `json:"name"`
+		Body        string `json:"body"`
+		HTMLURL     string `json:"html_url"`
+		PublishedAt string `json:"published_at"`
+		Draft       bool   `json:"draft"`
+		Prerelease  bool   `json:"prerelease"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rels); err != nil {
+		return nil, err
+	}
+	notes := make([]ReleaseNote, 0, len(rels))
+	for _, r := range rels {
+		tag := strings.TrimSpace(r.TagName)
+		if r.Draft || tag == "" {
+			continue
+		}
+		name := strings.TrimSpace(r.Name)
+		if name == "" {
+			name = tag
+		}
+		notes = append(notes, ReleaseNote{
+			Version:     strings.TrimPrefix(tag, "v"),
+			Name:        name,
+			Body:        strings.TrimSpace(r.Body),
+			URL:         r.HTMLURL,
+			PublishedAt: r.PublishedAt,
+			Prerelease:  r.Prerelease,
+		})
+	}
+	return notes, nil
+}
+
 func (u *UpdateService) isUpdateAvailable(current, latest string) bool {
 	if latest == "" {
 		return false

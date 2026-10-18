@@ -355,7 +355,14 @@ func populateNamedVolumeFromContainer(projectID int64, volName, containerPath st
 	if entries, err := os.ReadDir(tmp); err != nil || len(entries) == 0 {
 		return false
 	}
-	return services.PopulateNamedVolume(volName, holderImage, tmp) == nil
+	if err := services.PopulateNamedVolume(volName, holderImage, tmp); err != nil {
+		return false
+	}
+	// The server runs as root, so the migrated files land root-owned in the
+	// volume. Align it to the image's own user, or a container that runs as a
+	// non-root user (e.g. code-server's `coder`) cannot write its own state.
+	_, _ = services.OwnNamedVolumeToImageUser(volName, holderImage, containerPath)
+	return true
 }
 
 // ProjectVolumeHandler deletes a volume mapping.
