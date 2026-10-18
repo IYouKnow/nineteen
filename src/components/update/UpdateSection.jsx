@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { update } from "@/lib/api";
+import { RELEASE_NOTES } from "@/lib/releaseNotes";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -33,10 +34,11 @@ function StateBadge({ state }) {
   return <Badge variant="outline">Idle</Badge>;
 }
 
-// The release workflow generates each release body from the commit log, so the
-// notes arrive as a small, predictable subset of Markdown: "##" sections,
-// "*" bullets, "**bold**" and links. Rendering that directly keeps the panel
-// readable without pulling in a Markdown dependency.
+// Notes are curated per version in lib/releaseNotes.js. Any version without an
+// entry falls back to the GitHub release body, which arrives as a small,
+// predictable subset of Markdown: "##" sections, "*" bullets, "**bold**" and
+// links. Rendering that directly keeps the panel readable without pulling in a
+// Markdown dependency.
 function notesLines(body) {
   return (body || "")
     .split("\n")
@@ -56,8 +58,7 @@ function notesText(line) {
     .trim();
 }
 
-function NotesBody({ body }) {
-  const lines = notesLines(body);
+function NotesBody({ lines }) {
   if (lines.length === 0) {
     return <p className="text-sm text-muted-foreground">No notes for this release.</p>;
   }
@@ -82,6 +83,7 @@ function NotesBody({ body }) {
 
 function ReleaseItem({ release, defaultOpen }) {
   const [open, setOpen] = useState(defaultOpen);
+  const lines = RELEASE_NOTES[release.version] || notesLines(release.body);
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="rounded-md border">
       <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left">
@@ -98,7 +100,7 @@ function ReleaseItem({ release, defaultOpen }) {
         />
       </CollapsibleTrigger>
       <CollapsibleContent className="border-t px-3 py-3">
-        <NotesBody body={release.body} />
+        <NotesBody lines={lines} />
         {release.url && (
           <a
             href={release.url}
